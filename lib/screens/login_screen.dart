@@ -101,11 +101,15 @@ class _LoginScreenState extends State<LoginScreen> {
 
         if (result['success']) {
           _showSuccess('Login successful!');
-          // Navigate to main navigation with bottom nav bar on successful login
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => const MainNavigation()),
-          );
+          // Navigate back to previous screen (P2P Trading) or to MainNavigation
+          if (Navigator.canPop(context)) {
+            Navigator.pop(context);
+          } else {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (context) => const MainNavigation()),
+            );
+          }
         } else {
           _showError(result['message']);
         }
