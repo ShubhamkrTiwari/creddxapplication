@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'bot_trade_screen.dart';
 import 'bot_dashboard_screen.dart';
-import 'package_program_screen.dart';
+import 'package:creddx/screens/package_program_screen.dart';
+import 'bot_history_screen.dart';
 import '../main_navigation.dart';
 
 class BotMainScreen extends StatefulWidget {
@@ -20,7 +21,7 @@ class _BotMainScreenState extends State<BotMainScreen> {
     const BotTradeScreen(), // Dashboard tab shows the Trading/Algos interface
     const BotDashboardScreen(), // Algos tab shows the Bot Dashboard (Market/Strategies)
     const PackageProgramScreen(), // Subscribe
-    const Center(child: Text('Trade Logs Content', style: TextStyle(color: Colors.white, fontSize: 18))),
+    const BotHistoryScreen(showHeader: true), // Logs tab with header
   ];
 
   void _onItemTapped(int index) {
