@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'onboarding_screen.dart';
 import '../main_navigation.dart';
 import '../services/auth_service.dart';
+import '../services/user_service.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -21,7 +22,7 @@ class _SplashScreenState extends State<SplashScreen>
   void initState() {
     super.initState();
     
-    // System chrome configuration for immersive experience
+    // System chrome configuration
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
@@ -31,13 +32,11 @@ class _SplashScreenState extends State<SplashScreen>
       ),
     );
     
-    // Fade animation controller
     _fadeController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1000),
     );
     
-    // Animation
     _fadeAnimation = Tween<double>(
       begin: 0.0,
       end: 1.0,
@@ -46,60 +45,53 @@ class _SplashScreenState extends State<SplashScreen>
       curve: Curves.easeInOut,
     ));
     
-    // Start animation
     _fadeController.forward();
     
-    // Navigate after delay (Reduced to 2 seconds)
-    Timer(const Duration(seconds: 2), () async {
-      if (mounted) {
-        try {
-          // Check if user is already logged in
-          final isLoggedIn = await AuthService.isLoggedIn();
-          
-          if (isLoggedIn) {
-            // User is logged in, go to main navigation with bottom nav bar
-            Navigator.of(context).pushReplacement(
-              PageRouteBuilder(
-                pageBuilder: (context, animation, secondaryAnimation) => 
-                    const MainNavigation(),
-                transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                  return SlideTransition(
-                    position: animation.drive(
-                      Tween(begin: const Offset(0.0, 1.0), end: Offset.zero),
-                    ),
-                    child: child,
-                  );
-                },
-                transitionDuration: const Duration(milliseconds: 600),
-              ),
-            );
-          } else {
-            // User is not logged in, go to onboarding
-            Navigator.of(context).pushReplacement(
-              PageRouteBuilder(
-                pageBuilder: (context, animation, secondaryAnimation) => 
-                    const OnboardingScreen(),
-                transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                  return SlideTransition(
-                    position: animation.drive(
-                      Tween(begin: const Offset(0.0, 1.0), end: Offset.zero),
-                    ),
-                    child: child,
-                  );
-                },
-                transitionDuration: const Duration(milliseconds: 600),
-              ),
-            );
-          }
-        } catch (e) {
-          debugPrint('Navigation error: $e');
-          // Fallback to onboarding if there's an error
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (context) => const OnboardingScreen()),
-          );
-        }
+    // Start background initialization immediately
+    _initializeApp();
+  }
+
+  Future<void> _initializeApp() async {
+    // 1. Start all heavy initialization tasks in parallel
+    // These run while the splash screen is visible
+    final initUserTask = UserService().initUserData();
+    final authCheckTask = AuthService.isLoggedIn();
+    
+    // 2. Define the fixed splash duration (2.0 seconds)
+    // This ensures the logo stays visible as requested
+    final splashTimerTask = Future.delayed(const Duration(milliseconds: 2000));
+    
+    // 3. Wait for the auth check and the fixed timer
+    // We don't necessarily wait for full profile/KYC API refresh here 
+    // because UserService.initUserData() internally loads local data first
+    // and refreshes in the background.
+    final results = await Future.wait([
+      authCheckTask,
+      splashTimerTask,
+    ]);
+    
+    final bool isLoggedIn = results[0] as bool;
+
+    if (mounted) {
+      try {
+        // Navigation with a smooth transition
+        Navigator.of(context).pushReplacement(
+          PageRouteBuilder(
+            pageBuilder: (context, animation, secondaryAnimation) => 
+                isLoggedIn ? const MainNavigation() : const OnboardingScreen(),
+            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+              return FadeTransition(opacity: animation, child: child);
+            },
+            transitionDuration: const Duration(milliseconds: 600),
+          ),
+        );
+      } catch (e) {
+        debugPrint('Navigation error: $e');
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (context) => const OnboardingScreen()),
+        );
       }
-    });
+    }
   }
 
   @override
@@ -119,7 +111,6 @@ class _SplashScreenState extends State<SplashScreen>
           opacity: _fadeAnimation,
           child: Stack(
             children: [
-              // Logo in center
               Center(
                 child: Container(
                   width: 150,
@@ -132,7 +123,6 @@ class _SplashScreenState extends State<SplashScreen>
                   ),
                 ),
               ),
-              // Version number at bottom
               const Positioned(
                 bottom: 50,
                 left: 0,
