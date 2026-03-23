@@ -62,6 +62,21 @@ class P2PService {
     return [];
   }
 
+  static Future<List<dynamic>> getFiatCurrencies() async {
+    try {
+      final result = await _handleRequest(
+        () async => http.get(Uri.parse('$_baseUrl/p2p/v1/fiat/currencies'), headers: await _getHeaders()),
+        'getFiatCurrencies',
+      );
+      if (result != null) {
+        return result is List ? result : (result['data'] ?? result['result'] ?? []);
+      }
+    } catch (e) {
+      ErrorHandler.logError(e.toString(), 'getFiatCurrencies');
+    }
+    return [];
+  }
+
   static Future<List<dynamic>> getAllAdvertisements() async {
     try {
       final headers = await _getHeaders();
@@ -138,13 +153,17 @@ class P2PService {
         
         final orderData = {
           "coin": adData["coin"] ?? "USDT",
-          "amount": adData["amount"] ?? 0.0,
+          "quantity": adData["amount"] ?? 0.0,
           "price": adData["price"] ?? 0.0,
           "paymentMode": adData["paymentMode"]?.first ?? "Bank",
           "type": adData["type"] ?? "buy",
           "direction": (adData["type"] ?? "buy") == "buy" ? 1 : 0, // Convert to number: 1 for buy, 0 for sell
           "paymentTime": adData["paymentTime"] ?? 15,
+          "fiat": adData["fiat"] ?? "INR",
+          "floating": adData["floating"] ?? 0,
         };
+        
+        debugPrint('Fallback Order Data: ${json.encode(orderData)}');
         
         response = await http.post(
           Uri.parse('$_baseUrl/p2p/v1/p2p/order/create'), 
@@ -250,23 +269,116 @@ class P2PService {
   }
 
   // --- Orders & Trade Flow ---
-  static Future<Map<String, dynamic>?> placeOrder(Map<String, dynamic> orderData) async {
+  static Future<Map<String, dynamic>?> placeOrder({
+    required String adId,
+    required double quantity,
+    required int direction,
+    required String payMethod,
+  }) async {
     try {
-      final response = await http.post(Uri.parse('$_baseUrl/p2p/v1/p2p/order/create'), headers: await _getHeaders(), body: json.encode(orderData));
-      if (response.statusCode == 200 || response.statusCode == 201) return json.decode(response.body);
-    } catch (e) { debugPrint('Place order error: $e'); }
-    return null;
+      final orderData = {
+        'adId': adId,
+        'quantity': quantity,
+        'direction': direction,
+        'payMethod': payMethod,
+      };
+      debugPrint('Placing P2P order with data: ${json.encode(orderData)}');
+      final response = await http.post(Uri.parse('$_baseUrl/p2p/v1/p2p/order/create'),
+          headers: await _getHeaders(), body: json.encode(orderData));
+      debugPrint('Place Order API Response Status: ${response.statusCode}');
+      debugPrint('Place Order API Response Body: ${response.body}');
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return json.decode(response.body);
+      } else {
+        final errorData = response.body.isNotEmpty ? json.decode(response.body) : {};
+        ErrorHandler.logError(
+          'HTTP ${response.statusCode}: ${response.body}',
+          'placeOrder',
+        );
+        throw Exception(errorData['message'] ?? errorData['error'] ?? 'Failed to place order');
+      }
+    } catch (e) {
+      ErrorHandler.logError(e.toString(), 'placeOrder');
+      rethrow;
+    }
   }
 
-  static Future<List<dynamic>> getMyOrders() async {
+  static Future<List<dynamic>> getMyOrders({
+    bool? processing,
+    int? status,
+    int? page,
+    int? limit,
+  }) async {
     try {
-      final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/p2p/order/my'), headers: await _getHeaders());
+      // Build query parameters
+      final queryParams = <String, String>{
+        if (processing != null) 'processing': processing.toString(),
+        if (status != null) 'status': status.toString(),
+        if (page != null) 'page': page.toString(),
+        if (limit != null) 'limit': limit.toString(),
+      };
+      
+      final uri = Uri.parse('$_baseUrl/p2p/v1/p2p/order/my-orders')
+          .replace(queryParameters: queryParams);
+      
+      debugPrint('Fetching P2P orders from: $uri');
+      final response = await http.get(uri, headers: await _getHeaders());
+      
+      debugPrint('P2P Orders API Response Status: ${response.statusCode}');
+      debugPrint('P2P Orders API Response Body: ${response.body}');
+      
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        return data is List ? data : (data['data'] ?? data['result'] ?? []);
+        List<dynamic> orders = [];
+        
+        if (data is List) {
+          orders = data;
+        } else if (data is Map) {
+          orders = data['data'] ?? data['result'] ?? data['orders'] ?? [];
+        }
+        
+        debugPrint('P2P orders fetched: ${orders.length}');
+        return orders;
+      } else {
+        debugPrint('P2P Orders API failed with status: ${response.statusCode}');
+        return [];
       }
-    } catch (e) { debugPrint('Orders error: $e'); }
-    return [];
+    } catch (e) {
+      debugPrint('Error fetching P2P orders: $e');
+      return [];
+    }
+  }
+
+  // Helper methods for common order history queries
+  static Future<List<dynamic>> getActiveOrders() async {
+    return await getMyOrders(processing: true);
+  }
+
+  static Future<List<dynamic>> getCompletedOrders({int page = 1, int limit = 10}) async {
+    return await getMyOrders(
+      processing: false,
+      status: 5, // Completed status
+      page: page,
+      limit: limit,
+    );
+  }
+
+  static Future<List<dynamic>> getPendingOrders({int page = 1, int limit = 10}) async {
+    return await getMyOrders(
+      processing: false,
+      status: 1, // Pending status
+      page: page,
+      limit: limit,
+    );
+  }
+
+  static Future<List<dynamic>> getCancelledOrders({int page = 1, int limit = 10}) async {
+    return await getMyOrders(
+      processing: false,
+      status: 4, // Cancelled status
+      page: page,
+      limit: limit,
+    );
   }
 
   static Future<Map<String, dynamic>?> getOrderDetails(String orderId) async {

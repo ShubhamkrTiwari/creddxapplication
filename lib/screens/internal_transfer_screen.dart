@@ -81,11 +81,26 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
       setState(() {
         if (result['success'] == true && result['data'] != null) {
           final data = result['data'];
+          
           if (data['transfers'] != null) {
             _transferHistory = List<Map<String, dynamic>>.from(data['transfers']);
           } else if (data is List) {
             _transferHistory = List<Map<String, dynamic>>.from(data);
+          } else if (data['data'] != null && data['data'] is List) {
+            _transferHistory = List<Map<String, dynamic>>.from(data['data']);
+          } else if (data['message'] == 'Success' && data is Map) {
+            // Handle the actual API response format where transfers are in data field
+            if (data['data'] is List) {
+              _transferHistory = List<Map<String, dynamic>>.from(data['data']);
+            } else {
+              _transferHistory = [];
+            }
+          } else {
+            // Handle case where data itself contains the transfer list
+            _transferHistory = [];
           }
+        } else {
+          _transferHistory = [];
         }
         _isFetchingHistory = false;
       });
@@ -139,10 +154,17 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
     setState(() => _isLoading = true);
     
     try {
+      // Convert wallet names to numbers as per API spec
+      int fromWalletNumber = _getWalletTypeNumber(_fromWallet);
+      int toWalletNumber = _getWalletTypeNumber(_toWallet);
+      
+      // Get coin ID (for now use the coin symbol, in real implementation you'd get this from coins API)
+      String coinId = _selectedCoin;
+      
       final result = await WalletService.transferBetweenWallets(
-        fromWallet: _fromWallet,
-        toWallet: _toWallet,
-        coin: _selectedCoin,
+        coinId: coinId,
+        from: fromWalletNumber,
+        to: toWalletNumber,
         amount: amount,
       );
 
@@ -171,8 +193,8 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
           );
           
           _amountController.clear();
-          _fetchBalances(); // Refresh balances
-          _fetchTransferHistory(); // Refresh transfer history
+          await _fetchBalances(); // Refresh balances
+          await _fetchTransferHistory(); // Refresh transfer history
         } else {
           // Show detailed error message
           String errorMessage = result['error'] ?? 'Transfer failed';
@@ -191,6 +213,11 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
               content: Text(errorMessage),
               backgroundColor: Colors.red,
               duration: const Duration(seconds: 4),
+              action: SnackBarAction(
+                label: 'Retry',
+                textColor: Colors.white,
+                onPressed: () => _handleTransfer(),
+              ),
             ),
           );
         }
@@ -456,14 +483,133 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
 
   String _getWalletBalance(String walletType) {
     final balance = _balances[walletType];
-    return balance?['available']?.toString() ?? '0.00';
+    if (balance == null) return '0.00';
+    return balance['available']?.toString() ?? '0.00';
+  }
+
+  // Helper method to convert wallet type numbers to names
+  String _getWalletTypeName(int walletType) {
+    switch (walletType) {
+      case 1:
+        return 'Spot Wallet';
+      case 2:
+        return 'P2P Wallet';
+      case 3:
+        return 'Bot Wallet';
+      case 4:
+        return 'Main Wallet';
+      case 5:
+        return 'Demo Bot Wallet';
+      default:
+        return 'Wallet';
+    }
+  }
+
+  // Helper method to convert wallet names to display names
+  String _getWalletDisplayName(String walletName) {
+    if (walletName.isEmpty) return 'Wallet';
+    
+    // Handle different possible formats from API
+    final cleanName = walletName.toLowerCase().trim();
+    
+    switch (cleanName) {
+      case 'spot':
+      case 'spot wallet':
+      case 'spotwallet':
+        return 'Spot Wallet';
+      case 'p2p':
+      case 'p2p wallet':
+      case 'p2pwallet':
+        return 'P2P Wallet';
+      case 'bot':
+      case 'bot wallet':
+      case 'botwallet':
+        return 'Bot Wallet';
+      case 'main':
+      case 'main wallet':
+      case 'mainwallet':
+        return 'Main Wallet';
+      case 'demo_bot':
+      case 'demo bot':
+      case 'demo bot wallet':
+      case 'demobot':
+      case 'demo_bot wallet':
+        return 'Demo Bot Wallet';
+      default:
+        // Remove ID numbers from wallet names (e.g., "Main Wallet (1)" -> "Main Wallet")
+        String cleaned = walletName.replaceAll(RegExp(r'\s*\(\d+\)'), '').trim();
+        
+        // Capitalize first letter of each word
+        if (cleaned.isNotEmpty) {
+          cleaned = cleaned.split(' ').map((word) {
+            if (word.isEmpty) return '';
+            return word[0].toUpperCase() + word.substring(1).toLowerCase();
+          }).join(' ');
+        }
+        
+        return cleaned.isEmpty ? 'Wallet' : cleaned;
+    }
   }
 
   Widget _buildTransferHistoryItem(Map<String, dynamic> transfer) {
-    final fromWallet = transfer['fromWallet']?.toString() ?? 'Unknown';
-    final toWallet = transfer['toWallet']?.toString() ?? 'Unknown';
+    // Try different possible field names for wallet information
+    final fromWallet = transfer['from']?.toString() ?? 
+                       transfer['fromWallet']?.toString() ?? 
+                       transfer['source_wallet']?.toString() ?? 
+                       transfer['source']?.toString() ?? '';
+                       
+    final toWallet = transfer['to']?.toString() ?? 
+                     transfer['toWallet']?.toString() ?? 
+                     transfer['destination_wallet']?.toString() ?? 
+                     transfer['destination']?.toString() ?? '';
+    
+    // Convert wallet type numbers to names if they are numbers
+    String cleanFromWallet = fromWallet;
+    String cleanToWallet = toWallet;
+    
+    try {
+      final fromWalletNum = int.tryParse(fromWallet);
+      final toWalletNum = int.tryParse(toWallet);
+      
+      if (fromWalletNum != null) {
+        cleanFromWallet = _getWalletTypeName(fromWalletNum);
+      } else {
+        // Use the new helper method to convert wallet names to display names
+        cleanFromWallet = _getWalletDisplayName(fromWallet);
+      }
+      
+      if (toWalletNum != null) {
+        cleanToWallet = _getWalletTypeName(toWalletNum);
+      } else {
+        // Use the new helper method to convert wallet names to display names
+        cleanToWallet = _getWalletDisplayName(toWallet);
+      }
+    } catch (e) {
+      // If parsing fails, use the helper method for cleanup
+      cleanFromWallet = _getWalletDisplayName(fromWallet);
+      cleanToWallet = _getWalletDisplayName(toWallet);
+    }
+    
+    // Final fallback - ensure we have clean names
+    cleanFromWallet = cleanFromWallet.isEmpty ? 'Wallet' : cleanFromWallet;
+    cleanToWallet = cleanToWallet.isEmpty ? 'Wallet' : cleanToWallet;
+    
     final amount = transfer['amount']?.toString() ?? '0.00';
-    final coin = transfer['coin']?.toString() ?? 'USDT';
+    final coin = transfer['coin'] ?? 'USDT';
+    
+    // Handle different coin data formats
+    String coinSymbol = 'USDT';
+    if (coin is List && coin.isNotEmpty) {
+      final firstCoin = coin[0];
+      if (firstCoin is Map) {
+        coinSymbol = firstCoin['symbol']?.toString() ?? 'USDT';
+      }
+    } else if (coin is Map) {
+      coinSymbol = coin['symbol']?.toString() ?? 'USDT';
+    } else if (coin is String) {
+      coinSymbol = coin;
+    }
+    
     final status = transfer['status']?.toString() ?? 'completed';
     final createdAt = transfer['createdAt']?.toString();
     
@@ -482,67 +628,121 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
     
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: const Color(0xFF252525),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // From/To row with dots and arrow
           Row(
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '$fromWallet → $toWallet',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      formattedDate,
-                      style: const TextStyle(
-                        color: Colors.white54,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+              // From wallet with blue dot
+              Row(
                 children: [
-                  Text(
-                    '$amount $coin',
-                    style: const TextStyle(
-                      color: Color(0xFF84BD00),
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(
+                      color: Colors.blue,
+                      shape: BoxShape.circle,
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      status.toUpperCase(),
-                      style: TextStyle(
-                        color: statusColor,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                      ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'From: $cleanFromWallet',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ],
+              ),
+              
+              // Arrow
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Icon(
+                  Icons.arrow_forward,
+                  color: Colors.white54,
+                  size: 16,
+                ),
+              ),
+              
+              // To wallet with green dot
+              Row(
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(
+                      color: Colors.green,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'To: $cleanToWallet',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 12),
+          
+          // Details row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              // Value
+              Text(
+                '\$${double.tryParse(amount)?.toStringAsFixed(2) ?? amount}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              
+              // Status button
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: status == 'completed' ? const Color(0xFF84BD00) : 
+                         status == 'pending' ? Colors.orange : Colors.red,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  status.toUpperCase(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 8),
+          
+          // Date
+          Row(
+            children: [
+              Text(
+                formattedDate,
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 12,
+                ),
               ),
             ],
           ),
@@ -567,8 +767,8 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
               items: _walletTypes.map((wallet) {
                 final walletCode = wallet['code']!;
-                final balance = _balances[walletCode];
-                final available = balance?['available']?.toString() ?? '0.00';
+                final balance = _balances[walletCode] ?? {};
+                final available = balance['available']?.toString() ?? '0.00';
                 return DropdownMenuItem(
                   value: walletCode,
                   child: Column(
@@ -590,5 +790,23 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
         ),
       ],
     );
+  }
+
+  // Helper method to convert wallet names to API numbers
+  int _getWalletTypeNumber(String walletType) {
+    switch (walletType.toLowerCase()) {
+      case 'spot':
+        return 1;
+      case 'p2p':
+        return 2;
+      case 'bot':
+        return 3;
+      case 'main':
+        return 4; // Main wallet type
+      case 'demo_bot':
+        return 5; // Demo bot wallet type
+      default:
+        return 1; // Default to Spot
+    }
   }
 }
