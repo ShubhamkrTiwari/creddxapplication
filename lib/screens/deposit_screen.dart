@@ -25,29 +25,12 @@ class _DepositScreenState extends State<DepositScreen> {
   Future<void> _fetchData() async {
     setState(() => _isLoading = true);
     try {
-      // Fetch coins with their networks from single API
+      // Fetch coins with their networks from API
       final List<Map<String, dynamic>> coinsData = await WalletService.getAllCoins();
       
       if (mounted) {
         setState(() {
           _coins = coinsData.map((data) => Coin.fromJson(data)).toList();
-          
-          if (_coins.isEmpty) {
-            // Create fallback data with networks if API returns empty
-            _coins = [
-              Coin(id: '1', name: 'Bitcoin', symbol: 'BTC', icon: 'btc', networks: [
-                Network(id: '1', name: 'Bitcoin', type: 'BTC', isActive: true)
-              ]),
-              Coin(id: '2', name: 'Ethereum', symbol: 'ETH', icon: 'eth', networks: [
-                Network(id: '2', name: 'Ethereum', type: 'ERC20', isActive: true)
-              ]),
-              Coin(id: '3', name: 'Tether', symbol: 'USDT', icon: 'usdt', networks: [
-                Network(id: '3', name: 'Ethereum', type: 'ERC20', isActive: true),
-                Network(id: '4', name: 'Binance Smart Chain', type: 'BEP20', isActive: true),
-                Network(id: '5', name: 'Tron', type: 'TRC20', isActive: true),
-              ]),
-            ];
-          }
           
           if (_coins.isNotEmpty) {
             _selectedCoinId = _coins.first.id;
@@ -61,22 +44,7 @@ class _DepositScreenState extends State<DepositScreen> {
       print('Error fetching data: $e');
       if (mounted) {
         setState(() {
-          // Fallback data on error with networks
-          _coins = [
-            Coin(id: '1', name: 'Bitcoin', symbol: 'BTC', icon: 'btc', networks: [
-              Network(id: '1', name: 'Bitcoin', type: 'BTC', isActive: true)
-            ]),
-            Coin(id: '2', name: 'Ethereum', symbol: 'ETH', icon: 'eth', networks: [
-              Network(id: '2', name: 'Ethereum', type: 'ERC20', isActive: true)
-            ]),
-            Coin(id: '3', name: 'Tether', symbol: 'USDT', icon: 'usdt', networks: [
-              Network(id: '3', name: 'Ethereum', type: 'ERC20', isActive: true),
-              Network(id: '4', name: 'Binance Smart Chain', type: 'BEP20', isActive: true),
-              Network(id: '5', name: 'Tron', type: 'TRC20', isActive: true),
-            ]),
-          ];
-          _selectedCoinId = '1';
-          _updateNetworksForCoin(_coins.first);
+          _coins = [];
           _isLoading = false;
         });
       }
@@ -118,50 +86,79 @@ class _DepositScreenState extends State<DepositScreen> {
       ),
       body: _isLoading 
         ? const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)))
-        : Padding(
-            padding: const EdgeInsets.all(20.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Select Coin', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14)),
-                const SizedBox(height: 12),
-                _buildDropdown(
-                  value: coinValue,
-                  hint: 'Select Coin',
-                  items: _coins.map((coin) => DropdownMenuItem(
-                    value: coin.id,
-                    child: _buildCoinRow(coin),
-                  )).toList(),
-                  onChanged: (value) {
-                    if (value != null) {
-                      setState(() {
-                        _selectedCoinId = value;
-                        _updateNetworksForCoin(_coins.firstWhere((c) => c.id == value));
-                      });
-                    }
-                  },
-                ),
-                const SizedBox(height: 24),
-                const Text('Select Network', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14)),
-                const SizedBox(height: 12),
-                _buildDropdown(
-                  value: networkValue,
-                  hint: 'Select Network',
-                  items: _networks.map((network) => DropdownMenuItem(
-                    value: network.id,
-                    child: _buildNetworkRow(network),
-                  )).toList(),
-                  onChanged: (value) {
-                    if (value != null) {
-                      setState(() => _selectedNetworkId = value);
-                    }
-                  },
-                ),
-                const Spacer(),
-                _buildDepositButton(currentCoin, networkValue),
-              ],
+        : _coins.isEmpty 
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.red, size: 48),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'No coins available',
+                    style: TextStyle(color: Colors.white, fontSize: 16),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Unable to fetch coins from server',
+                    style: TextStyle(color: Colors.grey, fontSize: 14),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: _fetchData,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF84BD00),
+                    ),
+                    child: const Text('Retry', style: TextStyle(color: Colors.white)),
+                  ),
+                ],
+              ),
+            )
+          : Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Select Coin', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14)),
+                  const SizedBox(height: 12),
+                  _buildDropdown(
+                    value: coinValue,
+                    hint: 'Select Coin',
+                    items: _coins.map((coin) => DropdownMenuItem(
+                      value: coin.id,
+                      child: _buildCoinRow(coin),
+                    )).toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() {
+                          _selectedCoinId = value;
+                          _updateNetworksForCoin(_coins.firstWhere((c) => c.id == value));
+                        });
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 24),
+                  const Text('Select Network', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14)),
+                  const SizedBox(height: 12),
+                  _buildDropdown(
+                    value: networkValue,
+                    hint: 'Select Network',
+                    items: _networks.map((network) => DropdownMenuItem(
+                      value: network.id,
+                      child: _buildNetworkRow(network),
+                    )).toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => _selectedNetworkId = value);
+                      }
+                    },
+                  ),
+                  const Spacer(),
+                  _buildDepositButton(currentCoin, networkValue),
+                ],
+              ),
             ),
-          ),
     );
   }
 
