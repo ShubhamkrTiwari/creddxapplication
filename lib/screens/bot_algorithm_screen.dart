@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
+import 'bot_trade_detail_screen.dart';
 
 class BotAlgorithmScreen extends StatefulWidget {
   const BotAlgorithmScreen({super.key});
@@ -11,8 +12,6 @@ class BotAlgorithmScreen extends StatefulWidget {
 class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
   Map<String, dynamic>? userData;
   bool isLoadingUserData = true;
-  double _investmentAmount = 1000.0;
-  String _selectedStrategy = 'Omega-3X';
 
   final List<Map<String, dynamic>> _strategies = [
     {
@@ -72,6 +71,22 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
         });
       }
     }
+  }
+
+  void _navigateToDetail(Map<String, dynamic> strategy) {
+    List<String> parts = strategy['name'].split('-');
+    String name = parts[0];
+    String multiplier = parts.length > 1 ? parts[1] : '1X';
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => BotTradeDetailScreen(
+          name: name,
+          multiplier: multiplier,
+        ),
+      ),
+    ).then((_) => setState(() {}));
   }
 
   @override
@@ -170,7 +185,7 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
                         text: 'Invest In ',
                         style: TextStyle(
                           color: Colors.white,
-                          fontSize: 24,
+                          fontSize: 32,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -178,7 +193,7 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
                         text: 'Alpha Strategies',
                         style: TextStyle(
                           color: Color(0xFF84BD00),
-                          fontSize: 24,
+                          fontSize: 32,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -189,18 +204,18 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
             ),
             const SizedBox(height: 12),
             const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 30),
+              padding: EdgeInsets.symmetric(horizontal: 40),
               child: Text(
                 'Invest in our top-performing Alpha strategies and only pay a portion of your profits.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Color(0xFF8E8E93),
-                  fontSize: 13,
+                  fontSize: 14,
                   height: 1.4,
                 ),
               ),
             ),
-            const SizedBox(height: 30),
+            const SizedBox(height: 40),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -237,154 +252,152 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
             width: 1,
           ),
         ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                strategy['name'],
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 26,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF84BD00),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  strategy['tag'],
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  strategy['name'],
                   style: const TextStyle(
-                    color: Colors.black,
-                    fontSize: 12,
+                    color: Colors.white,
+                    fontSize: 26,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1C1C1E),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
                 Container(
-                  width: 6,
-                  height: 6,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF84BD00),
-                    shape: BoxShape.circle,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF84BD00),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  strategy['description'],
-                  style: const TextStyle(
-                    color: Color(0xFF8E8E93),
-                    fontSize: 13,
+                  child: Text(
+                    strategy['tag'],
+                    style: const TextStyle(
+                      color: Colors.black,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ],
             ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              const Icon(
-                Icons.people_outline,
-                color: Color(0xFF4E4E4E),
-                size: 18,
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1C1C1E),
+                borderRadius: BorderRadius.circular(20),
               ),
-              const SizedBox(width: 8),
-              Text(
-                '${strategy['followers']} Followers',
-                style: const TextStyle(
-                  color: Color(0xFF4E4E4E),
-                  fontSize: 14,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 28),
-          Row(
-            children: [
-              Expanded(
-                child: _buildDataBox(
-                  label: 'ANNUALIZED ROI',
-                  value: strategy['annualizedROI'],
-                  valueColor: const Color(0xFF84BD00),
-                  showChartIcon: true,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildDataBox(
-                  label: 'AUM (USDT)',
-                  value: strategy['aum'],
-                  valueColor: Colors.white,
-                  showChartIcon: false,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                flex: 1,
-                child: _buildFeatureBox(strategy['features'][0]),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 1,
-                child: _buildFeatureBox(strategy['features'][1]),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          strategy['isComingSoon']
-              ? Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF161618),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.white.withOpacity(0.05)),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF84BD00),
+                      shape: BoxShape.circle,
+                    ),
                   ),
-                  child: const Center(
-                    child: Text(
-                      'Coming Soon',
-                      style: TextStyle(
-                        color: Color(0xFF444444),
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
+                  const SizedBox(width: 8),
+                  Text(
+                    strategy['description'],
+                    style: const TextStyle(
+                      color: Color(0xFF8E8E93),
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const Icon(
+                  Icons.people_outline,
+                  color: Color(0xFF4E4E4E),
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${strategy['followers']} Followers',
+                  style: const TextStyle(
+                    color: Color(0xFF4E4E4E),
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 28),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDataBox(
+                    label: 'ANNUALIZED ROI',
+                    value: strategy['annualizedROI'],
+                    valueColor: const Color(0xFF84BD00),
+                    showChartIcon: true,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildDataBox(
+                    label: 'AUM (USDT)',
+                    value: strategy['aum'],
+                    valueColor: Colors.white,
+                    showChartIcon: false,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildFeatureBox(strategy['features'][0]),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildFeatureBox(strategy['features'][1]),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            strategy['isComingSoon']
+                ? Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF161618),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white.withOpacity(0.05)),
+                    ),
+                    child: const Center(
+                      child: Text(
+                        'Coming Soon',
+                        style: TextStyle(
+                          color: Color(0xFF444444),
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
+                  )
+                : Row(
+                    children: [
+                      Expanded(
+                        child: _buildActionButton('Invest more ↗', () => _navigateToDetail(strategy)),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildActionButton('Withdraw ↗', () => _navigateToDetail(strategy)),
+                      ),
+                    ],
                   ),
-                )
-              : Row(
-                  children: [
-                    Expanded(
-                      child: _buildActionButton('Invest more ↗', strategy),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildActionButton('Withdraw ↗', strategy),
-                    ),
-                  ],
-                ),
-        ],
-      ),
+          ],
+        ),
       ),
     );
   }
@@ -395,6 +408,7 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
       barrierDismissible: true,
       builder: (BuildContext context) {
         return Dialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
           backgroundColor: const Color(0xFF1C1C1E),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),
@@ -435,7 +449,6 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
                     fontWeight: FontWeight.bold,
                   ),
                   overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
                 ),
               ),
             ],
@@ -456,7 +469,7 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
 
   Widget _buildFeatureBox(String feature) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+      padding: const EdgeInsets.symmetric(vertical: 14),
       decoration: BoxDecoration(
         color: const Color(0xFF161618),
         borderRadius: BorderRadius.circular(16),
@@ -470,21 +483,14 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
             fontWeight: FontWeight.w500,
           ),
           overflow: TextOverflow.ellipsis,
-          maxLines: 1,
         ),
       ),
     );
   }
 
-  Widget _buildActionButton(String text, Map<String, dynamic> strategy) {
+  Widget _buildActionButton(String text, VoidCallback onTap) {
     return GestureDetector(
-      onTap: () {
-        if (text.contains('Invest')) {
-          _showInvestmentDialog(strategy);
-        } else if (text.contains('Withdraw')) {
-          _showWithdrawalDialog(strategy);
-        }
-      },
+      onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(
@@ -505,342 +511,6 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
       ),
     );
   }
-
-  void _showInvestmentDialog(Map<String, dynamic> strategy) {
-    final TextEditingController amountController = TextEditingController();
-    
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF1C1C1E),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: Text(
-            'Invest in ${strategy['name']}',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 16),
-              TextField(
-                controller: amountController,
-                keyboardType: TextInputType.number,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  labelText: 'Investment Amount (USDT)',
-                  labelStyle: const TextStyle(color: Color(0xFF8E8E93)),
-                  filled: true,
-                  fillColor: const Color(0xFF2C2C2E),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: Color(0xFF3A3A3C)),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: Color(0xFF3A3A3C)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: Color(0xFF84BD00)),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  _buildQuickInvestButton('50', amountController),
-                  const SizedBox(width: 8),
-                  _buildQuickInvestButton('100', amountController),
-                  const SizedBox(width: 8),
-                  _buildQuickInvestButton('250', amountController),
-                ],
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text(
-                'Cancel',
-                style: TextStyle(color: Color(0xFF8E8E93)),
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                if (amountController.text.isNotEmpty) {
-                  Navigator.pop(context);
-                  _processInvestment(strategy, amountController.text);
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF84BD00),
-                foregroundColor: Colors.black,
-              ),
-              child: const Text('Invest'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildQuickInvestButton(String amount, TextEditingController controller) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => controller.text = amount,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            color: const Color(0xFF2C2C2E),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Center(
-            child: Text(
-              '\$$amount',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _showWithdrawalDialog(Map<String, dynamic> strategy) {
-    final TextEditingController amountController = TextEditingController();
-    
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF1C1C1E),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: Text(
-            'Withdraw from ${strategy['name']}',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 16),
-              TextField(
-                controller: amountController,
-                keyboardType: TextInputType.number,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  labelText: 'Withdrawal Amount (USDT)',
-                  labelStyle: const TextStyle(color: Color(0xFF8E8E93)),
-                  filled: true,
-                  fillColor: const Color(0xFF2C2C2E),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: Color(0xFF3A3A3C)),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: Color(0xFF3A3A3C)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: Color(0xFF84BD00)),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF2C2C2E),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.info_outline,
-                      color: Color(0xFF84BD00),
-                      size: 16,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Withdrawal will be processed within 24 hours',
-                        style: const TextStyle(
-                          color: Color(0xFF8E8E93),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text(
-                'Cancel',
-                style: TextStyle(color: Color(0xFF8E8E93)),
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                if (amountController.text.isNotEmpty) {
-                  Navigator.pop(context);
-                  _processWithdrawal(strategy, amountController.text);
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF84BD00),
-                foregroundColor: Colors.black,
-              ),
-              child: const Text('Withdraw'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _processInvestment(Map<String, dynamic> strategy, String amount) async {
-    // Show loading indicator
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const AlertDialog(
-        backgroundColor: Color(0xFF1C1C1E),
-        content: Row(
-          children: [
-            CircularProgressIndicator(color: Color(0xFF84BD00)),
-            SizedBox(width: 16),
-            Text(
-              'Processing investment...',
-              style: TextStyle(color: Colors.white),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    try {
-      final response = await BotService.invest(
-        botId: strategy['name'], // Using strategy name as botId for now
-        amount: double.tryParse(amount) ?? 0.0,
-        strategy: strategy['tag'],
-      );
-
-      if (mounted) {
-        Navigator.pop(context); // Close loading dialog
-
-        if (response['success']) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Successfully invested \$$amount in ${strategy['name']}'),
-              backgroundColor: const Color(0xFF84BD00),
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Investment failed: ${response['error']}'),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        Navigator.pop(context); // Close loading dialog
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Investment error: $e'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    }
-  }
-
-  void _processWithdrawal(Map<String, dynamic> strategy, String amount) async {
-    // Show loading indicator
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const AlertDialog(
-        backgroundColor: Color(0xFF1C1C1E),
-        content: Row(
-          children: [
-            CircularProgressIndicator(color: Color(0xFF84BD00)),
-            SizedBox(width: 16),
-            Text(
-              'Processing withdrawal...',
-              style: TextStyle(color: Colors.white),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    try {
-      final response = await BotService.withdraw(
-        botId: strategy['name'], // Using strategy name as botId for now
-        amount: double.tryParse(amount) ?? 0.0,
-        strategy: strategy['tag'],
-      );
-
-      if (mounted) {
-        Navigator.pop(context); // Close loading dialog
-
-        if (response['success']) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Successfully withdrew \$$amount from ${strategy['name']}'),
-              backgroundColor: const Color(0xFF84BD00),
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Withdrawal failed: ${response['error']}'),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        Navigator.pop(context); // Close loading dialog
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Withdrawal error: $e'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    }
-  }
 }
 
 class StrategyPerformancePopup extends StatefulWidget {
@@ -859,8 +529,6 @@ class _StrategyPerformancePopupState extends State<StrategyPerformancePopup> {
   Map<String, dynamic>? performanceData;
   bool isLoading = true;
   String? error;
-
-  double _investmentAmount = 1000.0;
 
   @override
   void initState() {
@@ -896,7 +564,6 @@ class _StrategyPerformancePopupState extends State<StrategyPerformancePopup> {
   Widget build(BuildContext context) {
     return Container(
       width: MediaQuery.of(context).size.width * 0.9,
-      constraints: const BoxConstraints(maxHeight: 600),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -983,7 +650,7 @@ class _StrategyPerformancePopupState extends State<StrategyPerformancePopup> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           CircularProgressIndicator(color: Color(0xFF84BD00)),
-          SizedBox(height: 16),
+          const SizedBox(height: 16),
           Text(
             'Loading performance data...',
             style: TextStyle(
@@ -1045,204 +712,18 @@ class _StrategyPerformancePopupState extends State<StrategyPerformancePopup> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Subscription Status
-        _buildSubscriptionStatus(),
-        
-        const SizedBox(height: 24),
-        
-        // Performance Stats Grid
         _buildPerformanceStats(),
-        
-        const SizedBox(height: 24),
-        
-        // Recent Trades Section
+        const SizedBox(height: 26),
         _buildRecentTradesSection(),
-        
         const SizedBox(height: 24),
-        
-        // Risk Metrics Section
         _buildRiskSection(),
       ],
     );
   }
 
-  Widget _buildSubscriptionStatus() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F0F0F),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: Colors.white.withOpacity(0.1),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Subscription Status',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF84BD00),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: const Text(
-                          'PREMIUM',
-                          style: TextStyle(
-                            color: Colors.black,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Active until Dec 31, 2025',
-                        style: const TextStyle(
-                          color: Color(0xFF8E8E93),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Text(
-                  'Upgrade',
-                  style: TextStyle(
-                    color: Color(0xFF84BD00),
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          // Investment Slider
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Investment Amount',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
-                        activeTrackColor: const Color(0xFF84BD00),
-                        inactiveTrackColor: Colors.white.withOpacity(0.2),
-                        thumbColor: const Color(0xFF84BD00),
-                        overlayColor: const Color(0xFF84BD00).withOpacity(0.2),
-                        valueIndicatorColor: const Color(0xFF84BD00),
-                        trackHeight: 4,
-                      ),
-                      child: Slider(
-                        value: _investmentAmount,
-                        min: 50,
-                        max: 10000,
-                        divisions: 199,
-                        onChanged: (value) {
-                          setState(() {
-                            _investmentAmount = value;
-                          });
-                        },
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Flexible(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF84BD00),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        '\$${_investmentAmount.toInt()}',
-                        style: const TextStyle(
-                          color: Colors.black,
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          // Strategy Display
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Strategy',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1C1C1E),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.1),
-                  ),
-                ),
-                child: Text(
-                  widget.strategy['name'],
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildPerformanceStats() {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       decoration: BoxDecoration(
         color: const Color(0xFF0F0F0F),
         borderRadius: BorderRadius.circular(12),
@@ -1267,8 +748,8 @@ class _StrategyPerformancePopupState extends State<StrategyPerformancePopup> {
             physics: const NeverScrollableScrollPhysics(),
             crossAxisCount: 2,
             crossAxisSpacing: 16,
-            mainAxisSpacing: 12,
-            childAspectRatio: 2.5,
+            mainAxisSpacing: 8,
+            childAspectRatio: 2.8,
             children: [
               _buildStatItem('Total P&L', performanceData!['rot'] ?? '0.0%', Colors.green),
               _buildStatItem('Win Rate', performanceData!['winRate'] ?? '0.0%', const Color(0xFF84BD00)),
@@ -1302,6 +783,7 @@ class _StrategyPerformancePopupState extends State<StrategyPerformancePopup> {
             fontSize: 14,
             fontWeight: FontWeight.bold,
           ),
+          overflow: TextOverflow.ellipsis,
         ),
       ],
     );
