@@ -1,0 +1,438 @@
+import 'dart:convert';
+import 'dart:async';
+import 'dart:math';
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:device_info_plus/device_info_plus.dart';
+
+class AuthService {
+  static const String _baseUrl = 'http://13.235.89.109:8085';
+  static const String _tokenKey = 'auth_token';
+  static const String _userKey = 'user_data';
+
+  // HELPER: Get OS as Integer. 
+  // Based on your logs, '0' is invalid, so we use 1 for Android, 2 for iOS.
+  static int getDeviceOSInt() {
+    if (kIsWeb) return 3;
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return 1; // Android = 1
+      case TargetPlatform.iOS:
+        return 2; // iOS = 2
+      default:
+        return 4;
+    }
+  }
+
+  static String getDeviceName() {
+    if (kIsWeb) return 'Web Browser';
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android: return 'Android Device';
+      case TargetPlatform.iOS: return 'iOS Device';
+      case TargetPlatform.windows: return 'Windows PC';
+      case TargetPlatform.macOS: return 'Mac';
+      case TargetPlatform.linux: return 'Linux PC';
+      default: return 'Unknown Device';
+    }
+  }
+
+  static Future<String> getDeviceUuid() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      String? uuid = prefs.getString('deviceUuid');
+      if (uuid == null) {
+        if (!kIsWeb) {
+          DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
+          if (defaultTargetPlatform == TargetPlatform.android) {
+            AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
+            uuid = androidInfo.id;
+          } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+            IosDeviceInfo iosInfo = await deviceInfo.iosInfo;
+            uuid = iosInfo.identifierForVendor;
+          }
+        }
+        uuid ??= 'device_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(1000)}';
+        await prefs.setString('deviceUuid', uuid);
+      }
+      return uuid;
+    } catch (e) {
+      return 'fallback_uuid';
+    }
+  }
+
+  static Map<String, String> _getHeaders() {
+    return {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    };
+  }
+
+  static Future<Map<String, dynamic>> login(String email, String password) async {
+    try {
+      final deviceUuid = await getDeviceUuid();
+      final osInt = getDeviceOSInt();
+      
+      final payload = {
+        'email': email.trim(),
+        'password': password,
+        'os': osInt,
+        'deviceOs': osInt,
+        'deviceUuid': deviceUuid,
+        'deviceName': getDeviceName(),
+      };
+
+      final response = await http.post(
+        Uri.parse('$_baseUrl/user/v1/auth/login'),
+        headers: _getHeaders(),
+        body: jsonEncode(payload),
+      ).timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        debugPrint('=== LOGIN API RESPONSE DATA ===');
+        debugPrint('Full response: $data');
+        debugPrint('Token field: ${data['token']}');
+        debugPrint('User field: ${data['user']}');
+        debugPrint('==============================');
+        
+        final prefs = await SharedPreferences.getInstance();
+        
+        // Check if response contains error message first
+        if (data['message'] != null && data['success'] == false) {
+          return {'success': false, 'message': data['message']};
+        }
+        
+        // Ensure token exists and is not empty
+        final token = data['authToken'] ?? data['token'] ?? '';
+        if (token.isEmpty) {
+          debugPrint('Token is empty or missing from response');
+          return {'success': false, 'message': 'Invalid credentials or token not received from server'};
+        }
+        
+        // Save token and user data
+        await prefs.setString(_tokenKey, token);
+        await prefs.setString(_userKey, json.encode(data['user'] ?? {}));
+        
+        // Update last login time
+        final now = DateTime.now();
+        final formattedTime = '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year} | ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+        await prefs.setString('last_login', formattedTime);
+        
+        // Store user ID as String
+        if (data['user'] != null) {
+          final userId = data['user']['_id'] ?? data['user']['id'] ?? data['user']['userId'];
+          if (userId != null) {
+            await prefs.setString('user_id', userId.toString());
+          }
+        }
+        
+        debugPrint('Login successful, token saved');
+        return {'success': true, 'message': 'Login successful'};
+      } else {
+        final errorData = json.decode(response.body);
+        return {'success': false, 'message': errorData['message'] ?? 'Login failed'};
+      }
+    } catch (e) {
+      return {'success': false, 'message': 'Network error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> loginSendOtp(String email) async {
+    try {
+      final deviceUuid = await getDeviceUuid();
+      final osInt = getDeviceOSInt();
+      
+      final payload = {
+        'email': email.trim(), 
+        'os': osInt,
+        'deviceOs': osInt,
+        'deviceUuid': deviceUuid,
+        'deviceName': getDeviceName(),
+      };
+
+      final response = await http.post(
+        Uri.parse('$_baseUrl/user/v1/auth/login/send-otp'),
+        headers: _getHeaders(),
+        body: jsonEncode(payload),
+      );
+      if (response.statusCode == 200) {
+        return {'success': true, 'message': 'OTP Sent'};
+      } else {
+        final errorData = json.decode(response.body);
+        return {'success': false, 'message': errorData['message'] ?? 'Failed to send OTP'};
+      }
+    } catch (e) { return {'success': false, 'message': 'Network error'}; }
+  }
+
+  static Future<Map<String, dynamic>> signupSendOtp(String email) async {
+    try {
+      final deviceUuid = await getDeviceUuid();
+      final osInt = getDeviceOSInt();
+      
+      final payload = {
+        'email': email.trim(), 
+        'os': osInt,
+        'deviceOs': osInt,
+        'deviceUuid': deviceUuid,
+        'deviceName': getDeviceName(),
+      };
+
+      final response = await http.post(
+        Uri.parse('$_baseUrl/user/v1/auth/signup-send-otp'),
+        headers: _getHeaders(),
+        body: jsonEncode(payload),
+      );
+      if (response.statusCode == 200) {
+        return {'success': true, 'message': 'OTP Sent'};
+      } else {
+        final errorData = json.decode(response.body);
+        return {'success': false, 'message': errorData['message'] ?? 'Failed to send OTP'};
+      }
+    } catch (e) { return {'success': false, 'message': 'Network error'}; }
+  }
+
+  static Future<Map<String, dynamic>> signup(String email, {String? referralCode}) async {
+    try {
+      final deviceUuid = await getDeviceUuid();
+      final osInt = getDeviceOSInt();
+      
+      final payload = {
+        'email': email.trim(),
+        if (referralCode != null) 'referral_code': referralCode,
+        'os': osInt,
+        'deviceOs': osInt,
+        'deviceUuid': deviceUuid,
+        'deviceName': getDeviceName(),
+      };
+
+      final response = await http.post(
+        Uri.parse('$_baseUrl/user/v1/auth/signup'),
+        headers: _getHeaders(),
+        body: jsonEncode(payload),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return {'success': true, 'message': 'Signup successful, please verify OTP'};
+      } else {
+        final errorData = json.decode(response.body);
+        return {'success': false, 'message': errorData['message'] ?? 'Signup failed'};
+      }
+    } catch (e) {
+      return {'success': false, 'message': 'Network error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> resendOtp(String email) async {
+    try {
+      final deviceUuid = await getDeviceUuid();
+      final osInt = getDeviceOSInt();
+      
+      final payload = {
+        'email': email.trim(),
+        'os': osInt,
+        'deviceOs': osInt,
+        'deviceUuid': deviceUuid,
+        'deviceName': getDeviceName(),
+      };
+
+      final response = await http.post(
+        Uri.parse('$_baseUrl/user/v1/auth/login/send-otp'),
+        headers: _getHeaders(),
+        body: jsonEncode(payload),
+      );
+
+      if (response.statusCode == 200) {
+        return {'success': true, 'message': 'OTP resent successfully'};
+      } else {
+        final errorData = json.decode(response.body);
+        return {'success': false, 'message': errorData['message'] ?? 'Failed to resend OTP'};
+      }
+    } catch (e) {
+      return {'success': false, 'message': 'Network error'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> loginWithOtp(String email, String otp) async {
+    try {
+      final deviceUuid = await getDeviceUuid();
+      final osInt = getDeviceOSInt();
+      
+      final payload = {
+        'email': email.trim(),
+        'otp': otp.trim(),
+        'os': osInt,
+        'deviceOs': osInt,
+        'deviceUuid': deviceUuid,
+        'deviceName': getDeviceName(),
+      };
+      
+      debugPrint('=== VERIFY OTP PAYLOAD ===');
+      debugPrint(jsonEncode(payload));
+      
+      final response = await http.post(
+        Uri.parse('$_baseUrl/user/v1/auth/login'),
+        headers: _getHeaders(),
+        body: jsonEncode(payload),
+      ).timeout(const Duration(seconds: 15));
+
+      debugPrint('Response: ${response.statusCode} - ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        debugPrint('=== API RESPONSE DATA ===');
+        debugPrint('Full response: $data');
+        debugPrint('Token field: ${data['token']}');
+        debugPrint('User field: ${data['user']}');
+        debugPrint('========================');
+        
+        final prefs = await SharedPreferences.getInstance();
+        
+        // Check if response contains error message first
+        if (data['message'] != null && data['success'] == false) {
+          return {'success': false, 'message': data['message']};
+        }
+        
+        // Ensure token exists and is not empty
+        final token = data['authToken'] ?? data['token'] ?? '';
+        if (token.isEmpty) {
+          debugPrint('Token is empty or missing from response');
+          return {'success': false, 'message': 'Invalid OTP or token not received from server'};
+        }
+        
+        // Save token and user data
+        await prefs.setString(_tokenKey, token);
+        await prefs.setString(_userKey, json.encode(data['user'] ?? {}));
+        
+        // Update last login time
+        final now = DateTime.now();
+        final formattedTime = '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year} | ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+        await prefs.setString('last_login', formattedTime);
+        
+        // Store user ID as String
+        if (data['user'] != null) {
+          final userId = data['user']['_id'] ?? data['user']['id'] ?? data['user']['userId'];
+          if (userId != null) {
+            await prefs.setString('user_id', userId.toString());
+          }
+        }
+        
+        debugPrint('OTP Login successful, token saved');
+        return {'success': true, 'message': 'Login successful'};
+      } else {
+        final errorData = json.decode(response.body);
+        return {'success': false, 'message': errorData['message'] ?? 'Verification failed'};
+      }
+    } catch (e) {
+      return {'success': false, 'message': 'Network error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> completeSignupWithOtp(String email, String otp, {String? referralCode}) async {
+    try {
+      final deviceUuid = await getDeviceUuid();
+      final osInt = getDeviceOSInt();
+      
+      final payload = {
+        'email': email.trim(),
+        'otp': otp.trim(),
+        if (referralCode != null) 'referralCode': referralCode,
+        'os': osInt,
+        'deviceOs': osInt,
+        'deviceUuid': deviceUuid,
+        'deviceName': getDeviceName(),
+      };
+
+      final response = await http.post(
+        Uri.parse('$_baseUrl/user/v1/auth/complete-signup'),
+        headers: _getHeaders(),
+        body: jsonEncode(payload),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_tokenKey, data['authToken'] ?? data['token'] ?? '');
+        
+        // Store user ID as String
+        if (data['user'] != null) {
+          final userId = data['user']['_id'] ?? data['user']['id'] ?? data['user']['userId'];
+          if (userId != null) {
+            await prefs.setString('user_id', userId.toString());
+          }
+        }
+        
+        return {'success': true, 'message': 'Signup successful'};
+      } else {
+        final errorData = json.decode(response.body);
+        return {'success': false, 'message': errorData['message'] ?? 'Signup failed'};
+      }
+    } catch (e) { return {'success': false, 'message': 'Network error'}; }
+  }
+
+  // Check if user is logged in
+  static Future<bool> isLoggedIn() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString(_tokenKey);
+      final userData = prefs.getString(_userKey);
+      
+      // More thorough check
+      if (token == null || token.isEmpty) {
+        debugPrint('No token found');
+        return false;
+      }
+      
+      if (userData == null || userData.isEmpty) {
+        debugPrint('No user data found');
+        return false;
+      }
+      
+      // Validate user data is valid JSON
+      try {
+        final user = json.decode(userData);
+        if (user is Map && user.isNotEmpty) {
+          debugPrint('User is logged in: ${user['email'] ?? 'Unknown'}');
+          return true;
+        }
+      } catch (e) {
+        debugPrint('Invalid user data format: $e');
+        // Clear invalid data
+        await logout();
+        return false;
+      }
+      
+      return false;
+    } catch (e) {
+      debugPrint('Error checking login status: $e');
+      return false;
+    }
+  }
+
+  // Get user data
+  static Future<Map<String, dynamic>?> getUserData() async {
+    final prefs = await SharedPreferences.getInstance();
+    final userData = prefs.getString(_userKey);
+    if (userData != null && userData.isNotEmpty) {
+      try {
+        return json.decode(userData);
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  // Logout user
+  static Future<void> logout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_tokenKey);
+    await prefs.remove(_userKey);
+    await prefs.remove('user_id');
+  }
+
+  static Future<String?> getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_tokenKey);
+  }
+}

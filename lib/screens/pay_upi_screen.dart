@@ -1,0 +1,279 @@
+import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'payment_proof_screen.dart';
+
+class PayUpiScreen extends StatelessWidget {
+  final String amount;
+  
+  const PayUpiScreen({super.key, required this.amount});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0D0D0D),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0D0D0D),
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios, color: Colors.white, size: 20),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: const Text(
+          'Pay Using UPI',
+          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        centerTitle: true,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // QR Code Container
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1C1C1E),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF2C2C2E)),
+              ),
+              child: Column(
+                children: [
+                  // QR Code with GPay Logo
+                  Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Container(
+                        width: 200,
+                        height: 200,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: QrImageView(
+                          data: 'upi://pay?pa=creddx1234@oksbi&pn=CreddX&mc=0000&tid=123456&tr=ORDER123&tn=Deposit&am=${amount}&cu=INR',
+                          version: QrVersions.auto,
+                          size: 180,
+                          padding: const EdgeInsets.all(10),
+                        ),
+                      ),
+                      // GPay Logo in center
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 4,
+                            ),
+                          ],
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(6),
+                          child: Image.asset(
+                            'assets/images/logogoogle.png',
+                            fit: BoxFit.contain,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // UPI ID with copy button
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text(
+                        'creddx1234@oksbi',
+                        style: TextStyle(color: Colors.white, fontSize: 16),
+                      ),
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: () {
+                          // Copy to clipboard
+                        },
+                        child: const Icon(
+                          Icons.copy,
+                          color: Color(0xFF8E8E93),
+                          size: 18,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            // Pay by any UPI App
+            const Text(
+              'Pay by any UPI App',
+              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 12),
+            _buildGPayOption(),
+            const SizedBox(height: 10),
+            _buildPaytmOption(),
+            const SizedBox(height: 10),
+            _buildCreddUpiOption(),
+          ],
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+          child: SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => PaymentProofScreen(
+                      amount: amount,
+                      paymentMethod: 'UPI',
+                    ),
+                  ),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF84BD00),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 0,
+              ),
+              child: const Text(
+                'Proceed',
+                style: TextStyle(
+                  color: Colors.black,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGPayOption() {
+    return GestureDetector(
+      onTap: () {
+        // Handle GPay selection
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1C1C1E),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Image.asset(
+              'assets/images/logogoogle.png',
+              width: 24,
+              height: 24,
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'GPay',
+                style: TextStyle(color: Colors.white, fontSize: 16),
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: Color(0xFF8E8E93)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPaytmOption() {
+    return GestureDetector(
+      onTap: () {
+        // Handle Paytm selection
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1C1C1E),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            // Paytm styled text logo
+            RichText(
+              text: const TextSpan(
+                children: [
+                  TextSpan(
+                    text: 'Pay',
+                    style: TextStyle(
+                      color: Color(0xFF20336B),
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  TextSpan(
+                    text: 'tm',
+                    style: TextStyle(
+                      color: Color(0xFF00BAF2),
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Paytm',
+                style: TextStyle(color: Colors.white, fontSize: 16),
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: Color(0xFF8E8E93)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCreddUpiOption() {
+    return GestureDetector(
+      onTap: () {
+        // Handle CREDD UPI selection
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1C1C1E),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            // CREDD logo
+            Image.asset(
+              'assets/images/cred.png',
+              width: 28,
+              height: 28,
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'CREDD UPI',
+                style: TextStyle(color: Colors.white, fontSize: 16),
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: Color(0xFF8E8E93)),
+          ],
+        ),
+      ),
+    );
+  }
+
+
+}
