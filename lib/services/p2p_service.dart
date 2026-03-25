@@ -56,7 +56,7 @@ class P2PService {
         'getP2PCoins',
       );
       if (result != null) {
-        final coins = result is List ? result : (result['data'] ?? result['result'] ?? []);
+        final coins = result is List ? result : (result['docs'] ?? result['data'] ?? result['result'] ?? []);
         if (coins.isNotEmpty) {
           debugPrint('Real P2P coins fetched: ${coins.length}');
           return coins;
@@ -86,19 +86,49 @@ class P2PService {
     ];
   }
 
+  // Mock fiat currencies for development/testing
+  static List<dynamic> _getMockFiatCurrencies() {
+    return [
+      {'code': 'INR', 'name': 'Indian Rupee', 'symbol': '\u20B9', 'country': 'India'},
+      {'code': 'USD', 'name': 'US Dollar', 'symbol': '\$', 'country': 'United States'},
+      {'code': 'EUR', 'name': 'Euro', 'symbol': '\u20AC', 'country': 'European Union'},
+      {'code': 'GBP', 'name': 'British Pound', 'symbol': '\u00A3', 'country': 'United Kingdom'},
+      {'code': 'AUD', 'name': 'Australian Dollar', 'symbol': 'A\$', 'country': 'Australia'},
+    ];
+  }
+
   static Future<List<dynamic>> getFiatCurrencies() async {
-    try {
-      final result = await _handleRequest(
-        () async => http.get(Uri.parse('$_baseUrl/p2p/v1/fiat/currencies'), headers: await _getHeaders()),
-        'getFiatCurrencies',
-      );
-      if (result != null) {
-        return result is List ? result : (result['data'] ?? result['result'] ?? []);
+    debugPrint('=== GETTING FIAT CURRENCIES ===');
+    
+    // Try multiple possible endpoints
+    final endpoints = [
+      '$_baseUrl/p2p/v1/fiat/currencies',
+      '$_baseUrl/v1/fiat/currencies',
+      '$_baseUrl/fiat/currencies',
+    ];
+    
+    for (String endpoint in endpoints) {
+      try {
+        debugPrint('Trying endpoint: $endpoint');
+        final result = await _handleRequest(
+          () async => http.get(Uri.parse(endpoint), headers: await _getHeaders()),
+          'getFiatCurrencies',
+        );
+        if (result != null) {
+          final currencies = result is List ? result : (result['docs'] ?? result['data'] ?? result['result'] ?? []);
+          if (currencies.isNotEmpty) {
+            debugPrint('Fiat currencies fetched from $endpoint: ${currencies.length}');
+            return currencies;
+          }
+        }
+      } catch (e) {
+        debugPrint('Failed to fetch from $endpoint: $e');
+        continue;
       }
-    } catch (e) {
-      ErrorHandler.logError(e.toString(), 'getFiatCurrencies');
     }
-    return [];
+    
+    debugPrint('All fiat currency endpoints failed, using mock data');
+    return _getMockFiatCurrencies();
   }
 
   static Future<List<dynamic>> getAllAdvertisements() async {

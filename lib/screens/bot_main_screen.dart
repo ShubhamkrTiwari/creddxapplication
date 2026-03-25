@@ -3,6 +3,7 @@ import 'bot_trade_screen.dart';
 import 'bot_dashboard_screen.dart';
 import 'package:creddx/screens/package_program_screen.dart';
 import 'bot_history_screen.dart';
+import 'bot_algorithm_screen.dart';
 import '../main_navigation.dart';
 
 class BotMainScreen extends StatefulWidget {
@@ -19,7 +20,7 @@ class _BotMainScreenState extends State<BotMainScreen> {
   final List<Widget> _screens = [
     const SizedBox.shrink(), // Home icon navigation trigger
     const BotTradeScreen(), // Dashboard tab shows the Trading/Algos interface
-    const BotDashboardScreen(), // Algos tab shows the Bot Dashboard (Market/Strategies)
+    const BotAlgorithmScreen(), // Algos tab shows the Algorithm selection screen
     const PackageProgramScreen(), // Subscribe
     const BotHistoryScreen(showHeader: true), // Logs tab with header
   ];
