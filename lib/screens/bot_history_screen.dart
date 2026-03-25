@@ -52,21 +52,47 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> {
     }
 
     try {
-      final result = await BotService.getMockTradeHistory(
-        pair: _selectedHistoryPair,
-        sortBy: _selectedSortBy,
-        sortOrder: _selectedSortOrder,
-        startDate: _startDate?.toIso8601String(),
-        endDate: _endDate?.toIso8601String(),
+      // Extract strategy and symbol from selected pair
+      String? strategy;
+      String? symbol;
+      
+      // Map pairs to their strategies and symbols
+      switch (_selectedHistoryPair) {
+        case 'BTC-USDT':
+          strategy = 'Omega';
+          symbol = 'BTCUSDT';
+          break;
+        case 'ETH-USDT':
+          strategy = 'Alpha';
+          symbol = 'ETHUSDT';
+          break;
+        case 'SOL-USDT':
+          strategy = 'Ranger';
+          symbol = 'SOLUSDT';
+          break;
+        default:
+          strategy = 'Omega';
+          symbol = 'BTCUSDT';
+      }
+
+      final result = await BotService.getUserBotTrades(
+        strategy: strategy,
+        symbol: symbol,
       );
 
       if (mounted) {
         if (result['success'] == true) {
           final data = result['data'];
-          final List<dynamic> tradesList = data['trades'] ?? [];
+          final List<dynamic> tradesList = data['userTrades'] ?? data['trades'] ?? data ?? [];
           setState(() {
             _trades = tradesList.map((trade) => BotTrade.fromJson(trade)).toList();
             _isLoading = false;
+          });
+        } else if (result['error']?.contains('No investment found') == true) {
+          setState(() {
+            _errorMessage = 'No investments found. Start investing in strategies to see your trade history.';
+            _isLoading = false;
+            _trades = []; // Ensure empty list
           });
         } else {
           setState(() {
@@ -386,7 +412,7 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> {
           ),
           const SizedBox(height: 24),
           const Text(
-            'No Trade History Found',
+            'No Investments Found',
             style: TextStyle(
               color: Color(0xFF8E8E93),
               fontSize: 20,
@@ -395,11 +421,23 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> {
           ),
           const SizedBox(height: 12),
           const Text(
-            'You don\'t have any trade history for this pair',
+            'Start investing in strategies to see your trade history',
             style: TextStyle(
               color: Color(0xFF8E8E93),
               fontSize: 16,
             ),
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton(
+            onPressed: () {
+              // Navigate to algorithm screen
+              Navigator.of(context).pushNamed('/bot_algorithm');
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF84BD00),
+              foregroundColor: Colors.black,
+            ),
+            child: const Text('Start Investing'),
           ),
         ],
       ),

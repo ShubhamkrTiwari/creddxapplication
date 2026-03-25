@@ -4,6 +4,8 @@ import 'bot_dashboard_screen.dart';
 import 'package:creddx/screens/package_program_screen.dart';
 import 'bot_history_screen.dart';
 import 'bot_algorithm_screen.dart';
+import 'bot_positions_screen.dart';
+import 'subscription_screen.dart';
 import '../main_navigation.dart';
 
 class BotMainScreen extends StatefulWidget {
@@ -21,7 +23,8 @@ class _BotMainScreenState extends State<BotMainScreen> {
     const SizedBox.shrink(), // Home icon navigation trigger
     const BotTradeScreen(), // Dashboard tab shows the Trading/Algos interface
     const BotAlgorithmScreen(), // Algos tab shows the Algorithm selection screen
-    const PackageProgramScreen(), // Subscribe
+    const BotPositionsScreen(), // Positions tab shows Open Positions
+    const SubscriptionScreen(), // Subscribe
     const BotHistoryScreen(showHeader: true), // Logs tab with header
   ];
 
@@ -59,8 +62,9 @@ class _BotMainScreenState extends State<BotMainScreen> {
               _buildNavItem(Icons.home_outlined, Icons.home, 'Home', 0),
               _buildNavItem(Icons.dashboard_outlined, Icons.dashboard, 'Dashboard', 1),
               _buildNavItem(Icons.psychology_outlined, Icons.psychology, 'Algos', 2),
-              _buildNavItem(Icons.subscriptions_outlined, Icons.subscriptions, 'Subscribe', 3),
-              _buildNavItem(Icons.receipt_long_outlined, Icons.receipt_long, 'Logs', 4),
+              _buildNavItem(Icons.trending_up_outlined, Icons.trending_up, 'Positions', 3),
+              _buildNavItem(Icons.subscriptions_outlined, Icons.subscriptions, 'Subscribe', 4),
+              _buildNavItem(Icons.receipt_long_outlined, Icons.receipt_long, 'Logs', 5),
             ],
           ),
         ),
