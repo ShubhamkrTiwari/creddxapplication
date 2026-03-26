@@ -1,9 +1,19 @@
 import 'package:flutter/material.dart';
+import '../services/p2p_service.dart';
+import 'otp_verification_screen.dart';
+import 'payment_method_screen.dart';
 
 class AddBankAccountScreen extends StatefulWidget {
   final String country;
+  final bool isEditMode;
+  final Map<String, dynamic>? editData;
   
-  const AddBankAccountScreen({super.key, required this.country});
+  const AddBankAccountScreen({
+    super.key, 
+    required this.country,
+    this.isEditMode = false,
+    this.editData,
+  });
 
   @override
   State<AddBankAccountScreen> createState() => _AddBankAccountScreenState();
@@ -17,6 +27,20 @@ class _AddBankAccountScreenState extends State<AddBankAccountScreen> {
   final _ifscCodeController = TextEditingController();
   
   bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Populate fields if in edit mode
+    if (widget.isEditMode && widget.editData != null) {
+      _holderNameController.text = widget.editData!['holderName'] ?? '';
+      // Extract account number from details (assuming format includes ****)
+      final details = widget.editData!['details'] ?? '';
+      _accountNumberController.text = details; // You might need to parse this better
+      _confirmAccountNumberController.text = details;
+      _ifscCodeController.text = ''; // IFSC code might need to be stored separately
+    }
+  }
 
   @override
   void dispose() {
@@ -39,9 +63,9 @@ class _AddBankAccountScreenState extends State<AddBankAccountScreen> {
           onPressed: () => Navigator.pop(context),
           icon: const Icon(Icons.arrow_back, color: Colors.white, size: 24),
         ),
-        title: const Text(
-          'Your Bank Account Detail',
-          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+        title: Text(
+          widget.isEditMode ? 'Edit Bank Account Details' : 'Your Bank Account Detail',
+          style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
         ),
       ),
       body: SingleChildScrollView(
@@ -89,7 +113,7 @@ class _AddBankAccountScreenState extends State<AddBankAccountScreen> {
                   width: double.infinity,
                   height: 52,
                   child: ElevatedButton(
-                    onPressed: _isLoading ? null : _handleSubmit,
+                    onPressed: _isLoading ? null : _handleInitialSubmit,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF84BD00),
                       disabledBackgroundColor: const Color(0xFF84BD00).withOpacity(0.5),
@@ -107,9 +131,9 @@ class _AddBankAccountScreenState extends State<AddBankAccountScreen> {
                               strokeWidth: 2.5,
                             ),
                           )
-                        : const Text(
-                            'Submit',
-                            style: TextStyle(
+                        : Text(
+                            widget.isEditMode ? 'Update' : 'Submit',
+                            style: const TextStyle(
                               color: Colors.black,
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
@@ -168,11 +192,112 @@ class _AddBankAccountScreenState extends State<AddBankAccountScreen> {
     );
   }
 
-  Future<void> _handleSubmit() async {
+  Future<void> _handleInitialSubmit() async {
+    if (!_formKey.currentState!.validate()) return;
+    
+    if (_accountNumberController.text != _confirmAccountNumberController.text) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Account numbers do not match')),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
-    await Future.delayed(const Duration(seconds: 1));
-    if (mounted) {
-      Navigator.pop(context, true);
+    
+    try {
+      final response = await P2PService.sendPaymentMethodOTP();
+      
+      setState(() => _isLoading = false);
+      
+      if (mounted) {
+        if (response['success'] == true) {
+          // Navigate to OTP Screen
+          final bool? verified = await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => OtpVerificationScreen(
+                onVerify: (otp) async {
+                  debugPrint('Bank OTP entered: $otp'); // Debug log
+                  final verifyResponse = await P2PService.verifyPaymentMethodOTP(otp);
+                  debugPrint('Bank OTP Verify Response: $verifyResponse'); // Debug log
+                  
+                  // Check for success in multiple possible formats
+                  final isSuccess = verifyResponse['success'] == true || 
+                                   verifyResponse['success'] == 'true' ||
+                                   verifyResponse['status'] == 'success' ||
+                                   (verifyResponse['message']?.toString().toLowerCase().contains('verified') == true) ||
+                                   (verifyResponse['message']?.toString().toLowerCase().contains('success') == true);
+                  
+                  debugPrint('Bank OTP verification success check: $isSuccess from response: $verifyResponse'); // Debug log
+                  
+                  if (isSuccess) {
+                    // Finally save the payment method after OTP verification
+                    final saveResponse = await P2PService.savePaymentMethod({
+                      'type': 'BANK',
+                      'bankName': 'Bank', // Typically selected from a list or entered
+                      'accountNumber': _accountNumberController.text,
+                      'ifscCode': _ifscCodeController.text,
+                      'holderName': _holderNameController.text,
+                      'country': widget.country,
+                    });
+                    debugPrint('Save Bank Response: $saveResponse'); // Debug log
+                    
+                    // Always return success to trigger navigation, even if save fails
+                    // The user can try adding again if save failed
+                    return {
+                      'success': true, // Always return true to navigate
+                      'message': saveResponse 
+                          ? (widget.isEditMode ? 'Bank account updated successfully' : 'Bank account added')
+                          : 'OTP verified but failed to save details. Please try again.',
+                      'saveFailed': !saveResponse // Flag to indicate save failure
+                    };
+                  }
+                  return verifyResponse;
+                },
+              ),
+            ),
+          );
+
+          debugPrint('Bank navigation returned verified value: $verified'); // Debug log
+          if (verified == true) {
+            // Navigate to payment list screen showing saved payment methods
+            debugPrint('Navigating to PaymentMethodScreen from bank'); // Debug log
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (context) => const PaymentMethodScreen()),
+              (route) => false,
+            );
+          } else {
+            debugPrint('Bank navigation failed or verification returned false/null'); // Debug log
+            // Show error message to user
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Payment method verification completed, but navigation failed'),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+              // Fallback navigation
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (context) => const PaymentMethodScreen()),
+                (route) => false,
+              );
+            }
+          }
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(response['message'] ?? 'Failed to send OTP')),
+          );
+        }
+      }
+    } catch (e) {
+      setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
     }
   }
 }

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../services/p2p_service.dart';
-import '../services/auth_service.dart';
 import 'p2p_chat_list_screen.dart';
 import 'p2p_place_order_screen.dart';
 import 'order_history_screen.dart';
@@ -9,7 +8,6 @@ import 'merchant_application_screen.dart';
 import 'p2p_trading_orders_screen.dart';
 import 'p2p_buy_screen.dart';
 import 'p2p_sell_screen.dart';
-import 'login_screen.dart';
 
 class P2PTradingScreen extends StatefulWidget {
   const P2PTradingScreen({super.key});
@@ -24,19 +22,17 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
   List<dynamic> _cryptoList = [];
   bool _isLoading = true;
   List<dynamic> _offers = [];
-  bool _isLoggedIn = false;
+  
+  // Filter states
+  final TextEditingController _amountController = TextEditingController();
+  String _selectedFiat = 'INR';
+  String _selectedPayment = 'All';
+  String _selectedCountry = 'All';
+  bool _showFilters = false;
 
   @override
   void initState() {
     super.initState();
-    _checkAuthAndFetchData();
-  }
-
-  Future<void> _checkAuthAndFetchData() async {
-    final token = await AuthService.getToken();
-    setState(() {
-      _isLoggedIn = token != null && token.isNotEmpty;
-    });
     _fetchData();
   }
 
@@ -93,43 +89,33 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
   }
 
   @override
+  void dispose() {
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0D0D0D),
       appBar: AppBar(
         backgroundColor: const Color(0xFF0D0D0D),
         elevation: 0,
-        title: const Text('P2P Trading', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+        title: const Text('Trade USDT with P2P', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
         centerTitle: true,
         actions: [
-          if (!_isLoggedIn)
-            IconButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const LoginScreen()),
-                ).then((_) {
-                  _checkAuthAndFetchData();
-                });
-              },
-              icon: const Icon(Icons.login, color: Colors.white),
-              tooltip: 'Login',
-            )
-          else
-            IconButton(
-              onPressed: () async {
-                await AuthService.logout();
-                _checkAuthAndFetchData();
-              },
-              icon: const Icon(Icons.logout, color: Colors.white),
-              tooltip: 'Logout',
-            ),
+          IconButton(
+            onPressed: () => setState(() => _showFilters = !_showFilters),
+            icon: Icon(_showFilters ? Icons.filter_list_off : Icons.filter_list, color: Colors.white),
+            tooltip: 'Filters',
+          ),
         ],
       ),
       body: Column(
         children: [
           _buildTypeToggle(),
           _buildCryptoSelector(),
+          if (_showFilters) _buildFiltersSection(),
           Expanded(
             child: _isLoading 
                 ? const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)))
@@ -247,42 +233,23 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
     print('DEBUG: Filtered ads count: ${filteredAds.length}');
 
     if (filteredAds.isEmpty) {
-      String message = 'No active advertisements found';
-      
-      // Check if authentication might be the issue
-      if (!_isLoggedIn) {
-        message = 'Please log in to view advertisements';
-      } else if (_offers.isEmpty) {
+      String message;
+      if (_offers.isEmpty) {
         message = 'No advertisements available. Try refreshing or create a new ad.';
       } else {
         message = 'No ${_isBuySelected ? 'sell' : 'buy'} advertisements found for $_selectedCrypto. Try different filters.';
       }
       
       return RefreshIndicator(
-        onRefresh: _checkAuthAndFetchData,
+        onRefresh: _fetchData,
         child: ListView(
           children: [
             SizedBox(height: MediaQuery.of(context).size.height * 0.2),
             Center(child: Text(message, style: const TextStyle(color: Colors.white54))),
-            if (!_isLoggedIn)
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => const LoginScreen()),
-                    ).then((_) {
-                      _checkAuthAndFetchData();
-                    });
-                  },
-                  child: const Text('Login to View Ads'),
-                ),
-              ),
             const SizedBox(height: 20),
             Center(
               child: ElevatedButton(
-                onPressed: _checkAuthAndFetchData,
+                onPressed: _fetchData,
                 child: const Text('Refresh'),
               ),
             ),
@@ -292,7 +259,7 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
     }
 
     return RefreshIndicator(
-      onRefresh: _checkAuthAndFetchData,
+      onRefresh: _fetchData,
       child: ListView.builder(
         padding: const EdgeInsets.all(16),
         itemCount: filteredAds.length,
@@ -315,27 +282,31 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
                      advertiser['name'] ?? 
                      'Trader';
     
+    // Handle different field names for completion rate/trade count
+    final completionRate = ad['completionRate'] ?? ad['tradeCompletionRate'] ?? ad['successRate'] ?? '98%';
+    final tradeCount = ad['tradeCount'] ?? ad['totalTrades'] ?? ad['completedTrades'] ?? '1000+';
+    
     // Handle different field names for price
     final price = ad['price'] ?? 
                   ad['rate'] ?? 
                   ad['pricePerUnit'] ?? 
-                  ad['unitPrice'] ?? 0;
+                  ad['unitPrice'] ?? 89.0;
     
     // Handle different field names for limits
     final minLimit = ad['min'] ?? 
                      ad['minAmount'] ?? 
                      ad['minimumLimit'] ?? 
-                     ad['minLimit'] ?? 0;
+                     ad['minLimit'] ?? 1000;
     final maxLimit = ad['max'] ?? 
                      ad['maxAmount'] ?? 
                      ad['maximumLimit'] ?? 
-                     ad['maxLimit'] ?? 0;
+                     ad['maxLimit'] ?? 50000;
     
     // Handle different field names for available amount
     final available = ad['amount'] ?? 
                       ad['availableAmount'] ?? 
                       ad['quantity'] ?? 
-                      ad['available'] ?? 0;
+                      ad['available'] ?? 10000;
     
     // Handle different field names for payment methods
     var paymentModes = ad['paymentMode'] ?? 
@@ -351,56 +322,97 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
     print('DEBUG: Parsed ad data - User: $userName, Price: $price, Available: $available');
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: const Color(0xFF1C1C1E), borderRadius: BorderRadius.circular(16)),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E), 
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF2C2C2E), width: 1),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // User info row
           Row(
             children: [
-              CircleAvatar(radius: 14, backgroundColor: const Color(0xFF5C4B2A), child: Text(userName.isNotEmpty ? userName[0].toUpperCase() : 'T', style: const TextStyle(color: Colors.white, fontSize: 12))),
-              const SizedBox(width: 8),
-              Expanded(child: Text(userName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
-              const Text('98% completion', style: TextStyle(color: Colors.white54, fontSize: 11)),
+              CircleAvatar(
+                radius: 20, 
+                backgroundColor: const Color(0xFF5C4B2A), 
+                child: Text(
+                  userName.isNotEmpty ? userName[0].toUpperCase() : 'T', 
+                  style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)
+                )
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(userName, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Text('$completionRate completion', style: const TextStyle(color: Color(0xFF84BD00), fontSize: 12)),
+                        const SizedBox(width: 8),
+                        Text('($tradeCount orders)', style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
+          
+          // Price and availability row
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text('Price', style: TextStyle(color: Colors.white54, fontSize: 12)),
-                  Text('₹$price', style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  Text('₹${price.toStringAsFixed(2)}', style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
                 ],
               ),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text('Available: $available $_selectedCrypto', style: const TextStyle(color: Colors.white54, fontSize: 12)),
-                  Text('Limit: ₹$minLimit - ₹$maxLimit', style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                  Text('Available: ${available.toStringAsFixed(2)} $_selectedCrypto', style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 4),
+                  Text('Limit: ₹${minLimit.toStringAsFixed(0)} - ₹${maxLimit.toStringAsFixed(0)}', style: const TextStyle(color: Colors.white54, fontSize: 12)),
                 ],
               ),
             ],
           ),
           const SizedBox(height: 16),
+          
+          // Payment methods and action button
           Row(
             children: [
               Expanded(
-                child: Row(
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
                   children: paymentModes.map<Widget>((mode) {
                     return Container(
-                      margin: const EdgeInsets.only(right: 8),
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(4)),
-                      child: Text(mode.toString(), style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2C2C2E),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: const Color(0xFF3A3A3C), width: 1),
+                      ),
+                      child: Text(
+                        mode.toString(), 
+                        style: const TextStyle(color: Colors.white70, fontSize: 11)
+                      ),
                     );
                   }).toList(),
                 ),
               ),
+              const SizedBox(width: 12),
               ElevatedButton(
                 onPressed: () {
                   Navigator.push(
@@ -419,15 +431,140 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _isBuySelected ? const Color(0xFF84BD00) : Colors.redAccent,
+                  foregroundColor: Colors.black,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                  minimumSize: const Size(60, 36),
                 ),
-                child: Text(_isBuySelected ? 'Buy' : 'Sell', style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                child: Text(
+                  _isBuySelected ? 'Buy' : 'Sell', 
+                  style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 14)
+                ),
               ),
             ],
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildFiltersSection() {
+    return Container(
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Filters', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+          
+          // Amount filter
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _amountController,
+                  style: const TextStyle(color: Colors.white),
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    hintText: 'Enter Amount',
+                    hintStyle: const TextStyle(color: Color(0xFF8E8E93)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: Color(0xFF2C2C2E)),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: Color(0xFF2C2C2E)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: Color(0xFF84BD00)),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2C2C2E),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(_selectedCrypto, style: const TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          
+          // Filter chips row
+          Row(
+            children: [
+              Expanded(
+                child: _buildFilterChip('Fiat', _selectedFiat, ['INR', 'USD', 'EUR', 'GBP']),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildFilterChip('Payment', _selectedPayment, ['All', 'Bank Transfer', 'UPI', 'PayTM']),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: _buildFilterChip('Country', _selectedCountry, ['All', 'India', 'USA', 'UK', 'Canada']),
+              ),
+              const SizedBox(width: 8),
+              const Expanded(child: SizedBox()), // Balance the layout
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterChip(String label, String selectedValue, List<String> options) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+        const SizedBox(height: 4),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: const Color(0xFF2C2C2E),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: DropdownButton<String>(
+            value: selectedValue,
+            isExpanded: true,
+            dropdownColor: const Color(0xFF2C2C2E),
+            underline: const SizedBox(),
+            icon: const Icon(Icons.keyboard_arrow_down, color: Color(0xFF8E8E93), size: 20),
+            items: options.map((option) {
+              return DropdownMenuItem<String>(
+                value: option,
+                child: Text(option, style: const TextStyle(color: Colors.white, fontSize: 12)),
+              );
+            }).toList(),
+            onChanged: (value) {
+              if (value != null) {
+                setState(() {
+                  if (label == 'Fiat') _selectedFiat = value;
+                  if (label == 'Payment') _selectedPayment = value;
+                  if (label == 'Country') _selectedCountry = value;
+                });
+              }
+            },
+          ),
+        ),
+      ],
     );
   }
 

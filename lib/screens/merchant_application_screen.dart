@@ -23,6 +23,8 @@ class _MerchantApplicationScreenState extends State<MerchantApplicationScreen> w
   String _selectedPaymentMethod = 'Bank Transfer (India)';
   String _selectedCountry = 'India (+91)';
   bool _isPaymentMethodAdded = false;
+  List<String> _availablePaymentModes = [];
+  bool _isPaymentModesLoading = true;
   
   // Add adverts form variables
   final TextEditingController _amountController = TextEditingController();
@@ -362,6 +364,7 @@ class _MerchantApplicationScreenState extends State<MerchantApplicationScreen> w
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     _fetchCoinsAndFiat();
+    _fetchPaymentModes();
   }
 
   Future<void> _fetchCoinsAndFiat() async {
@@ -440,6 +443,66 @@ class _MerchantApplicationScreenState extends State<MerchantApplicationScreen> w
         ];
         _isDataLoading = false;
       });
+    }
+  }
+
+  Future<void> _fetchPaymentModes() async {
+    try {
+      debugPrint('Fetching payment modes for country: ${_selectedCountry.split(' ')[0]}');
+      
+      // Extract country name without code
+      final countryName = _selectedCountry.split(' ')[0];
+      
+      // For India, show both UPI and Bank
+      if (countryName == 'India') {
+        setState(() {
+          _availablePaymentModes = ['Bank Transfer', 'UPI Payment'];
+          _isPaymentModesLoading = false;
+        });
+        debugPrint('Available payment modes for India: $_availablePaymentModes');
+        return;
+      }
+      
+      // For other countries, always show Bank Transfer as minimum
+      setState(() {
+        _availablePaymentModes = ['Bank Transfer'];
+        _isPaymentModesLoading = false;
+      });
+      
+      // Try to get additional payment modes from API
+      try {
+        final response = await P2PService.getPaymentModes(countryName);
+        
+        if (response != null && response['success'] == true) {
+          final data = response['data'] ?? {};
+          final modes = data['paymentModes'] ?? data['modes'] ?? [];
+          
+          if (modes.isNotEmpty) {
+            setState(() {
+              _availablePaymentModes = List<String>.from(modes);
+              // Ensure Bank Transfer is always included
+              if (!_availablePaymentModes.contains('Bank Transfer')) {
+                _availablePaymentModes.add('Bank Transfer');
+              }
+            });
+            debugPrint('Available payment modes from API: $_availablePaymentModes');
+          } else {
+            debugPrint('API returned empty modes, using Bank Transfer fallback');
+          }
+        } else {
+          debugPrint('API call failed or returned no success, using Bank Transfer fallback');
+        }
+      } catch (apiError) {
+        debugPrint('API call failed: $apiError, using Bank Transfer fallback');
+      }
+    } catch (e) {
+      debugPrint('Error in _fetchPaymentModes: $e');
+      // Always ensure Bank Transfer is available
+      setState(() {
+        _availablePaymentModes = ['Bank Transfer'];
+        _isPaymentModesLoading = false;
+      });
+      debugPrint('Using Bank Transfer fallback due to error: $_availablePaymentModes');
     }
   }
 
@@ -566,6 +629,9 @@ class _MerchantApplicationScreenState extends State<MerchantApplicationScreen> w
                           setState(() {
                             String oldCountry = _selectedCountry;
                             _selectedCountry = display;
+                            
+                            // Update payment method based on country
+                            final countryName = display.split(' ')[0];
                             if (oldCountry.startsWith('India') != display.startsWith('India')) {
                               if (_selectedPaymentMethod == 'Bank Transfer (India)') {
                                 _selectedPaymentMethod = 'Bank Transfer';
@@ -573,7 +639,16 @@ class _MerchantApplicationScreenState extends State<MerchantApplicationScreen> w
                                 _selectedPaymentMethod = 'Bank Transfer (India)';
                               }
                             }
+                            
+                            // Reset payment method if it's not available for new country
+                            if (!_availablePaymentModes.contains('UPI Payment') && _selectedPaymentMethod == 'UPI Payment') {
+                              _selectedPaymentMethod = countryName == 'India' ? 'Bank Transfer (India)' : 'Bank Transfer';
+                            }
                           });
+                          
+                          // Fetch payment modes for new country
+                          _fetchPaymentModes();
+                          
                           Navigator.pop(context);
                         },
                         trailing: _selectedCountry == display 
@@ -991,9 +1066,24 @@ class _MerchantApplicationScreenState extends State<MerchantApplicationScreen> w
                 children: [
                   const Text('Current Payment Mode', style: TextStyle(color: Colors.white70, fontSize: 14)),
                   const SizedBox(height: 12),
-                  _buildPaymentSummaryItem('UPI Payment', Colors.purple),
-                  const SizedBox(height: 12),
-                  _buildPaymentSummaryItem('Bank Transfer (India)', Colors.orange),
+                  // Show dynamic payment methods that were added
+                  ..._availablePaymentModes.map((mode) {
+                    if (mode == 'UPI Payment') {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _buildPaymentSummaryItem('UPI Payment', Colors.purple),
+                      );
+                    } else if (mode == 'Bank Transfer') {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _buildPaymentSummaryItem(
+                          _selectedCountry.startsWith('India') ? 'Bank Transfer (India)' : 'Bank Transfer',
+                          Colors.orange,
+                        ),
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  }).toList(),
                 ],
               ),
             ),
@@ -1019,7 +1109,6 @@ class _MerchantApplicationScreenState extends State<MerchantApplicationScreen> w
       );
     }
 
-    String bankTransferLabel = _selectedCountry.startsWith('India') ? 'Bank Transfer (India)' : 'Bank Transfer';
     return Column(
       children: [
         Expanded(
@@ -1031,12 +1120,34 @@ class _MerchantApplicationScreenState extends State<MerchantApplicationScreen> w
                 const Text('Choose your country', style: TextStyle(color: Colors.white70, fontSize: 14)),
                 const SizedBox(height: 10),
                 _buildCountryInput(_selectedCountry),
-                const SizedBox(height: 24),
+                const SizedBox(height: 12),
+                if (_availablePaymentModes.isNotEmpty) ...[
+                  Text(
+                    'Available payment modes: ${_availablePaymentModes.join(", ")}',
+                    style: const TextStyle(color: Color(0xFF84BD00), fontSize: 12),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 const Text('Choose a payment method', style: TextStyle(color: Colors.white70, fontSize: 14)),
                 const SizedBox(height: 12),
-                _buildPaymentMethodItem('UPI Payment', Colors.purple, _selectedPaymentMethod == 'UPI Payment'),
-                const SizedBox(height: 12),
-                _buildPaymentMethodItem(bankTransferLabel, Colors.orange, _selectedPaymentMethod == bankTransferLabel),
+                if (_isPaymentModesLoading)
+                  const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)))
+                else
+                  ..._availablePaymentModes.map((mode) {
+                    if (mode == 'UPI Payment') {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _buildPaymentMethodItem('UPI Payment', Colors.purple, _selectedPaymentMethod == 'UPI Payment'),
+                      );
+                    } else if (mode == 'Bank Transfer') {
+                      final bankLabel = _selectedCountry.startsWith('India') ? 'Bank Transfer (India)' : 'Bank Transfer';
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _buildPaymentMethodItem(bankLabel, Colors.orange, _selectedPaymentMethod == bankLabel),
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  }).toList(),
               ],
             ),
           ),

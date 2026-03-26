@@ -2,9 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../main_navigation.dart';
 import '../services/auth_service.dart';
+import 'payment_method_screen.dart';
 
 class OtpVerificationScreen extends StatefulWidget {
-  const OtpVerificationScreen({super.key});
+  final String? email;
+  final Future<Map<String, dynamic>> Function(String otp)? onVerify;
+  final Future<Map<String, dynamic>> Function()? onResend;
+
+  const OtpVerificationScreen({
+    super.key, 
+    this.email,
+    this.onVerify,
+    this.onResend,
+  });
 
   @override
   State<OtpVerificationScreen> createState() => _OtpVerificationScreenState();
@@ -16,10 +26,6 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   int _focusedIndex = 0;
   bool _isLoading = false;
   bool _isResending = false;
-  
-  // TODO: This should be passed as a parameter from the previous screen
-  // Currently hardcoded to 'user@example.com' which will cause issues
-  static const String _email = 'user@example.com';
 
   @override
   void initState() {
@@ -71,17 +77,43 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     });
 
     try {
-      final result = await AuthService.loginWithOtp(_email, _otp);
-
-      if (result['success']) {
-        _showSuccess('OTP verified successfully!');
-        // Navigate to main navigation with bottom nav bar after successful OTP verification
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const MainNavigation()),
-        );
+      if (widget.onVerify != null) {
+        final result = await widget.onVerify!(_otp);
+        debugPrint('OTP Verification Result: $result'); // Debug log
+        
+        // Check for success in multiple formats
+        final isSuccess = result['success'] == true || 
+                         result['success'] == 'true' ||
+                         result['status'] == 'success';
+        
+        if (isSuccess) {
+          debugPrint('OTP verification successful, navigating to PaymentMethodScreen'); // Debug log
+          if (mounted) {
+            // For payment methods, navigate to main PaymentMethodScreen
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (context) => const PaymentMethodScreen()),
+              (route) => false,
+            );
+          }
+        } else {
+          debugPrint('OTP verification failed: ${result['message']}'); // Debug log
+          _showError(result['message'] ?? 'Verification failed');
+        }
       } else {
-        _showError(result['message']);
+        // Default login flow
+        final email = widget.email ?? 'user@example.com';
+        final result = await AuthService.loginWithOtp(email, _otp);
+
+        if (result['success']) {
+          _showSuccess('OTP verified successfully!');
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const MainNavigation()),
+          );
+        } else {
+          _showError(result['message']);
+        }
       }
     } catch (e) {
       _showError('An error occurred during OTP verification');
@@ -100,18 +132,22 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     });
 
     try {
-      final result = await AuthService.resendOtp(_email);
+      Map<String, dynamic> result;
+      if (widget.onResend != null) {
+        result = await widget.onResend!();
+      } else {
+        final email = widget.email ?? 'user@example.com';
+        result = await AuthService.resendOtp(email);
+      }
 
-      if (result['success']) {
+      if (result['success'] == true) {
         _showSuccess('OTP resent successfully!');
-        // Clear OTP fields
         for (var controller in _controllers) {
           controller.clear();
         }
-        // Focus on first field
         _focusNodes[0].requestFocus();
       } else {
-        _showError(result['message']);
+        _showError(result['message'] ?? 'Failed to resend OTP');
       }
     } catch (e) {
       _showError('Failed to resend OTP');
@@ -185,10 +221,17 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
-                'We have sent the 6-digit verification code to\nyour email address',
-                style: TextStyle(fontSize: 16, color: Color(0xFF6C7278)),
+              Text(
+                'We have sent the 6-digit verification code to\nyour registered ${widget.email != null ? 'email/phone' : 'email address'}',
+                style: const TextStyle(fontSize: 16, color: Color(0xFF6C7278)),
               ),
+              if (widget.email != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  widget.email!,
+                  style: const TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+              ],
               const SizedBox(height: 40),
               
               Row(
@@ -264,12 +307,12 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
         color: isFocused ? const Color(0xFF1E1E20) : const Color(0xFF161618),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isFocused ? const Color(0xFF84BD00) : Colors.white.withValues(alpha: 0.1),
+          color: isFocused ? const Color(0xFF84BD00) : Colors.white.withAlpha(25),
           width: isFocused ? 2 : 1,
         ),
         boxShadow: isFocused ? [
           BoxShadow(
-            color: const Color(0xFF84BD00).withValues(alpha: 0.3),
+            color: const Color(0xFF84BD00).withAlpha(75),
             blurRadius: 8,
             spreadRadius: 1,
           )

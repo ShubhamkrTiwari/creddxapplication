@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import '../services/p2p_service.dart';
+import 'otp_verification_screen.dart';
+import 'payment_method_screen.dart';
 
 class PaymentMethodSelectionScreen extends StatefulWidget {
   const PaymentMethodSelectionScreen({super.key});
@@ -450,26 +453,102 @@ class _PaymentMethodSelectionScreenState extends State<PaymentMethodSelectionScr
     setState(() => _isVerifying = true);
 
     try {
-      // Verify payment details are saved
-      final result = await P2PService.verifyPaymentMethod(_selectedMethod);
+      // First save payment details, then send OTP
+      debugPrint('Saving payment details first...'); // Debug log
       
-      if (result) {
+      final paymentData = _selectedMethod == 'Bank' 
+          ? {
+              'type': 'Bank',
+              'bankName': _bankNameController.text,
+              'accountNumber': _accountNumberController.text,
+              'accountHolder': _accountHolderController.text,
+              'ifsc': _ifscController.text,
+            }
+          : {
+              'type': 'UPI',
+              'upiId': _upiIdController.text,
+              'accountHolder': _upiHolderNameController.text,
+            };
+
+      // Save payment details first
+      final saveResult = await P2PService.savePaymentMethod(paymentData);
+      debugPrint('Save payment details result: $saveResult'); // Debug log
+      
+      if (!saveResult) {
+        setState(() => _isVerifying = false);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Payment verified and saved successfully'),
+            content: Text('Failed to save payment details'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+      
+      // Now send OTP for verification
+      debugPrint('Sending OTP for payment method verification...'); // Debug log
+      final otpResult = await P2PService.sendPaymentMethodOTP();
+      
+      debugPrint('OTP Result: $otpResult'); // Debug log
+      
+      // Check for success in multiple possible formats
+      final isSuccess = otpResult['success'] == true || 
+                       otpResult['status'] == 'success' ||
+                       otpResult['message']?.toString().toLowerCase().contains('sent') == true ||
+                       (otpResult is Map && !otpResult.containsKey('error') && !otpResult.containsKey('success'));
+      
+      if (isSuccess) {
+        debugPrint('OTP sent successfully, opening OTP screen'); // Debug log
+        
+        // Navigate to OTP verification screen
+        final verified = await Navigator.push<bool>(
+          context,
+          MaterialPageRoute(
+            builder: (context) => OtpVerificationScreen(
+              onVerify: (otp) async {
+                debugPrint('Payment method OTP entered: $otp'); // Debug log
+                return await P2PService.verifyPaymentMethodOTP(otp);
+              },
+              onResend: () async {
+                debugPrint('Resend payment method OTP clicked'); // Debug log
+                return await P2PService.sendPaymentMethodOTP();
+              },
+            ),
+          ),
+        );
+      
+      if (verified == true) {
+        // Navigate to payment list screen showing saved payment methods
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Payment method added and verified successfully'),
             backgroundColor: Color(0xFF84BD00),
           ),
         );
-        Navigator.pop(context, true);
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => const PaymentMethodScreen()),
+          (route) => false,
+        );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Payment verification failed'),
+            content: Text('OTP verification failed'),
             backgroundColor: Colors.red,
           ),
         );
       }
+    } else {
+      debugPrint('OTP sending failed: $otpResult'); // Debug log
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to send OTP: ${otpResult['message'] ?? otpResult['error'] ?? 'Unknown error'}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
     } catch (e) {
+      debugPrint('Error in payment confirmation: $e'); // Debug log
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error: $e'),

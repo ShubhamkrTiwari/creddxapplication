@@ -155,32 +155,42 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> with TickerProv
       actions.add(_buildChatButton(order));
     }
     
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: const Color(0xFF1C1C1E), borderRadius: BorderRadius.circular(12)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 320),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(color: const Color(0xFF1C1C1E), borderRadius: BorderRadius.circular(12)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 300),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                '${isBuy ? "Buy" : "Sell"} ${order['coin'] ?? "USDT"}',
-                style: TextStyle(color: isBuy ? const Color(0xFF84BD00) : Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: statusColor.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(12),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '${isBuy ? "Buy" : "Sell"} ${order['coin'] ?? "USDT"}',
+                  style: TextStyle(color: isBuy ? const Color(0xFF84BD00) : Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 16),
+                  overflow: TextOverflow.ellipsis,
                 ),
-                child: Text(
-                  statusText,
-                  style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.bold),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: statusColor.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    statusText,
+                    style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           const SizedBox(height: 12),
           _buildInfoRow('Order ID', orderId.substring(0, 8) + '...'),
@@ -188,15 +198,24 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> with TickerProv
           _buildInfoRow('Price', '₹${order['price']}'),
           _buildInfoRow('Total', '₹${(double.tryParse(order['amount'].toString()) ?? 0) * (double.tryParse(order['price'].toString()) ?? 0)}'),
           if (order['paymentMode'] != null)
-            _buildInfoRow('Payment Method', order['paymentMode']),
+            _buildInfoRow('Payment Method', order['paymentMode'].toString().length > 20 ? 
+              order['paymentMode'].toString().substring(0, 20) + '...' : order['paymentMode'].toString()),
           if (order['createdAt'] != null)
             _buildInfoRow('Created', _formatDate(order['createdAt'])),
           const Divider(color: Colors.white10, height: 24),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: actions,
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 300),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: actions,
+              ),
+            ),
           ),
         ],
+      ),
+      ),
       ),
     );
   }
@@ -485,12 +504,22 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> with TickerProv
   Widget _buildInfoRow(String label, String value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: const TextStyle(color: Colors.white54, fontSize: 13)),
-          Text(value, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
-        ],
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label, style: const TextStyle(color: Colors.white54, fontSize: 13)),
+            const SizedBox(width: 8),
+            Text(
+              value, 
+              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+              textAlign: TextAlign.right,
+              overflow: TextOverflow.ellipsis,
+              maxLines: 2,
+            ),
+          ],
+        ),
       ),
     );
   }

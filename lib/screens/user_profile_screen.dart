@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'update_profile_screen.dart';
 import 'referral_hub_screen.dart';
 import 'kyc_document_screen.dart';
 import '../services/user_service.dart';
+import '../services/p2p_service.dart';
 
 class UserProfileScreen extends StatefulWidget {
   const UserProfileScreen({super.key});
@@ -13,20 +15,41 @@ class UserProfileScreen extends StatefulWidget {
 
 class _UserProfileScreenState extends State<UserProfileScreen> {
   bool _isAssetsAllocationExpanded = false;
-  bool _isTrustedDevicesExpanded = false;
   final UserService _userService = UserService();
+  List<dynamic> _trustedDevices = [];
+  bool _isLoadingDevices = true;
 
   @override
   void initState() {
     super.initState();
     // Initialize user data if not already done
     _loadUserData();
+    _loadTrustedDevices();
   }
 
   Future<void> _loadUserData() async {
     await _userService.initUserData();
     if (mounted) {
       setState(() {});
+    }
+  }
+
+  Future<void> _loadTrustedDevices() async {
+    try {
+      debugPrint('Loading trusted devices...'); // Debug log
+      final devices = await P2PService.getTrustedDevices();
+      debugPrint('Fetched trusted devices: $devices'); // Debug log
+      
+      setState(() {
+        _trustedDevices = devices;
+        _isLoadingDevices = false;
+      });
+    } catch (e) {
+      debugPrint('Error loading trusted devices: $e'); // Debug log
+      setState(() {
+        _trustedDevices = [];
+        _isLoadingDevices = false;
+      });
     }
   }
 
@@ -116,12 +139,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               content: _buildAssetsAllocationContent(),
             ),
             const Divider(color: Colors.white10, height: 1),
-            _buildExpandableSection(
-              title: 'Trusted Devices and IP Addresses',
-              isExpanded: _isTrustedDevicesExpanded,
-              onTap: () => setState(() => _isTrustedDevicesExpanded = !_isTrustedDevicesExpanded),
-              content: _buildTrustedDevicesContent(),
-            ),
+            _buildUSMESection(),
             const Divider(color: Colors.white10, height: 1),
           ],
         ),
@@ -399,21 +417,72 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   Widget _buildTrustedDevicesContent() {
+    if (_isLoadingDevices) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        child: const Center(
+          child: CircularProgressIndicator(color: Color(0xFF84BD00)),
+        ),
+      );
+    }
+
+    if (_trustedDevices.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        child: Center(
+          child: Column(
+            children: [
+              Icon(
+                Icons.devices_outlined,
+                size: 48,
+                color: Colors.grey[600],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'No trusted devices found',
+                style: TextStyle(
+                  color: Colors.grey[400],
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Your trusted devices will appear here',
+                style: TextStyle(
+                  color: Colors.grey[500],
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       child: Column(
-        children: [
-          _buildDeviceItem('YES', '123.123.123.123', '11 Dec 2025 | 11:02:12 AM', 'Chrome'),
-          const Divider(color: Colors.white10, height: 32),
-          _buildDeviceItem('YES', '123.123.123.123', '11 Dec 2025 | 11:02:12 AM', 'Chrome'),
-          const Divider(color: Colors.white10, height: 32),
-          _buildDeviceItem('YES', '123.123.123.123', '11 Dec 2025 | 11:02:12 AM', 'Chrome'),
-        ],
+        children: _trustedDevices.map((device) {
+          // Extract data from API response
+          final trusted = device['isTrusted'] == true || device['trusted'] == true ? 'YES' : 'NO';
+          final ip = device['ipAddress'] ?? device['ip'] ?? 'Unknown IP';
+          final date = device['lastLoginAt'] ?? device['createdAt'] ?? 'Unknown Date';
+          final deviceName = device['deviceName'] ?? device['deviceType'] ?? 'Unknown Device';
+          final deviceId = device['id']?.toString() ?? device['_id']?.toString() ?? '';
+          
+          return Column(
+            children: [
+              _buildDeviceItem(trusted, ip, date, deviceName, deviceId),
+              if (device != _trustedDevices.last) 
+                const Divider(color: Colors.white10, height: 32),
+            ],
+          );
+        }).toList(),
       ),
     );
   }
 
-  Widget _buildDeviceItem(String trusted, String ip, String date, String device) {
+  Widget _buildDeviceItem(String trusted, String ip, String date, String device, String deviceId) {
     return Row(
       children: [
         Expanded(
@@ -440,11 +509,269 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               const SizedBox(height: 12),
               const Text('Recent Activity Device', style: TextStyle(color: Colors.white38, fontSize: 11)),
               const SizedBox(height: 4),
-              Text(device, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(device, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                  ),
+                  if (deviceId.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.verified_user_outlined,
+                      color: trusted == 'YES' ? const Color(0xFF84BD00) : Colors.grey[600],
+                      size: 16,
+                    ),
+                  ],
+                ],
+              ),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildUSMESection() {
+    return _buildExpandableSection(
+      title: 'Security & Devices',
+      isExpanded: true, // Always expanded for USME
+      onTap: () {}, // No toggle for USME section
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 16),
+          
+          // Section Header
+          Row(
+            children: [
+              Icon(
+                Icons.security_outlined,
+                color: const Color(0xFF84BD00),
+                size: 20,
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'User Security & Management Environment',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 24),
+          
+          // Trusted Devices Subsection
+          const Text(
+            'Trusted Devices',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 12),
+          
+          // Trusted Devices Content
+          if (_isLoadingDevices)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1C1C1E),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Center(
+                child: CircularProgressIndicator(color: Color(0xFF84BD00)),
+              ),
+            )
+          else if (_trustedDevices.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1C1C1E),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Center(
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.devices_outlined,
+                      size: 32,
+                      color: Colors.grey[600],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'No trusted devices found',
+                      style: TextStyle(
+                        color: Colors.grey[400],
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            Column(
+              children: _trustedDevices.map((device) {
+                final trusted = device['isTrusted'] == true || device['trusted'] == true ? 'YES' : 'NO';
+                final ip = device['ipAddress'] ?? device['ip'] ?? 'Unknown IP';
+                final date = device['lastLoginAt'] ?? device['createdAt'] ?? 'Unknown Date';
+                final deviceName = device['deviceName'] ?? device['deviceType'] ?? 'Unknown Device';
+                final deviceId = device['id']?.toString() ?? device['_id']?.toString() ?? '';
+                
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1C1C1E),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: trusted == 'YES' ? const Color(0xFF84BD00) : const Color(0xFF2C2C2E),
+                      width: 1,
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Device: $deviceName',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Status: $trusted',
+                                  style: TextStyle(
+                                    color: trusted == 'YES' ? const Color(0xFF84BD00) : Colors.grey[400],
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Last Activity: $date',
+                                  style: const TextStyle(
+                                    color: Color(0xFF8E8E93),
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Icon(
+                            Icons.verified_user_outlined,
+                            color: trusted == 'YES' ? const Color(0xFF84BD00) : Colors.grey[600],
+                            size: 20,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.location_on_outlined,
+                            color: const Color(0xFF8E8E93),
+                            size: 16,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'IP Address: $ip',
+                            style: const TextStyle(
+                              color: Color(0xFF8E8E93),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          
+          const SizedBox(height: 32),
+          
+          // IP Address Summary
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1C1C1E),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFF2C2C2E)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.network_check_outlined,
+                      color: const Color(0xFF84BD00),
+                      size: 20,
+                    ),
+                    const SizedBox(width: 12),
+                    const Text(
+                      'IP Address Summary',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Current Session IP',
+                            style: TextStyle(color: Color(0xFF8E8E93), fontSize: 12),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '192.168.1.1', // This could be dynamic from API
+                            style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF84BD00).withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Text(
+                        'Secure',
+                        style: TextStyle(
+                          color: const Color(0xFF84BD00),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

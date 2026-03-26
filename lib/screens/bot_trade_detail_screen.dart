@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/bot_service.dart';
 import 'package_program_screen.dart';
 
 class BotTradeDetailScreen extends StatefulWidget {
@@ -22,6 +23,34 @@ class BotTradeDetailScreen extends StatefulWidget {
 class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
   final TextEditingController _investController = TextEditingController();
   final TextEditingController _withdrawController = TextEditingController();
+  
+  bool _isLoading = true;
+  Map<String, dynamic>? _performanceData;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchPerformanceData();
+  }
+
+  Future<void> _fetchPerformanceData() async {
+    setState(() => _isLoading = true);
+    try {
+      final response = await BotService.getStrategyPerformance(widget.name);
+      if (mounted) {
+        setState(() {
+          if (response['success']) {
+            _performanceData = response['data'];
+          }
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -189,151 +218,189 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
         ),
         centerTitle: true,
       ),
-      body: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 20),
-            const Text(
-              'Algo Overview',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 24),
-            _buildOverviewItem('Pair:', 'Multiple Alt Pairs'),
-            _buildOverviewItem('AUM:', '805.99K'),
-            _buildOverviewItem('Volume:', 'InfinityM'),
-            _buildOverviewItem('Drawdown:', '172.94%'),
-            _buildOverviewItem('Recovery:', '137d Max / 73d Avg'),
-            _buildOverviewItem('Trades:', '40'),
-            _buildOverviewItem('Win Rate:', '95.00%'),
-            _buildOverviewItem('Profit Comm:', '20%'),
-            _buildOverviewItem('Max Risk:', '47.20%'),
-            
-            const Spacer(),
-            
-            if (BotTradeDetailScreen.isInvested) ...[
-              const Padding(
-                padding: EdgeInsets.only(bottom: 24.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Invested:',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      '50.00 USDT',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
+      body: _isLoading 
+        ? const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)))
+        : SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 20.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 20),
+                const Text(
+                  'Algo Overview',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ),
-            ],
-            
-            Padding(
-              padding: const EdgeInsets.only(bottom: 30.0),
-              child: BotTradeDetailScreen.isInvested
-                ? Row(
-                    children: [
-                      Expanded(
-                        child: SizedBox(
-                          height: 56,
-                          child: OutlinedButton(
-                            onPressed: _handleInvestClick,
-                            style: OutlinedButton.styleFrom(
-                              side: BorderSide(color: Colors.white.withOpacity(0.2)),
-                              backgroundColor: const Color(0xFF1C1C1E),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            child: const Text(
-                              'Invest',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                const SizedBox(height: 24),
+                _buildOverviewItem('Pair:', _performanceData?['pair'] ?? 'Multiple Alt Pairs'),
+                _buildOverviewItem('AUM:', _performanceData?['aum'] ?? '805.99K'),
+                _buildOverviewItem('Volume:', _performanceData?['volume'] ?? 'InfinityM'),
+                _buildOverviewItem('Drawdown:', _performanceData?['drawdown'] ?? '172.94%'),
+                _buildOverviewItem('Recovery:', _performanceData?['recovery'] ?? '137d Max / 73d Avg'),
+                _buildOverviewItem('Trades:', _performanceData?['trades']?.toString() ?? '40'),
+                _buildOverviewItem('Win Rate:', _performanceData?['winRate'] ?? '95.00%'),
+                _buildOverviewItem('Profit Comm:', _performanceData?['profitComm'] ?? '20%'),
+                _buildOverviewItem('Max Risk:', _performanceData?['maxRisk'] ?? '47.20%'),
+                
+                const SizedBox(height: 40),
+                
+                const Text(
+                  'Performance History',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _buildPerformanceRow('Today', _performanceData?['todayRoi'] ?? '+1.24%', Colors.green),
+                _buildPerformanceRow('Last 7 Days', _performanceData?['last7DaysRoi'] ?? '+8.45%', Colors.green),
+                _buildPerformanceRow('Last 30 Days', _performanceData?['last30DaysRoi'] ?? '+24.12%', Colors.green),
+                _buildPerformanceRow('All Time', _performanceData?['rot'] ?? '+922.19%', Colors.green),
+                
+                const SizedBox(height: 40),
+
+                const Text(
+                  'Strategy Details',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  _performanceData?['strategyDescription'] ?? 'This strategy uses multiple indicator confirmations to trade high-volatility altcoin pairs with ${widget.multiplier} leverage. It focuses on momentum breakouts and trend reversals with strict risk management.',
+                  style: const TextStyle(
+                    color: Color(0xFF8E8E93),
+                    fontSize: 14,
+                    height: 1.5,
+                  ),
+                ),
+
+                const SizedBox(height: 40),
+                
+                if (BotTradeDetailScreen.isInvested) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 24.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Invested:',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: SizedBox(
-                          height: 56,
-                          child: ElevatedButton(
-                            onPressed: () => _showAmountDialog(
-                              title: 'Enter Withdrawal Amount',
-                              hint: 'Total: \$50.00',
-                              controller: _withdrawController,
-                              isConfirmingInvestment: false,
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF84BD00),
-                              foregroundColor: Colors.black,
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            child: const Text(
-                              'Withdraw',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                        const Text(
+                          '50.00 USDT',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
-                      ),
-                    ],
-                  )
-                : SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: ElevatedButton(
-                      onPressed: _handleInvestClick,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF84BD00),
-                        foregroundColor: Colors.black,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Invest',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                      ],
                     ),
                   ),
+                ],
+                
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 30.0),
+                  child: BotTradeDetailScreen.isInvested
+                    ? Row(
+                        children: [
+                          Expanded(
+                            child: SizedBox(
+                              height: 56,
+                              child: OutlinedButton(
+                                onPressed: _handleInvestClick,
+                                style: OutlinedButton.styleFrom(
+                                  side: BorderSide(color: Colors.white.withOpacity(0.2)),
+                                  backgroundColor: const Color(0xFF1C1C1E),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                child: const Text(
+                                  'Invest',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: SizedBox(
+                              height: 56,
+                              child: ElevatedButton(
+                                onPressed: () => _showAmountDialog(
+                                  title: 'Enter Withdrawal Amount',
+                                  hint: 'Total: \$50.00',
+                                  controller: _withdrawController,
+                                  isConfirmingInvestment: false,
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF84BD00),
+                                  foregroundColor: Colors.black,
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                child: const Text(
+                                  'Withdraw',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      )
+                    : SizedBox(
+                        width: double.infinity,
+                        height: 56,
+                        child: ElevatedButton(
+                          onPressed: _handleInvestClick,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF84BD00),
+                            foregroundColor: Colors.black,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: const Text(
+                            'Invest',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
     );
   }
 
   Widget _buildOverviewItem(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12.0),
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -350,6 +417,32 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
               color: Colors.white,
               fontSize: 15,
               fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPerformanceRow(String label, String value, Color color) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF8E8E93),
+              fontSize: 15,
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
             ),
           ),
         ],

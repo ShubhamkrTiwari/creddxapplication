@@ -46,6 +46,66 @@ class P2PService {
     }
   }
 
+  // --- OTP Verification for Payment Methods ---
+  static Future<Map<String, dynamic>> sendPaymentMethodOTP() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/payment/method/send-otp'),
+        headers: await _getHeaders(),
+      );
+      debugPrint('Send OTP response status: ${response.statusCode}');
+      debugPrint('Send OTP response body: ${response.body}');
+      
+      return json.decode(response.body);
+    } catch (e) {
+      debugPrint('Send OTP error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  static Future<Map<String, dynamic>> verifyPaymentMethodOTP(String otp) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/payment/method/verify-otp'),
+        headers: await _getHeaders(),
+        body: json.encode({'otp': otp}),
+      );
+      debugPrint('Verify OTP response status: ${response.statusCode}');
+      debugPrint('Verify OTP response body: ${response.body}');
+      
+      return json.decode(response.body);
+    } catch (e) {
+      debugPrint('Verify OTP error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  // --- Merchant Specific ---
+  static Future<Map<String, dynamic>> sendMerchantPaymentOTP() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/payment/method/send-otp'),
+        headers: await _getHeaders(),
+      );
+      return json.decode(response.body);
+    } catch (e) {
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  static Future<Map<String, dynamic>> verifyMerchantPaymentOTP(String otp) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/payment/method/verify-otp'),
+        headers: await _getHeaders(),
+        body: json.encode({'otp': otp}),
+      );
+      return json.decode(response.body);
+    } catch (e) {
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
   // --- Advertisements & Coins ---
   static Future<List<dynamic>> getP2PCoins() async {
     debugPrint('=== GETTING REAL P2P COINS ===');
@@ -131,72 +191,175 @@ class P2PService {
     return _getMockFiatCurrencies();
   }
 
+  // --- Debug Function to Create Multiple Test Advertisements ---
+  static Future<bool> createMultipleTestAdvertisements() async {
+    debugPrint('=== CREATING MULTIPLE TEST ADVERTISEMENTS ===');
+    
+    final testAds = [
+      {
+        'coin': 'USDT',
+        'amount': 1000.0,
+        'price': 85.50,
+        'min': 500,
+        'max': 10000,
+        'paymentMode': ['Bank Transfer', 'UPI'],
+        'type': 'sell',
+        'fiat': 'INR',
+        'floating': 0,
+        'paymentTime': 15,
+      },
+      {
+        'coin': 'USDT',
+        'amount': 500.0,
+        'price': 86.00,
+        'min': 1000,
+        'max': 20000,
+        'paymentMode': ['Bank Transfer'],
+        'type': 'buy',
+        'fiat': 'INR',
+        'floating': 0,
+        'paymentTime': 15,
+      },
+      {
+        'coin': 'BTC',
+        'amount': 0.01,
+        'price': 4500000.0,
+        'min': 10000,
+        'max': 100000,
+        'paymentMode': ['UPI', 'PayTM'],
+        'type': 'sell',
+        'fiat': 'INR',
+        'floating': 0,
+        'paymentTime': 15,
+      },
+    ];
+    
+    bool anySuccess = false;
+    for (int i = 0; i < testAds.length; i++) {
+      debugPrint('Creating test ad ${i + 1}: ${json.encode(testAds[i])}');
+      
+      try {
+        final result = await createAdvertisement(testAds[i]);
+        debugPrint('Test ad ${i + 1} creation result: $result');
+        if (result) anySuccess = true;
+        
+        // Add small delay between creations
+        await Future.delayed(Duration(milliseconds: 500));
+      } catch (e) {
+        debugPrint('Error creating test ad ${i + 1}: $e');
+      }
+    }
+    
+    debugPrint('Multiple test ads creation completed. Any success: $anySuccess');
+    return anySuccess;
+  }
+
+  // --- Debug Function to Create Test Advertisement ---
+  static Future<bool> createTestAdvertisement() async {
+    debugPrint('=== CREATING TEST ADVERTISEMENT ===');
+    
+    try {
+      final testAd = {
+        'coin': 'USDT',
+        'amount': 1000.0,
+        'price': 85.50,
+        'min': 500,
+        'max': 10000,
+        'paymentMode': ['Bank Transfer', 'UPI'],
+        'type': 'sell',
+        'fiat': 'INR',
+        'floating': 0,
+        'paymentTime': 15,
+      };
+      
+      debugPrint('Creating test ad: ${json.encode(testAd)}');
+      
+      final result = await createAdvertisement(testAd);
+      debugPrint('Test ad creation result: $result');
+      
+      return result;
+    } catch (e) {
+      debugPrint('Error creating test ad: $e');
+      return false;
+    }
+  }
+
   static Future<List<dynamic>> getAllAdvertisements() async {
     debugPrint('=== GETTING REAL ADVERTISEMENTS ===');
     
     try {
       final headers = await _getHeaders();
       
-      debugPrint('Fetching advertisements with headers: $headers');
+      // Try multiple endpoints with different parameters
+      final endpoints = [
+        '$_baseUrl/p2p/v1/p2p/advertise/all',
+        '$_baseUrl/p2p/v1/p2p/advertise/all?limit=100',
+        '$_baseUrl/p2p/v1/p2p/advertise/all?status=active',
+        '$_baseUrl/p2p/v1/advertise/all',
+        '$_baseUrl/advertise/all',
+      ];
       
-      final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/all'), headers: headers);
-      
-      debugPrint('Advertisements API response status: ${response.statusCode}');
-      debugPrint('Advertisements API response body: ${response.body}');
-      
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        debugPrint('Parsed advertisements data: $data');
+      for (String endpoint in endpoints) {
+        debugPrint('Trying endpoint: $endpoint');
         
-        List<dynamic> ads = [];
-        if (data is List) {
-          ads = data;
-        } else if (data is Map) {
-          ads = data['data'] ?? data['result'] ?? data['advertisements'] ?? [];
-        }
-        
-        debugPrint('Real advertisements list length: ${ads.length}');
-        if (ads.isNotEmpty) {
-          return ads;
-        } else {
-          debugPrint('Real API returned empty ads, using mock as fallback');
-          return _getMockAdvertisements();
-        }
-      } else if (response.statusCode == 401) {
-        debugPrint('Authentication failed - token might be expired');
-        // Try without authentication for public ads
-        final publicHeaders = {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        };
-        final publicResponse = await http.get(Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/all'), headers: publicHeaders);
-        
-        if (publicResponse.statusCode == 200) {
-          final data = json.decode(publicResponse.body);
-          List<dynamic> ads = [];
-          if (data is List) {
-            ads = data;
-          } else if (data is Map) {
-            ads = data['data'] ?? data['result'] ?? data['advertisements'] ?? [];
+        try {
+          final response = await http.get(Uri.parse(endpoint), headers: headers);
+          debugPrint('Response Status: ${response.statusCode}');
+          
+          if (response.statusCode == 200) {
+            final data = json.decode(response.body);
+            List<dynamic> ads = [];
+            
+            if (data is List) {
+              ads = data;
+            } else if (data is Map) {
+              ads = data['finalData'] ?? data['data'] ?? data['result'] ?? data['docs'] ?? data['advertisements'] ?? [];
+              
+              if (ads.isEmpty) {
+                // Check all keys for any lists that might be ads
+                for (var key in (data as Map).keys) {
+                  if (data[key] is List && key.toString().toLowerCase().contains('ad')) {
+                    ads = data[key];
+                    break;
+                  }
+                }
+              }
+            }
+            
+            if (ads.isNotEmpty) {
+              debugPrint('Real advertisements list length from $endpoint: ${ads.length}');
+              return ads;
+            }
           }
-          debugPrint('Public advertisements fetched: ${ads.length}');
-          if (ads.isNotEmpty) {
-            return ads;
-          } else {
-            debugPrint('Public API returned empty ads, using mock as fallback');
-            return _getMockAdvertisements();
-          }
+        } catch (e) {
+          debugPrint('Error fetching from $endpoint: $e');
         }
       }
+      
+      debugPrint('No ads found in real endpoints, attempting to create test ads...');
+      final testAdsCreated = await createMultipleTestAdvertisements();
+      
+      if (testAdsCreated) {
+        debugPrint('Test ads created, retrying fetch...');
+        await Future.delayed(Duration(seconds: 2));
+        final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/all'), headers: headers);
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          List<dynamic> retryAds = [];
+          if (data is Map) {
+            retryAds = data['finalData'] ?? data['data'] ?? data['result'] ?? data['docs'] ?? [];
+          }
+          if (retryAds.isNotEmpty) return retryAds;
+        }
+      }
+      
+      debugPrint('Still no real ads found, using mock as fallback');
+      return _getMockAdvertisements();
+      
     } catch (e) { 
       debugPrint('Advertisements fetch error: $e');
-      debugPrint('Stack trace: ${StackTrace.current}');
-      debugPrint('API failed, using mock advertisements as fallback');
       return _getMockAdvertisements();
     }
-    
-    debugPrint('API failed completely, using mock advertisements as fallback');
-    return _getMockAdvertisements();
   }
 
   // Mock advertisements for development/testing
@@ -274,9 +437,6 @@ class P2PService {
     try {
       final headers = await _getHeaders();
       debugPrint('=== CREATE ADVERTISEMENT DEBUG ===');
-      debugPrint('Headers: $headers');
-      debugPrint('Request URL: $_baseUrl/p2p/v1/p2p/advertise/create');
-      debugPrint('Request Data: ${json.encode(adData)}');
       
       // Try advertisement creation first
       var response = await http.post(
@@ -285,26 +445,25 @@ class P2PService {
         body: json.encode(adData)
       );
       
-      debugPrint('Response Status: ${response.statusCode}');
-      debugPrint('Response Body: ${response.body}');
+      debugPrint('Create Ad Response Status: ${response.statusCode}');
+      debugPrint('Create Ad Response Body: ${response.body}');
       
-      // If advertisement creation fails (404), try order creation as fallback
-      if (response.statusCode == 404) {
-        debugPrint('Advertisement endpoint not found, trying order creation as fallback...');
+      // If advertisement creation fails (404 or direction error), try order creation as fallback
+      if (response.statusCode == 404 || (response.statusCode == 400 && response.body.contains('direction'))) {
+        debugPrint('Falling back to order creation endpoint...');
         
         final orderData = {
           "coin": adData["coin"] ?? "USDT",
           "quantity": adData["amount"] ?? 0.0,
           "price": adData["price"] ?? 0.0,
           "paymentMode": adData["paymentMode"]?.first ?? "Bank",
+          "payMethod": adData["paymentMode"]?.first ?? "Bank", // Required for sell orders
           "type": adData["type"] ?? "buy",
-          "direction": (adData["type"] ?? "buy") == "buy" ? 1 : 0, // Convert to number: 1 for buy, 0 for sell
+          "direction": (adData["type"] ?? "buy") == "buy" ? 1 : 2, // FIXED: 1 for BUY, 2 for SELL
           "paymentTime": adData["paymentTime"] ?? 15,
           "fiat": adData["fiat"] ?? "INR",
           "floating": adData["floating"] ?? 0,
         };
-        
-        debugPrint('Fallback Order Data: ${json.encode(orderData)}');
         
         response = await http.post(
           Uri.parse('$_baseUrl/p2p/v1/p2p/order/create'), 
@@ -312,17 +471,13 @@ class P2PService {
           body: json.encode(orderData)
         );
         
-        debugPrint('Order Creation Response Status: ${response.statusCode}');
-        debugPrint('Order Creation Response Body: ${response.body}');
+        debugPrint('Fallback Order Response Status: ${response.statusCode}');
+        debugPrint('Fallback Order Response Body: ${response.body}');
       }
-      
-      debugPrint('Response Headers: ${response.headers}');
-      debugPrint('=== END DEBUG ===');
       
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (e) { 
       debugPrint('Create ad error: $e');
-      debugPrint('Stack trace: ${StackTrace.current}');
       return false;
     }
   }
@@ -330,11 +485,8 @@ class P2PService {
   static Future<bool> editAdvertisement(String adId, Map<String, dynamic> adData) async {
     try {
       final response = await http.put(Uri.parse('$_baseUrl/p2p/v1/advertise/edit/$adId'), headers: await _getHeaders(), body: json.encode(adData));
-      debugPrint('Edit ad response status: ${response.statusCode}');
-      debugPrint('Edit ad response body: ${response.body}');
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (e) { 
-      debugPrint('Edit ad error: $e');
       return false;
     }
   }
@@ -342,11 +494,8 @@ class P2PService {
   static Future<bool> publishAdvertisement(String adId) async {
     try {
       final response = await http.post(Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/publish/$adId'), headers: await _getHeaders());
-      debugPrint('Publish ad response status: ${response.statusCode}');
-      debugPrint('Publish ad response body: ${response.body}');
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (e) { 
-      debugPrint('Publish ad error: $e');
       return false;
     }
   }
@@ -354,11 +503,8 @@ class P2PService {
   static Future<bool> deleteAdvertisement(String adId) async {
     try {
       final response = await http.delete(Uri.parse('$_baseUrl/p2p/v1/advertise/my-ads/delete/$adId'), headers: await _getHeaders());
-      debugPrint('Delete ad response status: ${response.statusCode}');
-      debugPrint('Delete ad response body: ${response.body}');
       return response.statusCode == 200 || response.statusCode == 204;
     } catch (e) { 
-      debugPrint('Delete ad error: $e');
       return false;
     }
   }
@@ -366,18 +512,14 @@ class P2PService {
   static Future<List<dynamic>> getMyOpenAdvertisements() async {
     try {
       final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/advertise/my-ads/open'), headers: await _getHeaders());
-      debugPrint('My open ads response status: ${response.statusCode}');
-      debugPrint('My open ads response body: ${response.body}');
-      
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         List<dynamic> ads = [];
         if (data is List) {
           ads = data;
         } else if (data is Map) {
-          ads = data['data'] ?? data['result'] ?? data['advertisements'] ?? [];
+          ads = data['finalData'] ?? data['data'] ?? data['result'] ?? data['docs'] ?? [];
         }
-        debugPrint('My open advertisements fetched: ${ads.length}');
         return ads;
       }
     } catch (e) { 
@@ -389,18 +531,14 @@ class P2PService {
   static Future<List<dynamic>> getMyAdvertisements() async {
     try {
       final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/my'), headers: await _getHeaders());
-      debugPrint('My ads response status: ${response.statusCode}');
-      debugPrint('My ads response body: ${response.body}');
-      
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         List<dynamic> ads = [];
         if (data is List) {
           ads = data;
         } else if (data is Map) {
-          ads = data['data'] ?? data['result'] ?? data['advertisements'] ?? [];
+          ads = data['finalData'] ?? data['data'] ?? data['result'] ?? data['docs'] ?? [];
         }
-        debugPrint('My advertisements fetched: ${ads.length}');
         return ads;
       }
     } catch (e) { 
@@ -426,16 +564,11 @@ class P2PService {
       debugPrint('Placing P2P order with data: ${json.encode(orderData)}');
       final response = await http.post(Uri.parse('$_baseUrl/p2p/v1/p2p/order/create'),
           headers: await _getHeaders(), body: json.encode(orderData));
-      debugPrint('Place Order API Response Status: ${response.statusCode}');
-      debugPrint('Place Order API Response Body: ${response.body}');
+      
       if (response.statusCode == 200 || response.statusCode == 201) {
         return json.decode(response.body);
       } else {
         final errorData = response.body.isNotEmpty ? json.decode(response.body) : {};
-        ErrorHandler.logError(
-          'HTTP ${response.statusCode}: ${response.body}',
-          'placeOrder',
-        );
         throw Exception(errorData['message'] ?? errorData['error'] ?? 'Failed to place order');
       }
     } catch (e) {
@@ -451,7 +584,6 @@ class P2PService {
     int? limit,
   }) async {
     try {
-      // Build query parameters
       final queryParams = <String, String>{
         if (processing != null) 'processing': processing.toString(),
         if (status != null) 'status': status.toString(),
@@ -459,68 +591,30 @@ class P2PService {
         if (limit != null) 'limit': limit.toString(),
       };
       
-      final uri = Uri.parse('$_baseUrl/p2p/v1/p2p/order/my-orders')
-          .replace(queryParameters: queryParams);
-      
-      debugPrint('Fetching P2P orders from: $uri');
+      final uri = Uri.parse('$_baseUrl/p2p/v1/p2p/order/my-orders').replace(queryParameters: queryParams);
       final response = await http.get(uri, headers: await _getHeaders());
-      
-      debugPrint('P2P Orders API Response Status: ${response.statusCode}');
-      debugPrint('P2P Orders API Response Body: ${response.body}');
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         List<dynamic> orders = [];
-        
         if (data is List) {
           orders = data;
         } else if (data is Map) {
-          orders = data['data'] ?? data['result'] ?? data['orders'] ?? [];
+          orders = data['data'] ?? data['result'] ?? data['docs'] ?? [];
         }
-        
-        debugPrint('P2P orders fetched: ${orders.length}');
         return orders;
-      } else {
-        debugPrint('P2P Orders API failed with status: ${response.statusCode}');
-        return [];
       }
     } catch (e) {
       debugPrint('Error fetching P2P orders: $e');
-      return [];
     }
+    return [];
   }
 
-  // Helper methods for common order history queries
-  static Future<List<dynamic>> getActiveOrders() async {
-    return await getMyOrders(processing: true);
-  }
-
-  static Future<List<dynamic>> getCompletedOrders({int page = 1, int limit = 10}) async {
-    return await getMyOrders(
-      processing: false,
-      status: 5, // Completed status
-      page: page,
-      limit: limit,
-    );
-  }
-
-  static Future<List<dynamic>> getPendingOrders({int page = 1, int limit = 10}) async {
-    return await getMyOrders(
-      processing: false,
-      status: 1, // Pending status
-      page: page,
-      limit: limit,
-    );
-  }
-
-  static Future<List<dynamic>> getCancelledOrders({int page = 1, int limit = 10}) async {
-    return await getMyOrders(
-      processing: false,
-      status: 4, // Cancelled status
-      page: page,
-      limit: limit,
-    );
-  }
+  // Helper methods for order history
+  static Future<List<dynamic>> getActiveOrders() => getMyOrders(processing: true);
+  static Future<List<dynamic>> getCompletedOrders({int page = 1, int limit = 10}) => getMyOrders(processing: false, status: 5, page: page, limit: limit);
+  static Future<List<dynamic>> getPendingOrders({int page = 1, int limit = 10}) => getMyOrders(processing: false, status: 1, page: page, limit: limit);
+  static Future<List<dynamic>> getCancelledOrders({int page = 1, int limit = 10}) => getMyOrders(processing: false, status: 4, page: page, limit: limit);
 
   static Future<Map<String, dynamic>?> getOrderDetails(String orderId) async {
     try {
@@ -633,6 +727,26 @@ class P2PService {
         body: json.encode({'blockUserId': blockUserId, 'remark': remark}));
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (e) { return false; }
+  }
+
+  // --- Trusted Devices & Security ---
+  static Future<List<dynamic>> getTrustedDevices() async {
+    try {
+      final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/user/trusted-devices'), headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data is List ? data : (data['data'] ?? []);
+      }
+    } catch (e) { debugPrint('Trusted devices error: $e'); }
+    return [];
+  }
+
+  static Future<Map<String, dynamic>?> getCurrentDeviceInfo() async {
+    try {
+      final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/user/current-device'), headers: await _getHeaders());
+      if (response.statusCode == 200) return json.decode(response.body);
+    } catch (e) { debugPrint('Current device info error: $e'); }
+    return null;
   }
 
   // --- User Profile & KYC ---
@@ -762,71 +876,64 @@ class P2PService {
 
   static Future<Map<String, dynamic>> checkPaymentMethodEligibility() async {
     try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/p2p/v1/payment/eligibility'), 
-        headers: await _getHeaders()
-      );
-      debugPrint('Payment eligibility response status: ${response.statusCode}');
-      debugPrint('Payment eligibility response body: ${response.body}');
-      
-      if (response.statusCode == 200) {
-        return json.decode(response.body) as Map<String, dynamic>;
-      } else {
-        return {
-          'eligible': false,
-          'message': 'Unable to verify eligibility at this time',
-        };
-      }
-    } catch (e) { 
-      debugPrint('Payment eligibility error: $e');
-      return {
-        'eligible': false,
-        'message': 'Error checking eligibility: $e',
-      };
-    }
+      final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/payment/eligibility'), headers: await _getHeaders());
+      if (response.statusCode == 200) return json.decode(response.body) as Map<String, dynamic>;
+    } catch (e) { debugPrint('Payment eligibility error: $e'); }
+    return {'eligible': false, 'message': 'Unable to verify eligibility'};
   }
 
   static Future<bool> savePaymentMethod(Map<String, dynamic> paymentData) async {
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/p2p/v1/payment/method/save'), 
-        headers: await _getHeaders(), 
-        body: json.encode(paymentData)
-      );
-      debugPrint('Save payment method response status: ${response.statusCode}');
-      debugPrint('Save payment method response body: ${response.body}');
+      final response = await http.post(Uri.parse('$_baseUrl/p2p/v1/p2p/payment/add-method'), headers: await _getHeaders(), body: json.encode(paymentData));
       return response.statusCode == 200 || response.statusCode == 201;
-    } catch (e) { 
-      debugPrint('Save payment method error: $e');
-      return false;
-    }
+    } catch (e) { return false; }
   }
 
-  static Future<bool> verifyPaymentMethod(String paymentType) async {
+  static Future<Map<String, dynamic>?> getPaymentUserDetails() async {
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/p2p/v1/payment/method/verify'), 
-        headers: await _getHeaders(), 
-        body: json.encode({'type': paymentType})
-      );
-      debugPrint('Verify payment method response status: ${response.statusCode}');
-      debugPrint('Verify payment method response body: ${response.body}');
-      return response.statusCode == 200 || response.statusCode == 201;
-    } catch (e) { 
-      debugPrint('Verify payment method error: $e');
-      return false;
-    }
-  }
-
-  // --- Market Data ---
-  static Future<Map<String, dynamic>?> getMarketRates() async {
-    try {
-      final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/market/rates'), headers: await _getHeaders());
+      final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/p2p/payment/user-details'), headers: await _getHeaders());
       if (response.statusCode == 200) return json.decode(response.body);
-    } catch (e) { debugPrint('Market rates error: $e'); }
+    } catch (e) { debugPrint('Payment user details error: $e'); }
     return null;
   }
 
+  static Future<bool> deletePaymentMethod(String paymentMethodId) async {
+    try {
+      final response = await http.post(Uri.parse('$_baseUrl/p2p/v1/p2p/payment/delete-method'), headers: await _getHeaders(), body: json.encode({'_id': paymentMethodId}));
+      return response.statusCode == 200;
+    } catch (e) { return false; }
+  }
+
+  static Future<List<dynamic>> getReceivedFeedback() async {
+    try {
+      final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/feedback/received'), headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data is List ? data : (data['data'] ?? data['result'] ?? []);
+      }
+    } catch (e) { debugPrint('Received feedback error: $e'); }
+    return [];
+  }
+
+  static Future<List<dynamic>> getGivenFeedback() async {
+    try {
+      final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/feedback/given'), headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data is List ? data : (data['data'] ?? data['result'] ?? []);
+      }
+    } catch (e) { debugPrint('Given feedback error: $e'); }
+    return [];
+  }
+
+  static Future<bool> submitFeedback(Map<String, dynamic> feedbackData) async {
+    try {
+      final response = await http.post(Uri.parse('$_baseUrl/p2p/v1/feedback/submit'), headers: await _getHeaders(), body: json.encode(feedbackData));
+      return response.statusCode == 200 || response.statusCode == 201;
+    } catch (e) { return false; }
+  }
+
+  // --- Payment Methods ---
   static Future<List<dynamic>> getPaymentMethods() async {
     try {
       final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/payment/methods'), headers: await _getHeaders());
@@ -838,73 +945,14 @@ class P2PService {
     return [];
   }
 
-  // --- Feedback Methods ---
-  static Future<List<dynamic>> getReceivedFeedback() async {
+  static Future<Map<String, dynamic>?> getPaymentModes(String country) async {
     try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/p2p/v1/feedback/received'), 
-        headers: await _getHeaders()
-      );
-      debugPrint('Received feedback response status: ${response.statusCode}');
-      debugPrint('Received feedback response body: ${response.body}');
-      
+      final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/p2p/payment/modes?country=$country'), headers: await _getHeaders());
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        List<dynamic> feedback = [];
-        if (data is List) {
-          feedback = data;
-        } else if (data is Map) {
-          feedback = data['data'] ?? data['result'] ?? data['feedback'] ?? [];
-        }
-        debugPrint('Received feedback count: ${feedback.length}');
-        return feedback;
-      } else if (response.statusCode == 401) {
-        debugPrint('Authentication failed for feedback - token might be expired');
-        throw Exception('Authentication failed. Please login again.');
+        return data;
       }
-    } catch (e) { 
-      debugPrint('Received feedback error: $e');
-      throw Exception('Failed to load feedback: $e');
-    }
-    return [];
-  }
-
-  static Future<List<dynamic>> getGivenFeedback() async {
-    try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/p2p/v1/feedback/given'), 
-        headers: await _getHeaders()
-      );
-      debugPrint('Given feedback response status: ${response.statusCode}');
-      
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        List<dynamic> feedback = [];
-        if (data is List) {
-          feedback = data;
-        } else if (data is Map) {
-          feedback = data['data'] ?? data['result'] ?? data['feedback'] ?? [];
-        }
-        return feedback;
-      }
-    } catch (e) { 
-      debugPrint('Given feedback error: $e');
-    }
-    return [];
-  }
-
-  static Future<bool> submitFeedback(Map<String, dynamic> feedbackData) async {
-    try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/p2p/v1/feedback/submit'), 
-        headers: await _getHeaders(), 
-        body: json.encode(feedbackData)
-      );
-      debugPrint('Submit feedback response status: ${response.statusCode}');
-      return response.statusCode == 200 || response.statusCode == 201;
-    } catch (e) { 
-      debugPrint('Submit feedback error: $e');
-      return false;
-    }
+    } catch (e) { debugPrint('Payment modes error: $e'); }
+    return null;
   }
 }
