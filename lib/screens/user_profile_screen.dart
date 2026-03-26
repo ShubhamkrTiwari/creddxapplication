@@ -534,8 +534,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   Widget _buildUSMESection() {
     return _buildExpandableSection(
       title: 'Security & Devices',
-      isExpanded: true, // Always expanded for USME
-      onTap: () {}, // No toggle for USME section
+      isExpanded: true,
+      onTap: () {},
       content: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
