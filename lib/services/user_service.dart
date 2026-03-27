@@ -626,6 +626,12 @@ class UserService {
   bool isKYCRejected() => _kycStatus == 'Rejected';
   bool isKYCNotStarted() => _kycStatus == 'Not Started';
 
+  // Get auth token from SharedPreferences
+  Future<String?> getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('auth_token');
+  }
+
   Color getKYCStatusColor() {
     switch (_kycStatus) {
       case 'Verified': return const Color(0xFF84BD00);

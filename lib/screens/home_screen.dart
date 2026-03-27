@@ -15,6 +15,7 @@ import 'user_profile_screen.dart';
 import 'invite_friends_screen.dart';
 import 'internal_transfer_screen.dart';
 import 'wallet_history_screen.dart';
+import 'conversion_screen.dart';
 import '../services/user_service.dart';
 import '../services/wallet_service.dart';
 import '../utils/websocket_test.dart';
@@ -125,6 +126,8 @@ class _HomeScreenState extends State<HomeScreen> {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const WalletHistoryScreen()));
     } else if (action == 'Invite') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const InviteFriendsScreen()));
+    } else if (action == 'Conversion') {
+      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const ConversionScreen()));
     }
   }
 
@@ -242,7 +245,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               const Text(
                 'Total Balance',
-                style: TextStyle(color: Colors.white54, fontSize: 13),
+                style: TextStyle(color: Colors.white54, fontSize: 10),
               ),
               const SizedBox(width: 6),
               GestureDetector(
@@ -250,7 +253,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Icon(
                   _isBalanceVisible ? Icons.visibility_outlined : Icons.visibility_off_outlined,
                   color: Colors.white38,
-                  size: 16,
+                  size: 14,
                 ),
               ),
             ],
@@ -264,14 +267,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 _isBalanceVisible ? _totalBalance.toStringAsFixed(2) : '****',
                 style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 24, 
+                  fontSize: 20,
                   fontWeight: FontWeight.bold,
                 ),
               ),
               const SizedBox(width: 6),
               const Text(
                 'USDT',
-                style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w500),
+                style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w500),
               ),
             ],
           ),
@@ -295,15 +298,159 @@ class _HomeScreenState extends State<HomeScreen> {
     return _totalBalance;
   }
 
+  Widget _buildTransferIcon() {
+    return Container(
+      width: 34,
+      height: 34,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E20),
+        shape: BoxShape.circle,
+        border: Border.all(color: const Color(0xFF2A2A2C), width: 1),
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // Left arrow
+          Positioned(
+            left: 6,
+            child: Icon(
+              Icons.arrow_back,
+              color: Colors.white,
+              size: 16,
+            ),
+          ),
+          // Right arrow
+          Positioned(
+            right: 6,
+            child: Icon(
+              Icons.arrow_forward,
+              color: Colors.white,
+              size: 16,
+            ),
+          ),
+          // Horizontal line
+          Container(
+            width: 20,
+            height: 2,
+            color: Colors.white,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildP2PIcon() {
+    return Container(
+      width: 34,
+      height: 34,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E20),
+        shape: BoxShape.circle,
+        border: Border.all(color: const Color(0xFF2A2A2C), width: 1),
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // Left person
+          Positioned(
+            left: 8,
+            child: Icon(
+              Icons.person,
+              color: Colors.white,
+              size: 14,
+            ),
+          ),
+          // Right person
+          Positioned(
+            right: 8,
+            child: Icon(
+              Icons.person,
+              color: Colors.white,
+              size: 14,
+            ),
+          ),
+          // Connection dots
+          Positioned(
+            left: 16,
+            child: Container(
+              width: 2,
+              height: 2,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          Positioned(
+            right: 16,
+            child: Container(
+              width: 2,
+              height: 2,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildConversionIcon() {
+    return Container(
+      width: 34,
+      height: 34,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E20),
+        shape: BoxShape.circle,
+        border: Border.all(color: const Color(0xFF2A2A2C), width: 1),
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // Currency symbol 1 (left)
+          Positioned(
+            left: 6,
+            child: Text(
+              '₹',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          // Arrow
+          Icon(
+            Icons.arrow_forward,
+            color: Colors.white,
+            size: 11,
+          ),
+          // Currency symbol 2 (right)
+          Positioned(
+            right: 6,
+            child: Icon(
+              Icons.attach_money,
+              color: Colors.white,
+              size: 13,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildActionGrid() {
     final actions = [
-      {'label': 'Send', 'icon': 'send.png', 'iconData': Icons.arrow_circle_up},
-      {'label': 'Receive', 'icon': 'request.png', 'iconData': Icons.request_page},
-      {'label': 'Deposit', 'icon': 'deposit.png', 'iconData': Icons.account_balance_wallet},
-      {'label': 'INR Deposit', 'icon': 'inr_deposit.png', 'iconData': Icons.currency_rupee},
-      {'label': 'Withdraw', 'icon': 'withdraw.png', 'iconData': Icons.money},
-      {'label': 'P2P', 'icon': 'p2p.png', 'iconData': Icons.people},
-      {'label': 'Transfer', 'icon': 'transfer.png', 'iconData': Icons.swap_horiz},
+      {'label': 'Send', 'icon': 'sendicon.png', 'iconData': Icons.arrow_circle_up},
+      {'label': 'Receive', 'icon': 'receiveicon.png', 'iconData': Icons.request_page},
+      {'label': 'Deposit', 'icon': 'depositeicon.png', 'iconData': Icons.account_balance_wallet},
+      {'label': 'INR Deposit', 'icon': 'inrdeposit.png', 'iconData': Icons.currency_rupee},
+      {'label': 'Withdraw', 'icon': 'withdrawicon.png', 'iconData': Icons.money},
+      {'label': 'P2P', 'icon': '', 'iconData': Icons.people, 'customWidget': true},
+      {'label': 'Transfer', 'icon': '', 'iconData': Icons.swap_horiz, 'customWidget': true},
+      {'label': 'Conversion', 'icon': '', 'iconData': Icons.currency_exchange, 'customWidget': true},
     ];
 
     return Padding(
@@ -315,35 +462,56 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisCount: 4, 
           crossAxisSpacing: 10,
           mainAxisSpacing: 16,
-          childAspectRatio: 1.0, // Adjusted for icons only
+          childAspectRatio: 0.8, // Adjusted for icons with text
         ),
         itemCount: actions.length,
         itemBuilder: (context, index) {
           final action = actions[index];
           final String label = action['label'] as String;
           bool isHistory = label == 'History';
+          bool isCustomWidget = action['customWidget'] == true;
           
-          double containerSize = 52;
-          double padding = (label == 'INR Deposit' || label == 'P2P') ? 12 : 8;
+          double containerSize = 56;
+          // Reduced padding for P2P and INR Deposit to make icons larger
+          double padding = (label == 'INR Deposit' || label == 'P2P') ? 6 : 8;
           
           return GestureDetector(
             onTap: () => _handleActionTap(label),
-            child: Center(
-              child: Container(
-                width: containerSize, 
-                height: containerSize, 
-                padding: EdgeInsets.all(padding),
-                child: Image.asset(
-                  'assets/images/${action['icon']}', 
-                  fit: BoxFit.contain,
-                  color: (isHistory || label == 'Transfer') ? const Color(0xFF84BD00) : null,
-                  errorBuilder: (c, e, s) => Icon(
-                    action['iconData'] as IconData, 
-                    color: const Color(0xFF84BD00), 
-                    size: padding > 10 ? 28 : 34 
-                  )
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: containerSize, 
+                  height: containerSize, 
+                  padding: EdgeInsets.all(padding),
+                  child: isCustomWidget 
+                    ? (label == 'Transfer' 
+                        ? _buildTransferIcon() 
+                        : label == 'Conversion' 
+                            ? _buildConversionIcon()
+                            : _buildP2PIcon())
+                    : Image.asset(
+                        'assets/images/${action['icon']}', 
+                        fit: BoxFit.contain,
+                        color: (isHistory || label == 'Transfer') ? const Color(0xFF84BD00) : null,
+                        errorBuilder: (c, e, s) => Icon(
+                          action['iconData'] as IconData, 
+                          color: const Color(0xFF84BD00), 
+                          size: (label == 'INR Deposit' || label == 'P2P') ? 38 : 34 
+                        )
+                      ),
                 ),
-              ),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
             ),
           );
         },
@@ -472,23 +640,23 @@ class _HomeScreenState extends State<HomeScreen> {
                     '\$${_formatPrice(price)}',
                     style: const TextStyle(
                       color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 18, 
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16, 
                     ),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 4),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: isPositive ? const Color(0xFF84BD00).withOpacity(0.15) : Colors.red.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(6),
+                      color: isPositive ? const Color(0xFF00C087).withOpacity(0.1) : const Color(0xFFFF3B30).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
-                      '${isPositive ? "+" : ""}${change.toStringAsFixed(2)}%',
+                      '${isPositive ? '+' : ''}${change.toStringAsFixed(2)}%',
                       style: TextStyle(
-                        color: isPositive ? const Color(0xFF84BD00) : Colors.red,
+                        color: isPositive ? const Color(0xFF00C087) : const Color(0xFFFF3B30),
+                        fontSize: 12,
                         fontWeight: FontWeight.bold,
-                        fontSize: 14,
                       ),
                     ),
                   ),
@@ -501,25 +669,22 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Color _getCoinColor(String name) {
-    switch (name.toUpperCase()) {
-      case 'BTC': return const Color(0xFFF7931A);
-      case 'ETH': return const Color(0xFF627EEA);
-      case 'SOL': return const Color(0xFF14F195);
-      case 'BNB': return const Color(0xFFF3BA2F);
-      default: return const Color(0xFF84BD00);
-    }
-  }
-
   String _formatPrice(double price) {
-    if (price >= 1000) {
-      return price.toStringAsFixed(2).replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (match) => ',');
+    if (price >= 1) {
+      return price.toStringAsFixed(2);
+    } else {
+      return price.toStringAsFixed(6);
     }
-    return price.toStringAsFixed(2);
   }
 
-}
-
-class INRDepositScreen {
-  const INRDepositScreen();
+  Color _getCoinColor(String name) {
+    switch (name.toLowerCase()) {
+      case 'bitcoin': return const Color(0xFFF7931A);
+      case 'ethereum': return const Color(0xFF627EEA);
+      case 'tether': return const Color(0xFF26A17B);
+      case 'bnb': return const Color(0xFFF3BA2F);
+      case 'solana': return const Color(0xFF14F195);
+      default: return const Color(0xFF1E1E20);
+    }
+  }
 }
