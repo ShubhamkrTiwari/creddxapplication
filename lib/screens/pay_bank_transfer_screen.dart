@@ -23,11 +23,11 @@ class PayBankTransferScreen extends StatefulWidget {
 }
 
 class _PayBankTransferScreenState extends State<PayBankTransferScreen> {
-  // Seller's bank details (in real app, these come from API)
-  final String _accountHolderName = 'Ravindersingh1023';
-  final String _accountNumber = '123456789012';
-  final String _bankName = 'State Bank of India';
-  final String _ifscCode = 'SBIN0001234';
+  // Seller's bank details from selected or defaults
+  String get _accountHolderName => widget.accountHolderName ?? 'Ravindersingh1023';
+  String get _accountNumber => widget.accountNumber ?? '123456789012';
+  String get _bankName => widget.bankName ?? 'State Bank of India';
+  String get _ifscCode => widget.ifscCode ?? 'SBIN0001234';
 
   @override
   Widget build(BuildContext context) {

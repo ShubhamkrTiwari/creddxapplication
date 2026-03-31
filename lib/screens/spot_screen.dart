@@ -31,6 +31,8 @@ class _SpotScreenState extends State<SpotScreen> {
   List<Map<String, dynamic>> _recentTrades = [];
   List<Map<String, dynamic>> _symbols = [];
   Map<String, dynamic>? _balance;
+  bool _isLoadingBalance = true;
+  String? _balanceError;
   Map<String, dynamic>? _ticker;
   Map<String, dynamic>? _fees;
   Map<String, dynamic>? _healthStatus;
@@ -402,6 +404,10 @@ class _SpotScreenState extends State<SpotScreen> {
   // Load balance
   Future<void> _loadBalance() async {
     try {
+      setState(() {
+        _isLoadingBalance = true;
+        _balanceError = null;
+      });
       print('Loading balance...');
       final result = await SpotService.getBalance();
       print('Balance API result: $result');
@@ -409,6 +415,7 @@ class _SpotScreenState extends State<SpotScreen> {
       if (result['success'] && result['data'] != null) {
         setState(() {
           _balance = result['data'];
+          _isLoadingBalance = false;
           print('Balance loaded: $_balance');
           print('USDT Available: ${_balance?['usdt_available']}');
           print('USDT Locked: ${_balance?['usdt_locked']}');
@@ -416,28 +423,30 @@ class _SpotScreenState extends State<SpotScreen> {
         });
       } else {
         print('Balance API error: ${result['error']}');
-        // Set default balance for testing
         setState(() {
-          _balance = {
+          _isLoadingBalance = false;
+          _balanceError = result['error'] ?? 'Failed to load balance';
+          // Keep existing balance or set default
+          _balance ??= {
             'user_id': 1,
-            'usdt_available': 10000.0,
+            'usdt_available': 0.0,
             'usdt_locked': 0.0,
-            'free': 10000.0,
+            'free': 0.0,
           };
-          print('Using default balance for testing');
         });
       }
     } catch (e) {
       print('Error loading balance: $e');
-      // Set default balance for testing
       setState(() {
-        _balance = {
+        _isLoadingBalance = false;
+        _balanceError = 'Error: $e';
+        // Keep existing balance or set default
+        _balance ??= {
           'user_id': 1,
-          'usdt_available': 10000.0,
+          'usdt_available': 0.0,
           'usdt_locked': 0.0,
-          'free': 10000.0,
+          'free': 0.0,
         };
-        print('Using default balance due to error');
       });
     }
   }
@@ -1099,7 +1108,7 @@ class _SpotScreenState extends State<SpotScreen> {
                           border: InputBorder.none,
                           contentPadding: EdgeInsets.zero,
                           isDense: true,
-                          suffixText: 'USD',
+                          suffixText: 'USDT',
                           suffixStyle: TextStyle(
                             color: Colors.white,
                             fontSize: 14,
@@ -1111,6 +1120,7 @@ class _SpotScreenState extends State<SpotScreen> {
                         onTap: () {
                           setState(() {
                             _isManualPrice = true;
+                            _priceController.clear();
                           });
                         },
                         child: Text(
@@ -1283,6 +1293,16 @@ class _SpotScreenState extends State<SpotScreen> {
     final total = _currentPrice * _amount;
     final fundsRequired = _orderType == 'Limit' ? total : 0.0;
     
+    // Get available balance - show actual value or default
+    String availableBalanceText;
+    if (_isBuy) {
+      final usdtBalance = _balance?['usdt_available'] ?? 0.0;
+      availableBalanceText = '${usdtBalance.toStringAsFixed(2)} USDT';
+    } else {
+      final btcBalance = _balance?['free'] ?? 0.0;
+      availableBalanceText = '${btcBalance.toStringAsFixed(8)} BTC';
+    }
+    
     return Column(
       children: [
         if (_orderType == 'Limit')
@@ -1312,9 +1332,7 @@ class _SpotScreenState extends State<SpotScreen> {
             ),
             Flexible(
               child: Text(
-                _isBuy 
-                    ? '${(_balance?['usdt_available']?.toStringAsFixed(2) ?? '500.00')} USDT'
-                    : '${(_balance?['free']?.toStringAsFixed(8) ?? '0.10000000')} BTC',
+                availableBalanceText,
                 style: const TextStyle(color: Colors.white, fontSize: 10),
                 overflow: TextOverflow.ellipsis,
               ),

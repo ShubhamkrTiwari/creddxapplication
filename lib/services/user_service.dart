@@ -18,6 +18,8 @@ class UserService {
   static const String _kycStatusKey = 'kyc_status';
   static const String _kycSubmittedAtKey = 'kyc_submitted_at';
 
+  static const String _ipAddressKey = 'ip_address';
+
   String? _userName;
   String? _userEmail;
   String? _userId;
@@ -25,6 +27,8 @@ class UserService {
   String? _lastLogin;
   String _kycStatus = 'Not Started'; 
   String? _kycSubmittedAt;
+
+  String? _ipAddress;
 
   // Getters
   String? get userName => _userName;
@@ -34,6 +38,7 @@ class UserService {
   String? get lastLogin => _lastLogin;
   String get kycStatus => _kycStatus;
   String? get kycSubmittedAt => _kycSubmittedAt;
+  String? get ipAddress => _ipAddress;
 
   // Helper to safely get string from prefs (handles cases where it might be int)
   String? _getSafeString(SharedPreferences prefs, String key) {
@@ -58,6 +63,7 @@ class UserService {
     _lastLogin = _getSafeString(prefs, _lastLoginKey);
     _kycStatus = _getSafeString(prefs, _kycStatusKey) ?? 'Not Started';
     _kycSubmittedAt = _getSafeString(prefs, _kycSubmittedAtKey);
+    _ipAddress = _getSafeString(prefs, _ipAddressKey);
 
     // If we have cached auth data, parse it too
     final userDataStr = _getSafeString(prefs, 'user_data');
@@ -191,6 +197,13 @@ class UserService {
             if (loginTime != null) {
               _lastLogin = _formatDate(loginTime);
               await prefs.setString(_lastLoginKey, _lastLogin!);
+            }
+            
+            // Get IP address from login activity
+            String? ip = latestActivity['ipAddress']?.toString() ?? latestActivity['ip']?.toString();
+            if (ip != null && ip.isNotEmpty) {
+              _ipAddress = ip;
+              await prefs.setString(_ipAddressKey, _ipAddress!);
             }
           }
         }
@@ -639,7 +652,7 @@ class UserService {
     await prefs.remove(_lastLoginKey);
     await prefs.remove(_kycStatusKey);
     await prefs.remove(_kycSubmittedAtKey);
-    await prefs.remove('user_data');
+    await prefs.remove(_ipAddressKey);
     
     _userName = null;
     _userEmail = null;
@@ -648,6 +661,7 @@ class UserService {
     _lastLogin = null;
     _kycStatus = 'Not Started';
     _kycSubmittedAt = null;
+    _ipAddress = null;
   }
 
   bool hasEmail() => _userEmail != null && _userEmail!.isNotEmpty;

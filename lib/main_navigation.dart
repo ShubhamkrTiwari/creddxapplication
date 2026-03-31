@@ -6,7 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
 import 'package:syncfusion_flutter_charts/charts.dart';
 import 'screens/dashboard_screen.dart';
-import 'screens/market_screen.dart';
+import 'screens/futures_screen.dart';
 import 'screens/spot_screen.dart';
 import 'screens/bot_main_screen.dart';
 import 'screens/bot_trading_screen.dart';
@@ -27,7 +27,7 @@ class _MainNavigationState extends State<MainNavigation> {
   
   final List<Widget> _screens = [
     const HomeScreen(),
-    const MarketScreen(),
+    const FuturesScreen(),
     const BotMainScreen(),
     const SpotScreen(),
     const WalletScreen(),
@@ -67,7 +67,10 @@ class _MainNavigationState extends State<MainNavigation> {
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
           _navItem('assets/images/home.png', 'Home', 0),
-          _navItem('assets/images/market.png', 'Market', 1),
+          Container(
+            margin: const EdgeInsets.only(top: 9),
+            child: _navItem('assets/images/future.png', 'Futures', 1),
+          ),
           _navItem('assets/images/bot.png', 'Bot Trade', 2),
           _navItem('assets/images/spot.png', 'Spot', 3),
           _navItem('assets/images/wallet.png', 'Wallet', 4),

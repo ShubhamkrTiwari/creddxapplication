@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:creddx/screens/pay_upi_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'pay_bank_transfer_screen.dart';
@@ -20,6 +21,7 @@ class _BankDetailsScreenState extends State<BankDetailsScreen> {
   List<dynamic> _upiList = [];
   Map<String, dynamic>? _selectedBank;
   Map<String, dynamic>? _selectedUpi;
+  String _selectedPaymentMethod = 'bank'; // 'bank' or 'upi'
 
   @override
   void initState() {
@@ -101,6 +103,16 @@ class _BankDetailsScreenState extends State<BankDetailsScreen> {
                     _buildBankDropdown(),
                     const SizedBox(height: 20),
                   ],
+                  // Payment Method Selector
+                  if (_bankList.isNotEmpty && _upiList.isNotEmpty) ...[
+                    const Text(
+                      'Select Payment Method',
+                      style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    _buildPaymentMethodSelector(),
+                    const SizedBox(height: 20),
+                  ],
                   if (_selectedBank != null)
                     Container(
                       width: double.infinity,
@@ -171,12 +183,30 @@ class _BankDetailsScreenState extends State<BankDetailsScreen> {
             height: 50,
             child: ElevatedButton(
               onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => PayBankTransferScreen(amount: widget.amount),
-                  ),
-                );
+                if (_selectedPaymentMethod == 'upi' && _selectedUpi != null) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => PayUpiScreen(
+                        amount: widget.amount,
+                        upiDetails: _selectedUpi,
+                      ),
+                    ),
+                  );
+                } else {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => PayBankTransferScreen(
+                        amount: widget.amount,
+                        accountHolderName: _selectedBank?['accountHolderName']?.toString(),
+                        accountNumber: _selectedBank?['accountNumber']?.toString(),
+                        bankName: _selectedBank?['Name']?.toString(),
+                        ifscCode: _selectedBank?['ifscCode']?.toString(),
+                      ),
+                    ),
+                  );
+                }
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF84BD00),
@@ -292,6 +322,54 @@ class _BankDetailsScreenState extends State<BankDetailsScreen> {
           }).toList(),
         ),
       ),
+    );
+  }
+
+  Widget _buildPaymentMethodSelector() {
+    return Row(
+      children: [
+        Expanded(
+          child: GestureDetector(
+            onTap: () => setState(() => _selectedPaymentMethod = 'bank'),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: _selectedPaymentMethod == 'bank' ? const Color(0xFF84BD00) : const Color(0xFF1C1C1E),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                'Bank Transfer',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: _selectedPaymentMethod == 'bank' ? Colors.black : Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: GestureDetector(
+            onTap: () => setState(() => _selectedPaymentMethod = 'upi'),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: _selectedPaymentMethod == 'upi' ? const Color(0xFF84BD00) : const Color(0xFF1C1C1E),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                'UPI Payment',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: _selectedPaymentMethod == 'upi' ? Colors.black : Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

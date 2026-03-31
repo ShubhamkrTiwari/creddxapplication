@@ -13,6 +13,8 @@ class BotAlgorithmScreen extends StatefulWidget {
 class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
   Map<String, dynamic>? userData;
   bool isLoadingUserData = true;
+  bool isLoadingStrategies = true;
+  Map<String, dynamic>? strategyPerformanceData;
 
   final List<Map<String, dynamic>> _strategies = [
     {
@@ -51,6 +53,47 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
   void initState() {
     super.initState();
     _fetchUserData();
+    _fetchStrategyPerformance();
+  }
+
+  Future<void> _fetchStrategyPerformance() async {
+    try {
+      final response = await BotService.getStrategyPerformance('all');
+      
+      if (mounted) {
+        setState(() {
+          if (response['success'] && response['data'] != null) {
+            strategyPerformanceData = response['data'];
+            // Update strategies with real data from API
+            _updateStrategiesWithRealData();
+          }
+          isLoadingStrategies = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          isLoadingStrategies = false;
+        });
+      }
+    }
+  }
+
+  void _updateStrategiesWithRealData() {
+    if (strategyPerformanceData == null) return;
+    
+    // Update each strategy with real data from API
+    for (var i = 0; i < _strategies.length; i++) {
+      final strategyName = _strategies[i]['name']?.toString().split('-')[0]; // Get 'Omega' from 'Omega-3X'
+      
+      // Look for matching strategy data in API response
+      if (strategyPerformanceData!.containsKey(strategyName)) {
+        final apiData = strategyPerformanceData![strategyName];
+        _strategies[i]['annualizedROI'] = apiData['annualizedROI'] ?? _strategies[i]['annualizedROI'];
+        _strategies[i]['aum'] = apiData['aum'] ?? _strategies[i]['aum'];
+        _strategies[i]['followers'] = apiData['followers']?.toString() ?? _strategies[i]['followers'];
+      }
+    }
   }
 
   Future<void> _fetchUserData() async {
@@ -223,22 +266,29 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
               ),
             ),
             const SizedBox(height: 40),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: _strategies.map((strategy) {
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 16),
-                    child: SizedBox(
-                      width: MediaQuery.of(context).size.width * 0.85,
-                      child: _buildStrategyCard(strategy),
-                    ),
-                  );
-                }).toList(),
+            if (isLoadingStrategies)
+              const Center(
+                child: CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF84BD00)),
+                ),
+              )
+            else
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: _strategies.map((strategy) {
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 16),
+                      child: SizedBox(
+                        width: MediaQuery.of(context).size.width * 0.85,
+                        child: _buildStrategyCard(strategy),
+                      ),
+                    );
+                  }).toList(),
+                ),
               ),
-            ),
             const SizedBox(height: 40),
           ],
         ),

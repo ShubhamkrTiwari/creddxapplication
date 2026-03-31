@@ -254,6 +254,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     if (mounted) {
       setState(() {});
     }
+    
+    // Refresh again after API data is fetched (IP address comes from login activity API)
+    await Future.delayed(const Duration(seconds: 2));
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _loadTrustedDevices() async {
@@ -1200,7 +1206,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            '192.168.1.1', // This could be dynamic from API
+                            _userService.ipAddress ?? 'Loading...',
                             style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
                           ),
                         ],

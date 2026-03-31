@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'user_service.dart';
 
 class AuthService {
   static const String _baseUrl = 'http://13.235.89.109:8085';
@@ -127,6 +128,9 @@ class AuthService {
           }
         }
         
+        // Fetch IP address immediately after login
+        await _fetchAndSaveIPAddress();
+        
         debugPrint('Login successful, token saved');
         return {'success': true, 'message': 'Login successful'};
       } else {
@@ -135,6 +139,39 @@ class AuthService {
       }
     } catch (e) {
       return {'success': false, 'message': 'Network error: $e'};
+    }
+  }
+
+  // Fetch IP address from login activity API and save it
+  static Future<void> _fetchAndSaveIPAddress() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString(_tokenKey);
+      final userId = prefs.getString('user_id');
+
+      if (token == null || userId == null) return;
+
+      final response = await http.get(
+        Uri.parse('$_baseUrl/user/v1/auth/loginactivity/$userId'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final responseData = json.decode(response.body);
+        if (responseData['success'] == true && responseData['data'] is List && responseData['data'].isNotEmpty) {
+          final latestActivity = responseData['data'][0];
+          String? ip = latestActivity['ipAddress']?.toString() ?? latestActivity['ip']?.toString();
+          if (ip != null && ip.isNotEmpty) {
+            await prefs.setString('ip_address', ip);
+            debugPrint('IP Address saved on login: $ip');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching IP on login: $e');
     }
   }
 
@@ -316,6 +353,9 @@ class AuthService {
             await prefs.setString('user_id', userId.toString());
           }
         }
+        
+        // Fetch IP address immediately after login
+        await _fetchAndSaveIPAddress();
         
         debugPrint('OTP Login successful, token saved');
         return {'success': true, 'message': 'Login successful'};

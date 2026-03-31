@@ -356,9 +356,49 @@ class SpotService {
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
         if (responseData['success'] == true) {
+          // Parse assets array from API response
+          final data = responseData['data'];
+          final assets = data['assets'] as List<dynamic>? ?? [];
+          
+          // Extract USDT and BTC balances from assets array
+          double usdtAvailable = 0.0;
+          double usdtLocked = 0.0;
+          double usdtFree = 0.0;
+          double btcAvailable = 0.0;
+          double btcLocked = 0.0;
+          double btcFree = 0.0;
+          
+          for (final asset in assets) {
+            final assetName = asset['asset']?.toString() ?? '';
+            if (assetName == 'USDT') {
+              usdtAvailable = double.tryParse(asset['available']?.toString() ?? '0') ?? 0.0;
+              usdtLocked = double.tryParse(asset['locked']?.toString() ?? '0') ?? 0.0;
+              usdtFree = double.tryParse(asset['free']?.toString() ?? '0') ?? 0.0;
+            } else if (assetName == 'BTC') {
+              btcAvailable = double.tryParse(asset['available']?.toString() ?? '0') ?? 0.0;
+              btcLocked = double.tryParse(asset['locked']?.toString() ?? '0') ?? 0.0;
+              btcFree = double.tryParse(asset['free']?.toString() ?? '0') ?? 0.0;
+            }
+          }
+          
+          // Return flat structure for UI compatibility
+          final parsedData = {
+            'user_id': data['user_id'] ?? userId,
+            'usdt_available': usdtAvailable,
+            'usdt_locked': usdtLocked,
+            'usdt_free': usdtFree,
+            'btc_available': btcAvailable,
+            'btc_locked': btcLocked,
+            'btc_free': btcFree,
+            'free': btcFree, // For sell orders (BTC free)
+            'assets': assets, // Keep original for reference
+          };
+          
+          print('Parsed Balance: USDT=$usdtAvailable, BTC=$btcFree');
+          
           return {
             'success': true,
-            'data': responseData['data'],
+            'data': parsedData,
             'error': null
           };
         } else {

@@ -4,19 +4,20 @@ import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
-import 'dart:math' show pi, cos, sin;
+import 'dart:math' show pi, cos, sin, min, max, Random;
+import 'conversion_screen.dart';
 import 'notification_screen.dart';
 import 'send_screen.dart';
 import 'receive_screen.dart';
 import 'deposit_screen.dart';
 import 'inr_deposit_screen.dart';
 import 'withdraw_screen.dart';
-import 'p2p_trading_screen.dart';
+import 'futures_screen.dart';
 import 'user_profile_screen.dart';
 import 'invite_friends_screen.dart';
 import 'internal_transfer_screen.dart';
 import 'wallet_history_screen.dart';
-import 'conversion_screen.dart';
+import 'coming_soon_screen.dart';
 import '../services/user_service.dart';
 import '../services/wallet_service.dart';
 import '../utils/websocket_test.dart';
@@ -249,6 +250,13 @@ class _HomeScreenState extends State<HomeScreen> {
   double _totalBalance = 0.0;
   bool _isBalanceVisible = true;
   
+  // Candlestick chart data for Std. Futures
+  List<Map<String, dynamic>> _candleData = [];
+  double _currentPrice = 4890.12;
+  double _priceChange = 12.1;
+  String _selectedTimeframe = '15 Min';
+  final List<String> _timeframes = ['Line', '15 Min', '1 Hour', '4 Hour', '1 Day', 'More'];
+  
   Timer? _priceTimer;
   final String _marketBaseUrl = 'http://13.235.89.109:9000';
   
@@ -258,6 +266,33 @@ class _HomeScreenState extends State<HomeScreen> {
     UserService().initUserData();
     _fetchInitialData();
     _startPriceUpdates();
+    _generateMockCandleData();
+  }
+
+  void _generateMockCandleData() {
+    final random = Random();
+    final List<Map<String, dynamic>> candles = [];
+    double price = _currentPrice * 0.85;
+    
+    for (int i = 0; i < 30; i++) {
+      final open = price;
+      final change = (random.nextDouble() - 0.5) * 200;
+      final close = price + change;
+      final high = max(open, close) + random.nextDouble() * 50;
+      final low = min(open, close) - random.nextDouble() * 50;
+      
+      candles.add({
+        'open': open,
+        'close': close,
+        'high': high,
+        'low': low,
+        'volume': 1000 + random.nextDouble() * 5000,
+      });
+      
+      price = close;
+    }
+    
+    setState(() => _candleData = candles);
   }
 
   Future<void> _fetchInitialData() async {
@@ -327,11 +362,11 @@ class _HomeScreenState extends State<HomeScreen> {
     } else if (action == 'Withdraw') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const WithdrawScreen()));
     } else if (action == 'Send') {
-      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const SendScreen()));
+      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const ComingSoonScreen()));
     } else if (action == 'Receive') {
-      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const ReceiveScreen()));
+      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const ComingSoonScreen()));
     } else if (action == 'P2P') {
-      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const P2PTradingScreen()));
+      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const ComingSoonScreen()));
     } else if (action == 'Transfer') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const InternalTransferScreen()));
     } else if (action == 'History') {
@@ -339,7 +374,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } else if (action == 'Invite') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const InviteFriendsScreen()));
     } else if (action == 'Conversion') {
-      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const ConversionScreen()));
+      Navigator.of(context).push(MaterialPageRoute(builder: (context) => ConversionScreen()));
     }
   }
 
@@ -773,6 +808,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildCryptoList() {
+    // Show candlestick chart for Std. Futures tab
+    if (_selectedTab == 'Std. Futures') {
+      return _buildCandlestickChartSection();
+    }
+    
     if (_isLoading) return const Padding(padding: EdgeInsets.all(40), child: Center(child: BitcoinLoadingIndicator(size: 40)));
     
     if (_cryptoData.isEmpty) {
@@ -880,6 +920,134 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildCandlestickChartSection() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Price header
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _currentPrice.toStringAsFixed(2),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${_priceChange >= 0 ? '+' : ''}${_priceChange.toStringAsFixed(2)}%',
+                    style: TextStyle(
+                      color: _priceChange >= 0 ? const Color(0xFF84BD00) : const Color(0xFFFF3B30),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2A2A2C),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Row(
+                  children: [
+                    Text('BTC/USDT', style: TextStyle(color: Colors.white, fontSize: 12)),
+                    SizedBox(width: 4),
+                    Icon(Icons.keyboard_arrow_down, color: Colors.white54, size: 16),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          
+          // Timeframe selector
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: _timeframes.map((tf) {
+                final isSelected = _selectedTimeframe == tf;
+                return GestureDetector(
+                  onTap: () => setState(() => _selectedTimeframe = tf),
+                  child: Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: isSelected ? const Color(0xFF84BD00).withOpacity(0.2) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      tf,
+                      style: TextStyle(
+                        color: isSelected ? const Color(0xFF84BD00) : Colors.white54,
+                        fontSize: 12,
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+          const SizedBox(height: 16),
+          
+          // Candlestick Chart
+          Container(
+            height: 200,
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A1A1A),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: CustomPaint(
+                size: const Size(double.infinity, 200),
+                painter: CandlestickPainter(_candleData, _currentPrice),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          
+          // Legend
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _buildLegendItem(const Color(0xFF84BD00), 'Buy'),
+              const SizedBox(width: 16),
+              _buildLegendItem(const Color(0xFFFF3B30), 'Sell'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLegendItem(Color color, String label) {
+    return Row(
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 4),
+        Text(label, style: TextStyle(color: color, fontSize: 11)),
+      ],
+    );
+  }
+
   String _formatPrice(double price) {
     if (price >= 1) {
       return price.toStringAsFixed(2);
@@ -898,4 +1066,103 @@ class _HomeScreenState extends State<HomeScreen> {
       default: return const Color(0xFF1E1E20);
     }
   }
+}
+
+// Candlestick Chart Painter for Std. Futures
+class CandlestickPainter extends CustomPainter {
+  final List<Map<String, dynamic>> candles;
+  final double currentPrice;
+  
+  CandlestickPainter(this.candles, this.currentPrice);
+  
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (candles.isEmpty) return;
+    
+    final paint = Paint()
+      ..strokeWidth = 1.0;
+    
+    final candleWidth = size.width / (candles.length + 2);
+    
+    // Find min and max for scaling
+    double minPrice = double.infinity;
+    double maxPrice = 0;
+    for (var candle in candles) {
+      minPrice = min(minPrice, candle['low'] as double);
+      maxPrice = max(maxPrice, candle['high'] as double);
+    }
+    
+    final priceRange = maxPrice - minPrice;
+    final padding = priceRange * 0.1;
+    minPrice -= padding;
+    maxPrice += padding;
+    
+    // Draw grid lines
+    final gridPaint = Paint()
+      ..color = Colors.white.withOpacity(0.05)
+      ..strokeWidth = 0.5;
+    
+    for (int i = 0; i <= 4; i++) {
+      final y = size.height * i / 4;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+    }
+    
+    // Draw candles
+    for (int i = 0; i < candles.length; i++) {
+      final candle = candles[i];
+      final x = (i + 1) * candleWidth;
+      
+      final open = candle['open'] as double;
+      final close = candle['close'] as double;
+      final high = candle['high'] as double;
+      final low = candle['low'] as double;
+      
+      final isGreen = close >= open;
+      final color = isGreen ? const Color(0xFF84BD00) : const Color(0xFFFF3B30);
+      
+      final yHigh = size.height - ((high - minPrice) / (maxPrice - minPrice)) * size.height;
+      final yLow = size.height - ((low - minPrice) / (maxPrice - minPrice)) * size.height;
+      final yOpen = size.height - ((open - minPrice) / (maxPrice - minPrice)) * size.height;
+      final yClose = size.height - ((close - minPrice) / (maxPrice - minPrice)) * size.height;
+      
+      paint.color = color;
+      
+      // Draw wick
+      canvas.drawLine(
+        Offset(x + candleWidth / 2, yHigh),
+        Offset(x + candleWidth / 2, yLow),
+        paint,
+      );
+      
+      // Draw body
+      final bodyTop = min(yOpen, yClose);
+      final bodyBottom = max(yOpen, yClose);
+      final bodyHeight = max(bodyBottom - bodyTop, 2);
+      
+      final bodyRect = Rect.fromLTWH(
+        x + candleWidth * 0.2,
+        bodyTop,
+        candleWidth * 0.6,
+        bodyHeight.toDouble(),
+      );
+      
+      canvas.drawRect(bodyRect, paint);
+    }
+    
+    // Draw current price line
+    final currentY = size.height - ((currentPrice - minPrice) / (maxPrice - minPrice)) * size.height;
+    final linePaint = Paint()
+      ..color = Colors.white.withOpacity(0.5)
+      ..strokeWidth = 1
+      ..style = PaintingStyle.stroke;
+    
+    canvas.drawLine(
+      Offset(0, currentY),
+      Offset(size.width, currentY),
+      linePaint,
+    );
+  }
+  
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
