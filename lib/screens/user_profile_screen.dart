@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'login_screen.dart';
 import 'update_profile_screen.dart';
 import 'referral_hub_screen.dart';
 import 'kyc_document_screen.dart';
@@ -385,6 +386,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             const Divider(color: Colors.white10, height: 1),
             _buildUSMESection(),
             const Divider(color: Colors.white10, height: 1),
+            const SizedBox(height: 16),
+            // Logout button at bottom
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+              child: _buildLogoutButton(),
+            ),
+            const SizedBox(height: 24),
           ],
         ),
       ),
@@ -1235,5 +1243,98 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         ],
       ),
     );
+  }
+
+  Widget _buildLogoutButton() {
+    return GestureDetector(
+      onTap: () => _showLogoutConfirmDialog(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 24),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFF3B30),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.logout,
+              color: Colors.white,
+              size: 20,
+            ),
+            SizedBox(width: 8),
+            Text(
+              'Logout',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showLogoutConfirmDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1C1C1E),
+          title: const Text(
+            'Logout',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: const Text(
+            'Are you sure you want to logout?',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await _handleLogout();
+              },
+              child: const Text(
+                'Logout',
+                style: TextStyle(color: Color(0xFFFF3B30)),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _handleLogout() async {
+    final result = await AuthService.logout();
+    if (result['success'] == true) {
+      // Navigate to login screen and clear all previous routes
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => LoginScreen()),
+          (route) => false,
+        );
+      }
+    } else {
+      // Show error
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result['message'] ?? 'Logout failed'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 }

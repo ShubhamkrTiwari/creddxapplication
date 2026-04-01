@@ -1,3 +1,4 @@
+import 'package:creddx/screens/user_profile_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -5,21 +6,21 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
 import 'dart:math' show pi, cos, sin, min, max, Random;
-import 'conversion_screen.dart';
-import 'notification_screen.dart';
-import 'send_screen.dart';
-import 'receive_screen.dart';
+import 'coming_soon_screen.dart';
 import 'deposit_screen.dart';
-import 'inr_deposit_screen.dart';
-import 'withdraw_screen.dart';
-import 'futures_screen.dart';
-import 'user_profile_screen.dart';
-import 'invite_friends_screen.dart';
+import 'notification_screen.dart';
+import 'p2p_trading_screen.dart';
 import 'internal_transfer_screen.dart';
 import 'wallet_history_screen.dart';
-import 'coming_soon_screen.dart';
+import 'invite_friends_screen.dart';
+import 'withdraw_screen.dart';
+import 'inr_deposit_screen.dart';
+import 'conversion_screen.dart';
+import 'spot_screen.dart';
 import '../services/user_service.dart';
 import '../services/wallet_service.dart';
+import '../services/spot_service.dart';
+import '../services/binance_service.dart';
 import '../utils/websocket_test.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 
@@ -250,6 +251,11 @@ class _HomeScreenState extends State<HomeScreen> {
   double _totalBalance = 0.0;
   bool _isBalanceVisible = true;
   
+  // WebSocket for real-time favorites data
+  Map<String, Map<String, dynamic>> _favoritesMarketData = {};
+  bool _isWebSocketConnected = false;
+  StreamSubscription<Map<String, dynamic>>? _marketDataSubscription;
+  
   // Candlestick chart data for Std. Futures
   List<Map<String, dynamic>> _candleData = [];
   double _currentPrice = 4890.12;
@@ -260,6 +266,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _priceTimer;
   final String _marketBaseUrl = 'http://13.235.89.109:9000';
   
+  // Binance market data
+  List<Map<String, dynamic>> _binanceMarketData = [];
+  StreamSubscription<Map<String, dynamic>>? _binanceWsSubscription;
+  
+  // Market cap data from CoinGecko
+  Map<String, double> _marketCapData = {};
+  
   @override
   void initState() {
     super.initState();
@@ -267,6 +280,103 @@ class _HomeScreenState extends State<HomeScreen> {
     _fetchInitialData();
     _startPriceUpdates();
     _generateMockCandleData();
+    
+    // Connect WebSocket for Favorites real-time data
+    _connectWebSocketForFavorites();
+  }
+
+  // Connect WebSocket for real-time favorites market data from Binance
+  Future<void> _connectWebSocketForFavorites() async {
+    try {
+      final favorites = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT'];
+      
+      // Connect to multi-ticker stream for all favorites
+      final stream = BinanceService.connectMultiTickerStream(favorites);
+      
+      if (stream != null) {
+        _binanceWsSubscription = stream.listen(
+          (data) {
+            if (mounted) {
+              setState(() {
+                final symbol = data['symbol']?.toString() ?? '';
+                _favoritesMarketData[symbol] = {
+                  'price': data['price'] ?? 0.0,
+                  'change': data['priceChangePercent'] ?? 0.0,
+                  'volume': data['quoteVolume'] ?? 0.0,
+                  'bid': data['bidPrice'] ?? 0.0,
+                  'ask': data['askPrice'] ?? 0.0,
+                  'updatedAt': DateTime.now(),
+                };
+              });
+            }
+          },
+          onError: (error) {
+            debugPrint('Binance WebSocket error: $error');
+          },
+        );
+      }
+      
+      setState(() => _isWebSocketConnected = true);
+      debugPrint('Binance WebSocket connected for Favorites');
+    } catch (e) {
+      debugPrint('Failed to connect Binance WebSocket: $e');
+      setState(() => _isWebSocketConnected = false);
+    }
+  }
+  
+  // Update market data from WebSocket
+  void _updateFavoritesMarketData(Map<String, dynamic> data) {
+    try {
+      final symbol = data['symbol']?.toString() ?? 'BTCUSDT';
+      final bids = data['bids'] as List<dynamic>?;
+      final asks = data['asks'] as List<dynamic>?;
+      
+      if (bids != null && bids.isNotEmpty && asks != null && asks.isNotEmpty) {
+        final bestBid = double.tryParse(bids[0][0]?.toString() ?? '0') ?? 0.0;
+        final bestAsk = double.tryParse(asks[0][0]?.toString() ?? '0') ?? 0.0;
+        final midPrice = (bestBid + bestAsk) / 2;
+        
+        // Calculate change from previous price if available
+        double change = 0.0;
+        if (_favoritesMarketData.containsKey(symbol)) {
+          final prevPrice = _favoritesMarketData[symbol]!['price'] ?? midPrice;
+          if (prevPrice > 0) {
+            change = ((midPrice - prevPrice) / prevPrice) * 100;
+          }
+        }
+        
+        setState(() {
+          _favoritesMarketData[symbol] = {
+            'price': midPrice,
+            'change': change,
+            'bid': bestBid,
+            'ask': bestAsk,
+            'volume': data['volume'] ?? 0.0,
+            'updatedAt': DateTime.now(),
+          };
+        });
+      }
+    } catch (e) {
+      debugPrint('Error updating favorites market data: $e');
+    }
+  }
+  
+  // Get real-time price for a symbol
+  double _getRealtimePrice(String symbol, double fallbackPrice) {
+    final wsData = _favoritesMarketData[symbol];
+    if (wsData != null) {
+      return wsData['price'] ?? fallbackPrice;
+    }
+    return fallbackPrice;
+  }
+  
+  // Get real-time change for a symbol
+  double _getRealtimeChange(String symbol, double fallbackChange) {
+    final wsData = _favoritesMarketData[symbol];
+    if (wsData != null) {
+      return wsData['change'] ?? fallbackChange;
+    }
+    return fallbackChange;
   }
 
   void _generateMockCandleData() {
@@ -327,22 +437,68 @@ class _HomeScreenState extends State<HomeScreen> {
   
   Future<void> _fetchMarketData() async {
     try {
-      final response = await http.get(Uri.parse('$_marketBaseUrl/ticker/24hr'));
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> responseData = json.decode(response.body);
-        if (responseData['success'] == true) {
-          if (responseData['data'] is List) {
-            _cryptoData = List<Map<String, dynamic>>.from(responseData['data']);
-          } else if (responseData['data'] is Map && responseData['data']['symbol'] != null) {
-            _cryptoData = [Map<String, dynamic>.from(responseData['data'])];
-          } else {
-            _cryptoData = [];
-          }
-        }
+      // Fetch market cap data from CoinGecko
+      final marketCaps = await BinanceService.getMarketCapData();
+      
+      // Fetch top trading pairs from Binance
+      final topPairs = await BinanceService.getTopTradingPairs(limit: 50);
+      
+      if (mounted) {
+        setState(() {
+          _marketCapData = marketCaps;
+          _binanceMarketData = topPairs;
+          _cryptoData = topPairs.map((item) {
+            final symbol = item['symbol']?.toString() ?? '';
+            final baseSymbol = symbol.replaceAll('USDT', '');
+            final marketCap = marketCaps[baseSymbol] ?? 0.0;
+            
+            return {
+              'name': _getCoinName(symbol),
+              'symbol': symbol,
+              'price': item['price'],
+              'change': item['priceChangePercent'],
+              'volume': item['quoteVolume'],
+              'marketCap': marketCap,
+              'icon': _getCoinIcon(symbol),
+            };
+          }).toList();
+        });
       }
     } catch (e) {
-      debugPrint('Error fetching home market data: $e');
+      debugPrint('Error fetching market data: $e');
     }
+  }
+  
+  // Get coin name from symbol
+  String _getCoinName(String symbol) {
+    final names = {
+      'BTCUSDT': 'Bitcoin',
+      'ETHUSDT': 'Ethereum',
+      'BNBUSDT': 'BNB',
+      'SOLUSDT': 'Solana',
+      'ADAUSDT': 'Cardano',
+      'XRPUSDT': 'XRP',
+      'DOTUSDT': 'Polkadot',
+      'DOGEUSDT': 'Dogecoin',
+      'AVAXUSDT': 'Avalanche',
+      'MATICUSDT': 'Polygon',
+      'LINKUSDT': 'Chainlink',
+      'LTCUSDT': 'Litecoin',
+      'ATOMUSDT': 'Cosmos',
+      'UNIUSDT': 'Uniswap',
+      'ETCUSDT': 'Ethereum Classic',
+      'XLMUSDT': 'Stellar',
+      'ALGOUSDT': 'Algorand',
+      'VETUSDT': 'VeChain',
+      'FILUSDT': 'Filecoin',
+      'TRXUSDT': 'TRON',
+    };
+    return names[symbol] ?? symbol.replaceAll('USDT', '');
+  }
+  
+  // Get coin icon from symbol
+  String _getCoinIcon(String symbol) {
+    return symbol.replaceAll('USDT', '');
   }
   
   void _startPriceUpdates() {
@@ -366,7 +522,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } else if (action == 'Receive') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const ComingSoonScreen()));
     } else if (action == 'P2P') {
-      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const ComingSoonScreen()));
+      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const P2PTradingScreen()));
     } else if (action == 'Transfer') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const InternalTransferScreen()));
     } else if (action == 'History') {
@@ -374,13 +530,16 @@ class _HomeScreenState extends State<HomeScreen> {
     } else if (action == 'Invite') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const InviteFriendsScreen()));
     } else if (action == 'Conversion') {
-      Navigator.of(context).push(MaterialPageRoute(builder: (context) => ConversionScreen()));
+      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const ConversionScreen()));
     }
   }
 
   @override
   void dispose() {
     _priceTimer?.cancel();
+    _marketDataSubscription?.cancel();
+    _binanceWsSubscription?.cancel();
+    BinanceService.disconnectAll();
     super.dispose();
   }
 
@@ -391,7 +550,12 @@ class _HomeScreenState extends State<HomeScreen> {
       body: SafeArea(
         child: Column(
           children: [
+            // Fixed top section - doesn't scroll
             _buildHeader(),
+            _buildBalanceCard(),
+            _buildActionGrid(),
+            _buildPromoBanner(),
+            // Scrollable section - tabs + crypto list
             Expanded(
               child: CryptoRefreshIndicator(
                 onRefresh: _fetchInitialData,
@@ -400,9 +564,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildBalanceCard(),
-                      _buildActionGrid(),
-                      _buildPromoBanner(),
                       _buildTabSection(),
                       _buildCryptoList(),
                     ],
@@ -471,8 +632,8 @@ class _HomeScreenState extends State<HomeScreen> {
               borderRadius: BorderRadius.circular(8),
             ),
             child: IconButton(
-              icon: const Icon(Icons.notifications_none, color: Colors.white, size: 18),
               onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (context) => const NotificationScreen())),
+              icon: const Icon(Icons.notifications_none, color: Colors.white, size: 18),
               padding: EdgeInsets.zero,
             ),
           ),
@@ -700,7 +861,7 @@ class _HomeScreenState extends State<HomeScreen> {
     ];
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4), // Reduced vertical padding
       child: GridView.builder(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
@@ -767,8 +928,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildPromoBanner() {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      height: 120, 
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), // Reduced vertical margin
+      height: 100, // Reduced height slightly 
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(15),
         image: const DecorationImage(image: AssetImage('assets/images/adhome.png'), fit: BoxFit.cover),
@@ -813,6 +974,11 @@ class _HomeScreenState extends State<HomeScreen> {
       return _buildCandlestickChartSection();
     }
     
+    // Show real-time WebSocket data for Favorites tab
+    if (_selectedTab == 'Favorites') {
+      return _buildFavoritesWebSocketList();
+    }
+    
     if (_isLoading) return const Padding(padding: EdgeInsets.all(40), child: Center(child: BitcoinLoadingIndicator(size: 40)));
     
     if (_cryptoData.isEmpty) {
@@ -824,18 +990,219 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
     
+    return _buildCryptoDataList(_cryptoData);
+  }
+  
+  // Build favorites list with WebSocket real-time data - shows all Binance coins
+  Widget _buildFavoritesWebSocketList() {
+    // Use Binance market data (50+ coins) instead of hardcoded 4
+    final favorites = _binanceMarketData.isNotEmpty 
+        ? _binanceMarketData 
+        : [
+            {'name': 'Bitcoin', 'symbol': 'BTCUSDT', 'icon': 'BTC', 'price': 0.0, 'priceChangePercent': 0.0, 'quoteVolume': 0.0},
+            {'name': 'Ethereum', 'symbol': 'ETHUSDT', 'icon': 'ETH', 'price': 0.0, 'priceChangePercent': 0.0, 'quoteVolume': 0.0},
+            {'name': 'BNB', 'symbol': 'BNBUSDT', 'icon': 'BNB', 'price': 0.0, 'priceChangePercent': 0.0, 'quoteVolume': 0.0},
+            {'name': 'Solana', 'symbol': 'SOLUSDT', 'icon': 'SOL', 'price': 0.0, 'priceChangePercent': 0.0, 'quoteVolume': 0.0},
+          ];
+    
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const ClampingScrollPhysics(), // Better for nested scrolling
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      itemCount: favorites.length,
+      itemBuilder: (context, index) {
+        final crypto = favorites[index];
+        final cryptoName = crypto['name']?.toString() ?? _getCoinName(crypto['symbol']?.toString() ?? 'BTCUSDT');
+        final cryptoSymbol = crypto['symbol']?.toString() ?? 'BTCUSDT';
+        final icon = crypto['icon']?.toString() ?? cryptoSymbol.replaceAll('USDT', '');
+        
+        // Get real-time data from WebSocket or use the data from Binance API
+        final wsData = _favoritesMarketData[cryptoSymbol];
+        final apiPrice = double.tryParse(crypto['price']?.toString() ?? '0') ?? 0.0;
+        final apiChange = double.tryParse(crypto['priceChangePercent']?.toString() ?? '0') ?? 0.0;
+        final apiVolume = double.tryParse(crypto['quoteVolume']?.toString() ?? '0') ?? 0.0;
+        
+        // Get market cap from CoinGecko data
+        final baseSymbol = cryptoSymbol.replaceAll('USDT', '');
+        final apiMarketCap = _marketCapData[baseSymbol] ?? 0.0;
+        
+        // Use WebSocket data if available, otherwise use API data
+        final price = wsData?['price'] ?? apiPrice;
+        final change = wsData?['change'] ?? apiChange;
+        
+        // Use market cap from data
+        final marketCap = apiMarketCap > 0 ? apiMarketCap : _getFallbackMarketCap(cryptoSymbol);
+        final isPositive = change >= 0;
+        final isRealtime = wsData != null;
+        
+        // Fallback values if no data yet
+        final displayPrice = price > 0 ? price : _getFallbackPrice(cryptoSymbol);
+        final displayChange = isRealtime || change != 0 ? change : _getFallbackChange(cryptoSymbol);
+        final displayMarketCap = marketCap > 0 ? marketCap : _getFallbackMarketCap(cryptoSymbol);
+        
+        return GestureDetector(
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) => SpotScreen(initialSymbol: cryptoSymbol),
+              ),
+            );
+          },
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            child: Row(
+              children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: _getCoinColor(cryptoName),
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: Text(
+                    icon,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          cryptoSymbol.replaceAll('USDT', ''),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 18,
+                          ),
+                        ),
+                        const Text(
+                          '/USDT',
+                          style: TextStyle(
+                            color: Colors.white54,
+                            fontWeight: FontWeight.w400,
+                            fontSize: 14,
+                          ),
+                        ),
+                        if (isRealtime) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF00C087),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'MCap: ${_formatVolume(displayMarketCap)}',
+                      style: const TextStyle(
+                        color: Color(0xFF8E8E93),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '\$${_formatPrice(displayPrice)}',
+                    style: TextStyle(
+                      color: isRealtime 
+                          ? (isPositive ? const Color(0xFF00C087) : const Color(0xFFFF3B30))
+                          : Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: displayChange >= 0 
+                          ? const Color(0xFF00C087).withOpacity(0.1) 
+                          : const Color(0xFFFF3B30).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      '${displayChange >= 0 ? '+' : ''}${displayChange.toStringAsFixed(2)}%',
+                      style: TextStyle(
+                        color: displayChange >= 0 ? const Color(0xFF00C087) : const Color(0xFFFF3B30),
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+      },
+    );
+  }
+  
+  // Fallback values for when WebSocket data is not available
+  double _getFallbackPrice(String symbol) {
+    final prices = {
+      'BTCUSDT': 43250.00,
+      'ETHUSDT': 2650.00,
+      'BNBUSDT': 315.00,
+      'SOLUSDT': 98.50,
+    };
+    return prices[symbol] ?? 0.0;
+  }
+  
+  double _getFallbackChange(String symbol) {
+    final changes = {
+      'BTCUSDT': 2.35,
+      'ETHUSDT': -1.20,
+      'BNBUSDT': 0.85,
+      'SOLUSDT': 5.40,
+    };
+    return changes[symbol] ?? 0.0;
+  }
+  
+  double _getFallbackMarketCap(String symbol) {
+    final marketCaps = {
+      'BTCUSDT': 850000000000.0,  // $850B
+      'ETHUSDT': 280000000000.0,  // $280B
+      'BNBUSDT': 50000000000.0,   // $50B
+      'SOLUSDT': 45000000000.0,   // $45B
+    };
+    return marketCaps[symbol] ?? 0.0;
+  }
+  
+  // Build regular crypto list from API data
+  Widget _buildCryptoDataList(List<Map<String, dynamic>> cryptoData) {
     return ListView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      itemCount: _cryptoData.length,
+      itemCount: cryptoData.length,
       itemBuilder: (context, index) {
-        final crypto = _cryptoData[index];
+        final crypto = cryptoData[index];
         final cryptoName = crypto['name']?.toString() ?? 'Unknown';
         final cryptoSymbol = crypto['symbol']?.toString() ?? '???';
         final price = double.tryParse(crypto['price']?.toString() ?? '0.0') ?? 0.0;
         final change = double.tryParse(crypto['change']?.toString() ?? '0.0') ?? 0.0;
-        final volume = double.tryParse(crypto['volume']?.toString() ?? '0.0') ?? 0.0;
+        final marketCap = double.tryParse(crypto['marketCap']?.toString() ?? '0.0') ?? 0.0;
         final isPositive = change >= 0;
         
         return Container(
@@ -875,7 +1242,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Vol: ${_compactFormat.format(volume)}',
+                      'MCap: ${_formatVolume(marketCap)}',
                       style: const TextStyle(
                         color: Color(0xFF8E8E93),
                         fontSize: 14, 
@@ -1053,6 +1420,18 @@ class _HomeScreenState extends State<HomeScreen> {
       return price.toStringAsFixed(2);
     } else {
       return price.toStringAsFixed(6);
+    }
+  }
+
+  String _formatVolume(double volume) {
+    if (volume >= 1e9) {
+      return '\$${(volume / 1e9).toStringAsFixed(2)}B'; // Billions
+    } else if (volume >= 1e6) {
+      return '\$${(volume / 1e6).toStringAsFixed(2)}M'; // Millions
+    } else if (volume >= 1e3) {
+      return '\$${(volume / 1e3).toStringAsFixed(2)}K'; // Thousands
+    } else {
+      return '\$${volume.toStringAsFixed(2)}';
     }
   }
 

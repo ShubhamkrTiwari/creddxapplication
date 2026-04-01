@@ -463,12 +463,36 @@ class AuthService {
     return null;
   }
 
-  // Logout user
-  static Future<void> logout() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_tokenKey);
-    await prefs.remove(_userKey);
-    await prefs.remove('user_id');
+  // Logout user and call API
+  static Future<Map<String, dynamic>> logout() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString(_tokenKey);
+
+      // Call logout API if token exists
+      if (token != null && token.isNotEmpty) {
+        try {
+          await http.post(
+            Uri.parse('$_baseUrl/user/v1/auth/logout'),
+            headers: {
+              ..._getHeaders(),
+              'Authorization': 'Bearer $token',
+            },
+          ).timeout(const Duration(seconds: 10));
+        } catch (e) {
+          debugPrint('Logout API error (ignored): $e');
+        }
+      }
+
+      // Clear local data
+      await prefs.remove(_tokenKey);
+      await prefs.remove(_userKey);
+      await prefs.remove('user_id');
+
+      return {'success': true, 'message': 'Logout successful'};
+    } catch (e) {
+      return {'success': false, 'message': 'Error during logout: $e'};
+    }
   }
 
   static Future<String?> getToken() async {

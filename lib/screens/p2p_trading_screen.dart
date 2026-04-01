@@ -42,6 +42,7 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
     
     try {
       // Fetch Coins & Ads simultaneously from real API
+      // Get ALL ads without filtering
       final results = await Future.wait([
         P2PService.getP2PCoins(),
         P2PService.getAllAdvertisements(),
@@ -135,8 +136,14 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
       decoration: BoxDecoration(color: const Color(0xFF1C1C1E), borderRadius: BorderRadius.circular(12)),
       child: Row(
         children: [
-          _buildToggleButton('Buy', _isBuySelected, () => setState(() => _isBuySelected = true)),
-          _buildToggleButton('Sell', !_isBuySelected, () => setState(() => _isBuySelected = false)),
+          _buildToggleButton('Buy', _isBuySelected, () {
+            setState(() => _isBuySelected = true);
+            _fetchData();
+          }),
+          _buildToggleButton('Sell', !_isBuySelected, () {
+            setState(() => _isBuySelected = false);
+            _fetchData();
+          }),
         ],
       ),
     );
@@ -171,7 +178,10 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
           final symbol = coin['coinSymbol'] ?? 'USDT';
           final isSelected = _selectedCrypto == symbol;
           return GestureDetector(
-            onTap: () => setState(() => _selectedCrypto = symbol),
+            onTap: () {
+              setState(() => _selectedCrypto = symbol);
+              _fetchData();
+            },
             child: Container(
               margin: const EdgeInsets.only(right: 12),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -271,11 +281,22 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
                      ad['buyerName'] ??
                      advertiser['userName'] ?? 
                      advertiser['name'] ?? 
+                     advertiser['firstName'] ??
                      'Trader';
     
-    // Handle different field names for completion rate/trade count
-    final completionRate = ad['completionRate'] ?? ad['tradeCompletionRate'] ?? ad['successRate'] ?? '98%';
-    final tradeCount = ad['tradeCount'] ?? ad['totalTrades'] ?? ad['completedTrades'] ?? '1000+';
+    // Handle different field names for completion rate/trade count from advertiser object
+    final completionRate = advertiser['tradeCompletionPercentage'] ?? 
+                          advertiser['completionRate'] ?? 
+                          ad['tradeCompletionPercentage'] ?? 
+                          ad['completionRate'] ?? 
+                          ad['successRate'] ?? 
+                          '98%';
+    final tradeCount = advertiser['totalTrades'] ?? 
+                      advertiser['tradeCount'] ?? 
+                      ad['totalTrades'] ?? 
+                      ad['tradeCount'] ?? 
+                      ad['completedTrades'] ?? 
+                      '1000+';
     
     // Handle different field names for price
     final price = ad['price'] ?? 
@@ -313,11 +334,11 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
     print('DEBUG: Parsed ad data - User: $userName, Price: $price, Available: $available');
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: const Color(0xFF1C1C1E), 
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: const Color(0xFF2C2C2E), width: 1),
       ),
       child: Column(
@@ -327,25 +348,25 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
           Row(
             children: [
               CircleAvatar(
-                radius: 20, 
+                radius: 16, 
                 backgroundColor: const Color(0xFF5C4B2A), 
                 child: Text(
                   userName.isNotEmpty ? userName[0].toUpperCase() : 'T', 
-                  style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)
+                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)
                 )
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(userName, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 2),
+                    Text(userName, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 1),
                     Row(
                       children: [
-                        Text('$completionRate completion', style: const TextStyle(color: Color(0xFF84BD00), fontSize: 12)),
-                        const SizedBox(width: 8),
-                        Text('($tradeCount orders)', style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                        Text('$completionRate completion', style: const TextStyle(color: Color(0xFF84BD00), fontSize: 11)),
+                        const SizedBox(width: 6),
+                        Text('($tradeCount orders)', style: const TextStyle(color: Colors.white54, fontSize: 11)),
                       ],
                     ),
                   ],
@@ -353,7 +374,7 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
           
           // Price and availability row
           Row(
@@ -363,22 +384,22 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Price', style: TextStyle(color: Colors.white54, fontSize: 12)),
-                  const SizedBox(height: 4),
-                  Text('₹${price.toStringAsFixed(2)}', style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                  const Text('Price', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                  const SizedBox(height: 2),
+                  Text('₹${price.toStringAsFixed(2)}', style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
                 ],
               ),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text('Available: ${available.toStringAsFixed(2)} $_selectedCrypto', style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
-                  const SizedBox(height: 4),
-                  Text('Limit: ₹${minLimit.toStringAsFixed(0)} - ₹${maxLimit.toStringAsFixed(0)}', style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                  Text('Available: ${available.toStringAsFixed(2)} $_selectedCrypto', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 2),
+                  Text('Limit: ₹${minLimit.toStringAsFixed(0)} - ₹${maxLimit.toStringAsFixed(0)}', style: const TextStyle(color: Colors.white54, fontSize: 11)),
                 ],
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
           
           // Payment methods and action button
           Row(
@@ -389,21 +410,21 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
                   runSpacing: 4,
                   children: paymentModes.map<Widget>((mode) {
                     return Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                       decoration: BoxDecoration(
                         color: const Color(0xFF2C2C2E),
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(4),
                         border: Border.all(color: const Color(0xFF3A3A3C), width: 1),
                       ),
                       child: Text(
                         mode.toString(), 
-                        style: const TextStyle(color: Colors.white70, fontSize: 11)
+                        style: const TextStyle(color: Colors.white70, fontSize: 10)
                       ),
                     );
                   }).toList(),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               ElevatedButton(
                 onPressed: () {
                   Navigator.push(
@@ -423,13 +444,13 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _isBuySelected ? const Color(0xFF84BD00) : Colors.redAccent,
                   foregroundColor: Colors.black,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                  minimumSize: const Size(60, 36),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  minimumSize: const Size(50, 32),
                 ),
                 child: Text(
                   _isBuySelected ? 'Buy' : 'Sell', 
-                  style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 14)
+                  style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 12)
                 ),
               ),
             ],

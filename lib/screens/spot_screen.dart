@@ -2,11 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../services/spot_service.dart';
+import '../services/binance_service.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 import 'chart_screen.dart';
 
 class SpotScreen extends StatefulWidget {
-  const SpotScreen({super.key});
+  final String? initialSymbol;
+  
+  const SpotScreen({super.key, this.initialSymbol});
 
   @override
   State<SpotScreen> createState() => _SpotScreenState();
@@ -34,6 +37,16 @@ class _SpotScreenState extends State<SpotScreen> {
   bool _isLoadingBalance = true;
   String? _balanceError;
   Map<String, dynamic>? _ticker;
+  
+  // Price tracking for order book animations
+  double _previousBid = 0.0;
+  double _previousAsk = 0.0;
+  bool _isPriceUp = false;
+  
+  // Price flash animation
+  bool _isPriceFlashing = false;
+  Color _flashColor = Colors.white;
+  Timer? _priceUpdateTimer;
   Map<String, dynamic>? _fees;
   Map<String, dynamic>? _healthStatus;
   bool _isWebSocketConnected = false;
@@ -44,6 +57,12 @@ class _SpotScreenState extends State<SpotScreen> {
   @override
   void initState() {
     super.initState();
+    
+    // Use initial symbol if provided
+    if (widget.initialSymbol != null && widget.initialSymbol!.isNotEmpty) {
+      _selectedSymbol = widget.initialSymbol!;
+      SpotService.currentSymbol = _selectedSymbol;
+    }
     
     // Initialize with default balance immediately
     _balance = {
@@ -62,13 +81,99 @@ class _SpotScreenState extends State<SpotScreen> {
     // Initialize price controller
     _priceController.text = _currentPrice.toStringAsFixed(2);
     
+    // Load real market price immediately from Binance
+    _loadRealMarketPrice();
+    
     _loadSpotData();
     _initializeWebSocket();
+    
+    // Start continuous price updates for order book
+    _startPriceUpdateTimer();
+  }
+  
+  // Start timer to update price every 2 seconds
+  void _startPriceUpdateTimer() {
+    _priceUpdateTimer?.cancel();
+    _priceUpdateTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (mounted) {
+        _updateOrderBookPrice();
+      }
+    });
+  }
+  
+  // Update price from Binance with animation
+  Future<void> _updateOrderBookPrice() async {
+    try {
+      final binanceTicker = await BinanceService.getTickerData(_selectedSymbol);
+      if (binanceTicker != null && binanceTicker['price'] != null) {
+        final newPrice = binanceTicker['price'] as double;
+        final oldPrice = _currentPrice;
+        
+        if (newPrice > 0 && mounted && newPrice != oldPrice) {
+          // Determine price direction
+          final isUp = newPrice > oldPrice;
+          
+          setState(() {
+            _currentPrice = newPrice;
+            _isPriceUp = isUp;
+            _isPriceFlashing = true;
+            _flashColor = isUp ? const Color(0xFF84BD00) : Colors.red;
+            
+            // Update ticker data
+            _ticker ??= {};
+            _ticker!['last_price'] = newPrice;
+            _ticker!['price_change_24h'] = binanceTicker['priceChange'];
+            _ticker!['price_change_percent_24h'] = binanceTicker['priceChangePercent'];
+            _ticker!['volume_24h'] = binanceTicker['volume'];
+            _ticker!['high_24h'] = binanceTicker['highPrice'];
+            _ticker!['low_24h'] = binanceTicker['lowPrice'];
+          });
+          
+          // Stop flash after 500ms
+          Future.delayed(const Duration(milliseconds: 500), () {
+            if (mounted) {
+              setState(() {
+                _isPriceFlashing = false;
+              });
+            }
+          });
+        }
+      }
+    } catch (e) {
+      print('Error updating order book price: $e');
+    }
+  }
+  
+  // Load real market price from Binance API immediately
+  Future<void> _loadRealMarketPrice() async {
+    try {
+      print('Loading real market price for $_selectedSymbol from Binance...');
+      final binanceTicker = await BinanceService.getTickerData(_selectedSymbol);
+      if (binanceTicker != null && binanceTicker['price'] != null) {
+        final realPrice = binanceTicker['price'] as double;
+        if (realPrice > 0 && mounted) {
+          setState(() {
+            _currentPrice = realPrice;
+            _ticker ??= {};
+            _ticker!['last_price'] = realPrice;
+            _ticker!['price_change_24h'] = binanceTicker['priceChange'];
+            _ticker!['price_change_percent_24h'] = binanceTicker['priceChangePercent'];
+            _ticker!['volume_24h'] = binanceTicker['volume'];
+            _ticker!['high_24h'] = binanceTicker['highPrice'];
+            _ticker!['low_24h'] = binanceTicker['lowPrice'];
+          });
+          print('Real market price loaded: $_currentPrice');
+        }
+      }
+    } catch (e) {
+      print('Error loading real market price: $e');
+    }
   }
 
   @override
   void dispose() {
     _connectionCheckTimer?.cancel();
+    _priceUpdateTimer?.cancel();
     _priceController.dispose();
     _amountController.dispose();
     SpotService.disconnectWebSocket();
@@ -98,6 +203,7 @@ class _SpotScreenState extends State<SpotScreen> {
           if (data['type'] == 'book') {
             setState(() {
               final orderBookData = data['data'];
+              print('Order book data received: $orderBookData');
               // Convert [price, quantity] arrays to maps for existing UI
               // Limit to top 10 levels for better performance
               final asks = (orderBookData['asks'] as List? ?? [])
@@ -109,6 +215,8 @@ class _SpotScreenState extends State<SpotScreen> {
                   .map((level) => {'price': level[0], 'amount': level[1]})
                   .toList();
               
+              print('Parsed asks: ${asks.length}, bids: ${bids.length}');
+              
               // Preserve user's orders (marked with isMyOrder)
               final mySellOrders = _sellOrders.where((o) => o['isMyOrder'] == true).toList();
               final myBuyOrders = _buyOrders.where((o) => o['isMyOrder'] == true).toList();
@@ -116,9 +224,32 @@ class _SpotScreenState extends State<SpotScreen> {
               _sellOrders = [...mySellOrders, ...List<Map<String, dynamic>>.from(asks)];
               _buyOrders = [...myBuyOrders, ...List<Map<String, dynamic>>.from(bids)];
               
+              print('Final sellOrders: ${_sellOrders.length}, buyOrders: ${_buyOrders.length}');
+              
               // Sort to maintain proper order
               _sellOrders.sort((a, b) => (a['price'] as double).compareTo(b['price'] as double));
               _buyOrders.sort((a, b) => (b['price'] as double).compareTo(a['price'] as double));
+              
+              // Track previous prices for animation
+              final newBestBid = getBestBid();
+              final newBestAsk = getBestAsk();
+              
+              // Update price direction indicator
+              if (newBestBid != null && _previousBid > 0) {
+                _isPriceUp = newBestBid > _previousBid;
+              }
+              
+              // Store previous prices before updating
+              if (newBestBid != null) _previousBid = newBestBid;
+              if (newBestAsk != null) _previousAsk = newBestAsk;
+              
+              // Update current price to market price (mid price from order book)
+              if (newBestBid != null && newBestAsk != null && newBestBid > 0 && newBestAsk > 0) {
+                final midPrice = (newBestBid + newBestAsk) / 2;
+                if (midPrice > 0) {
+                  _currentPrice = midPrice;
+                }
+              }
               
               _isWebSocketConnected = true;
             });
@@ -313,17 +444,43 @@ class _SpotScreenState extends State<SpotScreen> {
     }
   }
 
-  // Load ticker data
+  // Load ticker data - uses real market price from Binance only
   Future<void> _loadTicker() async {
     try {
+      // Always try to get real price from Binance first
+      print('Loading real market price for $_selectedSymbol from Binance...');
+      final binanceTicker = await BinanceService.getTickerData(_selectedSymbol);
+      if (binanceTicker != null && binanceTicker['price'] != null) {
+        final realPrice = binanceTicker['price'] as double;
+        if (realPrice > 0) {
+          setState(() {
+            _currentPrice = realPrice;
+            _ticker ??= {};
+            _ticker!['last_price'] = realPrice;
+            _ticker!['price_change_24h'] = binanceTicker['priceChange'];
+            _ticker!['price_change_percent_24h'] = binanceTicker['priceChangePercent'];
+            _ticker!['volume_24h'] = binanceTicker['volume'];
+            _ticker!['high_24h'] = binanceTicker['highPrice'];
+            _ticker!['low_24h'] = binanceTicker['lowPrice'];
+          });
+          print('Real market price loaded: $_currentPrice');
+          return; // Exit early since we got real price
+        }
+      }
+      
+      // Fallback to SpotService only if Binance fails
       final result = await SpotService.getTicker(_selectedSymbol);
       if (result['success']) {
-        setState(() {
-          _ticker = result['data'];
-          if (_ticker != null && _ticker!['last_price'] != null) {
-            _currentPrice = double.tryParse(_ticker!['last_price'].toString()) ?? _currentPrice;
+        final data = result['data'];
+        if (data != null && data['last_price'] != null) {
+          final price = double.tryParse(data['last_price'].toString()) ?? 0.0;
+          if (price > 0) {
+            setState(() {
+              _currentPrice = price;
+              _ticker = data;
+            });
           }
-        });
+        }
       }
     } catch (e) {
       print('Error loading ticker: $e');
@@ -811,10 +968,32 @@ class _SpotScreenState extends State<SpotScreen> {
                     _selectedSymbol,
                     style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12),
                   ),
-                  Text(
-                    _currentPrice.toStringAsFixed(2),
-                    style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
-                  ),
+                  _currentPrice > 0
+                    ? Text(
+                        _currentPrice.toStringAsFixed(2),
+                        style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+                      )
+                    : Row(
+                        children: [
+                          const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF84BD00)),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Loading...',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.6),
+                              fontSize: 18,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
                 ],
               ),
               Column(
@@ -1028,6 +1207,13 @@ class _SpotScreenState extends State<SpotScreen> {
 
   Widget _buildPriceInput() {
     if (_orderType == 'Market') {
+      // Calculate market price from order book
+      final bestBid = getBestBid();
+      final bestAsk = getBestAsk();
+      final marketPrice = (bestBid != null && bestAsk != null) 
+          ? ((bestBid + bestAsk) / 2).toStringAsFixed(2)
+          : _currentPrice.toStringAsFixed(2);
+      
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1047,13 +1233,20 @@ class _SpotScreenState extends State<SpotScreen> {
               children: [
                 Expanded(
                   child: Text(
-                    'Market Price',
+                    marketPrice,
                     textAlign: TextAlign.left,
                     style: const TextStyle(
-                      color: Colors.grey,
+                      color: Colors.white,
                       fontSize: 14,
-                      fontWeight: FontWeight.normal,
+                      fontWeight: FontWeight.w500,
                     ),
+                  ),
+                ),
+                Text(
+                  'USDT',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.6),
+                    fontSize: 12,
                   ),
                 ),
               ],
@@ -1066,9 +1259,19 @@ class _SpotScreenState extends State<SpotScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Limit Price',
-          style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12),
+        // Show Market Price reference above Limit Price
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Limit Price',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12),
+            ),
+            Text(
+              'MP: ${_currentPrice.toStringAsFixed(2)}',
+              style: const TextStyle(color: Color(0xFF84BD00), fontSize: 10, fontWeight: FontWeight.w500),
+            ),
+          ],
         ),
         const SizedBox(height: 4),
         Container(
@@ -1583,63 +1786,110 @@ class _SpotScreenState extends State<SpotScreen> {
 
   Widget _buildOrderBook() {
     return Container(
-      padding: const EdgeInsets.all(16),
-      constraints: BoxConstraints(
-        maxHeight: 350, // Maximum height constraint
-        minHeight: 250, // Minimum height constraint
+      padding: const EdgeInsets.all(8),
+      constraints: const BoxConstraints(
+        maxHeight: 420,
+        minHeight: 360,
       ),
       decoration: BoxDecoration(
         color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min, // Use minimum size
         children: [
+          // Header Row
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text(
                 'Order Book',
-                style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+                style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: const Color(0xFF2A2A2A),
-                  borderRadius: BorderRadius.circular(4),
+                  borderRadius: BorderRadius.circular(3),
                 ),
                 child: const Text(
-                  'Top 5',
-                  style: TextStyle(color: Color(0xFF84BD00), fontSize: 10),
+                  'Top 10',
+                  style: TextStyle(color: Color(0xFF84BD00), fontSize: 8),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _buildSellOrders(),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    decoration: const BoxDecoration(
-                      border: Border.symmetric(horizontal: BorderSide(color: Colors.white10)),
-                    ),
-                    child: Text(
-                      _currentPrice.toStringAsFixed(1),
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  _buildBuyOrders(),
-                ],
+          const SizedBox(height: 4),
+          // Column Headers
+          Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: Text(
+                  'Price (USDT)',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 8),
+                ),
               ),
+              Expanded(
+                flex: 2,
+                child: Text(
+                  'Amount (BTC)',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 8),
+                ),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text(
+                  'Total',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 8),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          // Sell Orders (Asks) - Red
+          Flexible(
+            flex: 1,
+            child: _buildSellOrders(),
+          ),
+          // Market Price Display
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            decoration: const BoxDecoration(
+              border: Border.symmetric(horizontal: BorderSide(color: Colors.white10)),
             ),
+            child: Column(
+              children: [
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: _isPriceFlashing ? _flashColor.withValues(alpha: 0.2) : Colors.transparent,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  child: _currentPrice > 0
+                    ? Text(
+                        _currentPrice.toStringAsFixed(2),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: _isPriceFlashing 
+                            ? _flashColor 
+                            : (_isPriceUp ? const Color(0xFF84BD00) : Colors.red), 
+                          fontSize: 16, 
+                          fontWeight: FontWeight.bold,
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+                ),
+              ],
+            ),
+          ),
+          // Buy Orders (Bids) - Green
+          Flexible(
+            flex: 1,
+            child: _buildBuyOrders(),
           ),
         ],
       ),
@@ -1647,41 +1897,55 @@ class _SpotScreenState extends State<SpotScreen> {
   }
 
   Widget _buildSellOrders() {
+    print('Building sell orders: ${_sellOrders.length} orders');
+    if (_sellOrders.isEmpty) {
+      return const SizedBox.shrink();
+    }
     return Column(
-      mainAxisSize: MainAxisSize.min, // Use minimum size
-      children: _sellOrders.take(5).map((order) { // Limit to top 5 sell orders
+      children: _sellOrders.take(10).map((order) {
+        final price = (order['price'] ?? 0.0) as double;
+        final amount = (order['amount'] ?? 0.0) as double;
+        final total = price * amount;
         final isMyOrder = order['isMyOrder'] == true;
+        
         return Container(
-          constraints: const BoxConstraints(
-            minHeight: 20, // Minimum height for each order row
-          ),
-          decoration: BoxDecoration(
-            color: isMyOrder ? Colors.red.withValues(alpha: 0.3) : Colors.red.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(2),
-            border: isMyOrder ? Border.all(color: Colors.red, width: 1) : null,
-          ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    (order['price'] ?? 0.0).toStringAsFixed(1),
-                    style: const TextStyle(color: Colors.red, fontSize: 12),
-                    overflow: TextOverflow.ellipsis, // Prevent overflow
+          padding: const EdgeInsets.symmetric(vertical: 0.5),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: Text(
+                  price.toStringAsFixed(2),
+                  style: TextStyle(
+                    color: isMyOrder ? Colors.red : Colors.red.withValues(alpha: 0.9), 
+                    fontSize: 9,
+                    fontWeight: isMyOrder ? FontWeight.bold : FontWeight.normal,
                   ),
                 ),
-                Expanded(
-                  child: Text(
-                    (order['amount'] ?? 0.0).toStringAsFixed(4),
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12),
-                    overflow: TextOverflow.ellipsis, // Prevent overflow
-                    textAlign: TextAlign.right,
+              ),
+              Expanded(
+                flex: 2,
+                child: Text(
+                  amount.toStringAsFixed(6),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: isMyOrder ? Colors.red : Colors.red.withValues(alpha: 0.7), 
+                    fontSize: 9,
                   ),
                 ),
-              ],
-            ),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text(
+                  total.toStringAsFixed(2),
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: isMyOrder ? Colors.red : Colors.red.withValues(alpha: 0.7), 
+                    fontSize: 9,
+                  ),
+                ),
+              ),
+            ],
           ),
         );
       }).toList(),
@@ -1689,41 +1953,55 @@ class _SpotScreenState extends State<SpotScreen> {
   }
 
   Widget _buildBuyOrders() {
+    print('Building buy orders: ${_buyOrders.length} orders');
+    if (_buyOrders.isEmpty) {
+      return const SizedBox.shrink();
+    }
     return Column(
-      mainAxisSize: MainAxisSize.min, // Use minimum size
-      children: _buyOrders.take(5).map((order) { // Limit to top 5 buy orders
+      children: _buyOrders.take(10).map((order) {
+        final price = (order['price'] ?? 0.0) as double;
+        final amount = (order['amount'] ?? 0.0) as double;
+        final total = price * amount;
         final isMyOrder = order['isMyOrder'] == true;
+        
         return Container(
-          constraints: const BoxConstraints(
-            minHeight: 20, // Minimum height for each order row
-          ),
-          decoration: BoxDecoration(
-            color: isMyOrder ? const Color(0xFF84BD00).withValues(alpha: 0.3) : const Color(0xFF84BD00).withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(2),
-            border: isMyOrder ? Border.all(color: const Color(0xFF84BD00), width: 1) : null,
-          ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    (order['price'] ?? 0.0).toStringAsFixed(1),
-                    style: const TextStyle(color: Color(0xFF84BD00), fontSize: 12),
-                    overflow: TextOverflow.ellipsis, // Prevent overflow
+          padding: const EdgeInsets.symmetric(vertical: 0.5),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: Text(
+                  price.toStringAsFixed(2),
+                  style: TextStyle(
+                    color: isMyOrder ? const Color(0xFF84BD00) : const Color(0xFF84BD00).withValues(alpha: 0.9), 
+                    fontSize: 9,
+                    fontWeight: isMyOrder ? FontWeight.bold : FontWeight.normal,
                   ),
                 ),
-                Expanded(
-                  child: Text(
-                    (order['amount'] ?? 0.0).toStringAsFixed(4),
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12),
-                    overflow: TextOverflow.ellipsis, // Prevent overflow
-                    textAlign: TextAlign.right,
+              ),
+              Expanded(
+                flex: 2,
+                child: Text(
+                  amount.toStringAsFixed(6),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: isMyOrder ? const Color(0xFF84BD00) : const Color(0xFF84BD00).withValues(alpha: 0.7), 
+                    fontSize: 9,
                   ),
                 ),
-              ],
-            ),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text(
+                  total.toStringAsFixed(2),
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: isMyOrder ? const Color(0xFF84BD00) : const Color(0xFF84BD00).withValues(alpha: 0.7), 
+                    fontSize: 9,
+                  ),
+                ),
+              ),
+            ],
           ),
         );
       }).toList(),

@@ -5,9 +5,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
 import 'notification_screen.dart';
-import 'send_screen.dart';
-import 'withdraw_screen.dart';
-import 'receive_screen.dart';
+import 'coming_soon_screen.dart';
 import 'market_screen.dart';
 import '../services/wallet_service.dart';
 
@@ -598,22 +596,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
     switch (action) {
       case 'Send':
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (context) => const SendScreen()),
+          MaterialPageRoute(builder: (context) => const ComingSoonScreen()),
         );
         break;
       case 'Request':
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (context) => const ReceiveScreen()),
+          MaterialPageRoute(builder: (context) => const ComingSoonScreen()),
         );
         break;
       case 'Deposit':
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (context) => const ReceiveScreen()),
+          MaterialPageRoute(builder: (context) => const ComingSoonScreen()),
         );
         break;
       case 'Withdraw':
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (context) => const WithdrawScreen()),
+          MaterialPageRoute(builder: (context) => const ComingSoonScreen()),
         );
         break;
       case 'Edit Wallet':

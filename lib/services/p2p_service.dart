@@ -284,33 +284,77 @@ class P2PService {
     }
   }
 
-  static Future<List<dynamic>> getAllAdvertisements() async {
+  static Future<List<dynamic>> getAllAdvertisements({
+    String? coin,
+    int? direction,
+    String? currency,
+    double? amount,
+    String? payMode,
+    int? limit,
+    int? page,
+  }) async {
     debugPrint('=== GETTING REAL ADVERTISEMENTS ===');
     
     try {
       final headers = await _getHeaders();
       
-      // Use the specific endpoint as requested
-      final endpoint = '$_baseUrl/p2p/v1/p2p/advertise/all';
-      debugPrint('Fetching from endpoint: $endpoint');
+      // Build query parameters
+      final queryParams = <String, String>{
+        if (coin != null) 'coinId': coin,
+        if (direction != null) 'direction': direction.toString(),
+        if (currency != null) 'currency': currency,
+        if (amount != null) 'amount': amount.toString(),
+        if (payMode != null) 'payMode': payMode,
+        if (limit != null) 'limit': limit.toString(),
+        if (page != null) 'page': page.toString(),
+      };
       
-      final response = await http.get(Uri.parse(endpoint), headers: headers);
+      // Build URI with query parameters
+      final uri = Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/all').replace(queryParameters: queryParams);
+      debugPrint('Fetching from: $uri');
+      
+      final response = await http.get(uri, headers: headers);
       debugPrint('Response Status: ${response.statusCode}');
+      debugPrint('Response Body: ${response.body.substring(0, response.body.length > 500 ? 500 : response.body.length)}');
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
+        debugPrint('Response Data Type: ${data.runtimeType}');
+        
+        // Print full response for debugging
+        debugPrint('=== FULL RESPONSE ===');
+        if (response.body.length > 1000) {
+          debugPrint('${response.body.substring(0, 1000)}...');
+        } else {
+          debugPrint(response.body);
+        }
+        debugPrint('=== END RESPONSE ===');
+        
         List<dynamic> ads = [];
         
         if (data is List) {
           ads = data;
         } else if (data is Map) {
-          ads = data['finalData'] ?? data['data'] ?? data['result'] ?? data['docs'] ?? data['advertisements'] ?? [];
+          // Debug: Print all keys and their types
+          debugPrint('Response keys: ${data.keys.toList()}');
+          for (var key in data.keys) {
+            debugPrint('Key: $key, Type: ${data[key].runtimeType}');
+          }
           
-          if (ads.isEmpty) {
-            // Check all keys for any lists that might be ads
-            for (var key in (data as Map).keys) {
-              if (data[key] is List && key.toString().toLowerCase().contains('ad')) {
-                ads = data[key];
+          // Direct extraction of finalData which contains the ads list
+          if (data['finalData'] != null && data['finalData'] is List) {
+            ads = data['finalData'] as List<dynamic>;
+            debugPrint('finalData extracted as List, count: ${ads.length}');
+          } else if (data['data'] != null && data['data'] is List) {
+            ads = data['data'] as List<dynamic>;
+          } else if (data['result'] != null && data['result'] is List) {
+            ads = data['result'] as List<dynamic>;
+          } else {
+            // Try any list in the response
+            for (var key in data.keys) {
+              if (data[key] is List) {
+                ads = data[key] as List<dynamic>;
+                debugPrint('Found List in key: $key, count: ${ads.length}');
                 break;
               }
             }
@@ -319,11 +363,19 @@ class P2PService {
         
         if (ads.isNotEmpty) {
           debugPrint('Advertisements fetched: ${ads.length}');
+          debugPrint('First ad sample: ${ads[0]}');
           return ads;
+        } else {
+          debugPrint('Ads list is empty after parsing. Checking all keys in response:');
+          if (data is Map) {
+            for (var key in data.keys) {
+              debugPrint('Key: $key, Value type: ${data[key].runtimeType}');
+            }
+          }
         }
       }
       
-      debugPrint('No ads found, returning empty list');
+      debugPrint('No ads found from API, returning empty list');
       return [];
       
     } catch (e) { 

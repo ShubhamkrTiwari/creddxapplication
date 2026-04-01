@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'send_screen.dart';
-import 'receive_screen.dart';
+import 'coming_soon_screen.dart';
 import 'deposit_screen.dart';
 import 'internal_transfer_screen.dart';
 import 'wallet_history_screen.dart';
@@ -54,10 +53,12 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
       final results = await Future.wait([
         WalletService.getAllWalletBalances(),
         WalletService.getWalletTransferHistory(),
+        WalletService.getCompleteTransactionHistory(limit: 20),
       ]);
 
       final balanceResult = results[0] as Map<String, dynamic>;
       final historyResult = results[1] as Map<String, dynamic>;
+      final transactionResult = results[2] as Map<String, dynamic>;
       
       double totalEquityUSDT = 0.0;
       Map<String, dynamic> walletBreakdowns = {};
@@ -89,19 +90,26 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
               if (coin.isEmpty) continue;
               
               final total = double.tryParse(b['total']?.toString() ?? '0') ?? 0.0;
+              final available = double.tryParse(b['available']?.toString() ?? '0') ?? 0.0;
+              final locked = double.tryParse(b['locked']?.toString() ?? '0') ?? 0.0;
               
               // Aggregate for Assets list
               if (allAssets.containsKey(coin)) {
                 final currentAmount = double.parse(allAssets[coin]!['amount']);
                 allAssets[coin]!['amount'] = (currentAmount + total).toString();
+                allAssets[coin]!['available'] = (double.parse(allAssets[coin]!['available']) + available).toString();
+                allAssets[coin]!['locked'] = (double.parse(allAssets[coin]!['locked']) + locked).toString();
               } else {
                 allAssets[coin] = {
                   'symbol': coin,
                   'name': _getCoinFullName(coin),
                   'amount': total.toString(),
-                  'usdValue': 0.0, 
+                  'available': available.toString(),
+                  'locked': locked.toString(),
+                  'usdValue': coin == 'USDT' ? total : 0.0, 
                   'icon': _getCoinSymbol(coin),
                   'color': _getCoinColor(coin),
+                  'iconUrl': _getCoinIconUrl(coin),
                 };
               }
 
@@ -110,22 +118,34 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
                 if (type != 'demo_bot') totalEquityUSDT += total;
                 walletBreakdowns[type] = {
                   'total': total.toStringAsFixed(2),
+                  'available': available.toStringAsFixed(2),
+                  'locked': locked.toStringAsFixed(2),
                 };
-                allAssets[coin]!['usdValue'] = double.parse(allAssets[coin]!['amount']);
               }
             }
           } else {
-            walletBreakdowns[type] = {'total': '0.00'};
+            walletBreakdowns[type] = {'total': '0.00', 'available': '0.00', 'locked': '0.00'};
           }
         }
       }
 
+      // Process transfer history
       if (historyResult['success'] == true && historyResult['data'] != null) {
         final data = historyResult['data'];
         if (data is List) {
           _transferHistory = data.map((item) => Map<String, dynamic>.from(item)).toList();
         } else if (data is Map && data['transfers'] != null) {
           _transferHistory = (data['transfers'] as List).map((item) => Map<String, dynamic>.from(item)).toList();
+        }
+      }
+
+      // Process transaction history
+      if (transactionResult['success'] == true && transactionResult['data'] != null) {
+        final data = transactionResult['data'];
+        if (data is Map && data['transactions'] != null) {
+          _transactionHistory = (data['transactions'] as List).map((item) => Map<String, dynamic>.from(item)).toList();
+        } else if (data is List) {
+          _transactionHistory = data.map((item) => Map<String, dynamic>.from(item)).toList();
         }
       }
 
@@ -140,9 +160,12 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
               'symbol': 'USDT',
               'name': 'Tether',
               'amount': '0.00',
+              'available': '0.00',
+              'locked': '0.00',
               'usdValue': 0.0,
               'icon': '₮',
               'color': const Color(0xFF26A17B),
+              'iconUrl': _getCoinIconUrl('USDT'),
             }];
           }
           _isLoading = false;
@@ -176,7 +199,7 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
         elevation: 0,
         title: const Text(
           'Wallet',
-          style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
         ),
         actions: [
           IconButton(
@@ -195,15 +218,15 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     _buildBalanceSection(),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
                     _buildWalletBalancesSection(),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
                     _buildActionButtons(),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
                     _buildCryptoHoldings(),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
                     _buildHistorySection(),
                   ],
                 ),
@@ -221,50 +244,78 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            const Color(0xFF84BD00).withValues(alpha: 0.15),
-            const Color(0xFF84BD00).withValues(alpha: 0.02),
+            const Color(0xFF84BD00).withValues(alpha: 0.2),
+            const Color(0xFF84BD00).withValues(alpha: 0.05),
           ],
         ),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFF84BD00).withValues(alpha: 0.1)),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF84BD00).withValues(alpha: 0.15)),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'Equity Balance',
-                style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.w500),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF84BD00).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.account_balance_wallet, color: Color(0xFF84BD00), size: 14),
+                    SizedBox(width: 6),
+                    Text(
+                      'Total Equity',
+                      style: TextStyle(color: Color(0xFF84BD00), fontSize: 11, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 2),
-              Text(
-                _currencyFormat.format(_totalBalance),
-                style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+              GestureDetector(
+                onTap: _copyAddress,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _walletAddress.length > 12 ? '${_walletAddress.substring(0, 6)}...${_walletAddress.substring(_walletAddress.length - 4)}' : _walletAddress,
+                        style: const TextStyle(color: Colors.white60, fontSize: 10, fontFamily: 'monospace'),
+                      ),
+                      const SizedBox(width: 6),
+                      const Icon(Icons.copy, color: Color(0xFF84BD00), size: 12),
+                    ],
+                  ),
+                ),
               ),
             ],
           ),
-          GestureDetector(
-            onTap: _copyAddress,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.05),
-                borderRadius: BorderRadius.circular(12),
+          const SizedBox(height: 12),
+          Text(
+            _currencyFormat.format(_totalBalance),
+            style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: -0.5),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              const Text(
+                '≈ ',
+                style: TextStyle(color: Colors.white54, fontSize: 13),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _walletAddress,
-                    style: const TextStyle(color: Colors.white38, fontSize: 9),
-                  ),
-                  const SizedBox(width: 4),
-                  const Icon(Icons.copy, color: Color(0xFF84BD00), size: 10),
-                ],
+              Text(
+                '${_totalBalance.toStringAsFixed(2)} USDT',
+                style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w500),
               ),
-            ),
+            ],
           ),
         ],
       ),
@@ -272,39 +323,53 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
   }
 
   Widget _buildActionButtons() {
+    final actions = [
+      {'icon': Icons.arrow_upward, 'label': 'Send', 'color': const Color(0xFF84BD00)},
+      {'icon': Icons.arrow_downward, 'label': 'Receive', 'color': const Color(0xFF627EEA)},
+      {'icon': Icons.add_circle_outline, 'label': 'Deposit', 'color': const Color(0xFF26A17B)},
+      {'icon': Icons.swap_horiz, 'label': 'Transfer', 'color': const Color(0xFFF7931A)},
+    ];
+
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      mainAxisAlignment: MainAxisAlignment.spaceAround,
       children: [
-        _actionButton(Icons.send, 'Send', () {
-          Navigator.push(context, MaterialPageRoute(builder: (context) => const SendScreen()));
+        _actionButton(actions[0]['icon'] as IconData, actions[0]['label'] as String, actions[0]['color'] as Color, () {
+          Navigator.push(context, MaterialPageRoute(builder: (context) => const ComingSoonScreen()));
         }),
-        _actionButton(Icons.request_page, 'Receive', () {
-          Navigator.push(context, MaterialPageRoute(builder: (context) => const ReceiveScreen()));
+        _actionButton(actions[1]['icon'] as IconData, actions[1]['label'] as String, actions[1]['color'] as Color, () {
+          Navigator.push(context, MaterialPageRoute(builder: (context) => const ComingSoonScreen()));
         }),
-        _actionButton(Icons.add_circle_outline, 'Deposit', () {
+        _actionButton(actions[2]['icon'] as IconData, actions[2]['label'] as String, actions[2]['color'] as Color, () {
           Navigator.push(context, MaterialPageRoute(builder: (context) => const DepositScreen()));
         }),
-        _actionButton(Icons.swap_horiz, 'Transfer', () {
+        _actionButton(actions[3]['icon'] as IconData, actions[3]['label'] as String, actions[3]['color'] as Color, () {
           Navigator.push(context, MaterialPageRoute(builder: (context) => const InternalTransferScreen())).then((_) => _fetchWalletData());
         }),
       ],
     );
   }
 
-  Widget _actionButton(IconData icon, String label, VoidCallback onTap) {
+  Widget _actionButton(IconData icon, String label, Color color, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
       child: Column(
         children: [
           Container(
-            width: 48,
-            height: 48,
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
-              color: const Color(0xFF1E1E20),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  color.withValues(alpha: 0.2),
+                  const Color(0xFF1E1E20),
+                ],
+              ),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+              border: Border.all(color: color.withValues(alpha: 0.3)),
             ),
-            child: Icon(icon, color: const Color(0xFF84BD00), size: 20),
+            child: Icon(icon, color: color, size: 20),
           ),
           const SizedBox(height: 6),
           Text(label, style: const TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w500)),
@@ -315,20 +380,20 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
 
   Widget _buildWalletBalancesSection() {
     final walletTypes = [
-      {'code': 'main', 'name': 'Main', 'icon': Icons.account_balance},
-      {'code': 'spot', 'name': 'Spot', 'icon': Icons.trending_up},
-      {'code': 'p2p', 'name': 'P2P', 'icon': Icons.people},
-      {'code': 'bot', 'name': 'Bot', 'icon': Icons.smart_toy},
+      {'code': 'main', 'name': 'Main', 'icon': Icons.account_balance, 'color': const Color(0xFF84BD00)},
+      {'code': 'spot', 'name': 'Spot', 'icon': Icons.trending_up, 'color': const Color(0xFF627EEA)},
+      {'code': 'p2p', 'name': 'P2P', 'icon': Icons.people, 'color': const Color(0xFF26A17B)},
+      {'code': 'bot', 'name': 'Bot', 'icon': Icons.smart_toy, 'color': const Color(0xFFF7931A)},
     ];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Wallets',
-          style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+          'Wallet Breakdown',
+          style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -336,49 +401,66 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
             crossAxisCount: 2,
             crossAxisSpacing: 8,
             mainAxisSpacing: 8,
-            childAspectRatio: 2.8,
+            childAspectRatio: 2.2,
           ),
           itemCount: walletTypes.length,
           itemBuilder: (context, index) {
             final wallet = walletTypes[index];
             final walletCode = wallet['code'] as String;
-            final balance = _walletBalances[walletCode] ?? {'total': '0.00'};
+            final balance = _walletBalances[walletCode] ?? {'total': '0.00', 'available': '0.00', 'locked': '0.00'};
+            final total = double.tryParse(balance['total']?.toString() ?? '0') ?? 0.0;
+            final locked = double.tryParse(balance['locked']?.toString() ?? '0') ?? 0.0;
+            final available = double.tryParse(balance['available']?.toString() ?? '0') ?? 0.0;
             
             return Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: const Color(0xFF1E1E20),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    (wallet['color'] as Color).withValues(alpha: 0.1),
+                    const Color(0xFF1E1E20),
+                  ],
+                ),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
+                border: Border.all(color: (wallet['color'] as Color).withValues(alpha: 0.15)),
               ),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(5),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF84BD00).withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Icon(wallet['icon'] as IconData, color: const Color(0xFF84BD00), size: 14),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          wallet['name'] as String,
-                          style: const TextStyle(color: Colors.white54, fontSize: 9),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          color: (wallet['color'] as Color).withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(4),
                         ),
-                        Text(
-                          '${balance['total']}',
-                          style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
+                        child: Icon(wallet['icon'] as IconData, color: wallet['color'] as Color, size: 10),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        wallet['name'] as String,
+                        style: const TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.w500),
+                      ),
+                    ],
                   ),
+                  const Spacer(),
+                  Text(
+                    total.toStringAsFixed(2),
+                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                  if (locked > 0)
+                    Text(
+                      '${available.toStringAsFixed(2)} avail • ${locked.toStringAsFixed(2)} locked',
+                      style: const TextStyle(color: Color(0x66FFFFFF), fontSize: 7),
+                    )
+                  else
+                    const Text(
+                      'USDT',
+                      style: TextStyle(color: Color(0x66FFFFFF), fontSize: 7),
+                    ),
                 ],
               ),
             );
@@ -394,9 +476,9 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
       children: [
         const Text(
           'Assets',
-          style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+          style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         ..._cryptoHoldings.map((crypto) => _cryptoListItem(crypto)).toList(),
       ],
     );
@@ -404,8 +486,12 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
 
   Widget _cryptoListItem(Map<String, dynamic> crypto) {
     final amount = double.tryParse(crypto['amount'].toString()) ?? 0.0;
+    final available = double.tryParse(crypto['available'].toString() ?? '0') ?? 0.0;
+    final locked = double.tryParse(crypto['locked'].toString() ?? '0') ?? 0.0;
+    final iconUrl = crypto['iconUrl']?.toString() ?? '';
+    
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: const Color(0xFF1E1E20),
@@ -415,22 +501,41 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
       child: Row(
         children: [
           Container(
-            width: 32,
-            height: 32,
+            width: 36,
+            height: 36,
             decoration: BoxDecoration(
               color: crypto['color'].withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
-            child: Center(
-              child: Text(
-                crypto['icon'],
-                style: TextStyle(
-                  color: crypto['color'],
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                ),
-              ),
-            ),
+            child: iconUrl.isNotEmpty
+                ? ClipOval(
+                    child: Image.network(
+                      iconUrl,
+                      width: 36,
+                      height: 36,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => Center(
+                        child: Text(
+                          crypto['icon'],
+                          style: TextStyle(
+                            color: crypto['color'],
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                : Center(
+                    child: Text(
+                      crypto['icon'],
+                      style: TextStyle(
+                        color: crypto['color'],
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -439,8 +544,9 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
               children: [
                 Text(
                   crypto['symbol'],
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                 ),
+                const SizedBox(height: 2),
                 Text(
                   crypto['name'],
                   style: const TextStyle(color: Colors.white54, fontSize: 10),
@@ -453,12 +559,18 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
             children: [
               Text(
                 amount.toStringAsFixed(coinDecimals(crypto['symbol'])),
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
               ),
+              const SizedBox(height: 2),
               Text(
                 _currencyFormat.format(crypto['usdValue']),
-                style: const TextStyle(color: Color(0xFF84BD00), fontSize: 10),
+                style: const TextStyle(color: Color(0xFF84BD00), fontSize: 10, fontWeight: FontWeight.w500),
               ),
+              if (locked > 0)
+                Text(
+                  '${locked.toStringAsFixed(coinDecimals(crypto['symbol']))} locked',
+                  style: const TextStyle(color: Colors.orange, fontSize: 8),
+                ),
             ],
           ),
         ],
@@ -481,15 +593,15 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
           indicatorSize: TabBarIndicatorSize.label,
           labelColor: const Color(0xFF84BD00),
           unselectedLabelColor: Colors.white60,
-          labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+          labelStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
           tabs: const [
             Tab(text: 'Transfer'),
             Tab(text: 'Transaction'),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         SizedBox(
-          height: 300,
+          height: 330,
           child: TabBarView(
             controller: _tabController,
             children: [
@@ -529,70 +641,210 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
   }
 
   Widget _transferHistoryItem(Map<String, dynamic> transfer) {
-    final String fromWallet = transfer['fromWallet']?.toString() ?? 'Unknown';
-    final String toWallet = transfer['toWallet']?.toString() ?? 'Unknown';
-    final String coin = transfer['coin']?.toString() ?? '';
+    // Try multiple possible field names from API
+    final String fromWallet = transfer['fromWallet']?.toString() ?? 
+                              transfer['from_wallet']?.toString() ?? 
+                              transfer['from']?.toString() ?? 
+                              transfer['source']?.toString() ?? 
+                              transfer['sourceWallet']?.toString() ?? 
+                              transfer['fromWalletType']?.toString() ?? 
+                              'Unknown';
+    final String toWallet = transfer['toWallet']?.toString() ?? 
+                            transfer['to_wallet']?.toString() ?? 
+                            transfer['to']?.toString() ?? 
+                            transfer['destination']?.toString() ?? 
+                            transfer['destinationWallet']?.toString() ?? 
+                            transfer['toWalletType']?.toString() ?? 
+                            'Unknown';
+    final String coin = 'USDT';
     final double amount = double.tryParse(transfer['amount']?.toString() ?? '0') ?? 0;
     final DateTime date = transfer['createdAt'] != null 
         ? DateTime.parse(transfer['createdAt'])
         : DateTime.now();
-    final String dateStr = DateFormat('dd MMM, HH:mm').format(date);
+    final String dateStr = DateFormat('MMM dd, hh:mm a').format(date);
+    final coinColor = _getCoinColor(coin);
+    final iconUrl = _getCoinIconUrl(coin);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       decoration: BoxDecoration(
         color: const Color(0xFF1E1E20),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
         children: [
+          // Coin icon + symbol (flexible)
+          Flexible(
+            flex: 2,
+            child: Row(
+              children: [
+                ClipOval(
+                  child: Image.network(
+                    iconUrl,
+                    width: 26,
+                    height: 26,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => Container(
+                      width: 26,
+                      height: 26,
+                      decoration: BoxDecoration(
+                        color: coinColor.withValues(alpha: 0.2),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Center(
+                        child: Text(
+                          coin.isNotEmpty ? coin[0] : '?',
+                          style: TextStyle(
+                            color: coinColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    coin,
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Amount (flexible)
+          Flexible(
+            flex: 2,
+            child: Text(
+              '$amount',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500, fontSize: 12),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          // From -> To (flexible)
+          Flexible(
+            flex: 3,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: _getWalletColor(fromWallet),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 3),
+                Flexible(
+                  child: Text(
+                    _capitalizeFirst(fromWallet),
+                    style: const TextStyle(color: Colors.white70, fontSize: 10),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  child: Icon(Icons.arrow_forward, color: const Color(0xFF84BD00), size: 12),
+                ),
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: _getWalletColor(toWallet),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 3),
+                Flexible(
+                  child: Text(
+                    _capitalizeFirst(toWallet),
+                    style: const TextStyle(color: Colors.white70, fontSize: 10),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Value (flexible)
+          Flexible(
+            flex: 2,
+            child: Text(
+              '\$${amount.toStringAsFixed(2)}',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500, fontSize: 12),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Status pill (fixed small)
           Container(
-            width: 32,
-            height: 32,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
-              color: _getCoinColor(coin).withValues(alpha: 0.1),
-              shape: BoxShape.circle,
+              color: const Color(0xFF84BD00).withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: Center(
-              child: Icon(Icons.swap_horiz, color: _getCoinColor(coin), size: 16),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${fromWallet.toUpperCase()} → ${toWallet.toUpperCase()}',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
-                ),
-                Text(
-                  dateStr,
-                  style: const TextStyle(color: Colors.white54, fontSize: 9),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  '${amount.toString()} $coin',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const Text(
-                  'Completed',
-                  style: TextStyle(color: Color(0xFF84BD00), fontSize: 8, fontWeight: FontWeight.bold),
-                ),
-              ],
+            child: const Text(
+              'Done',
+              style: TextStyle(color: Color(0xFF84BD00), fontSize: 10, fontWeight: FontWeight.w600),
             ),
           ),
         ],
       ),
     );
+  }
+
+  Color _getWalletColor(String wallet) {
+    final walletCode = _normalizeWalletCode(wallet);
+    switch (walletCode.toLowerCase()) {
+      case 'main': return const Color(0xFF84BD00);
+      case 'spot': return const Color(0xFF627EEA);
+      case 'p2p': return const Color(0xFF26A17B);
+      case 'bot': return const Color(0xFFF7931A);
+      default: return Colors.grey;
+    }
+  }
+
+  String _capitalizeFirst(String text) {
+    final walletName = _normalizeWalletCode(text);
+    if (walletName.isEmpty) return text;
+    return walletName[0].toUpperCase() + walletName.substring(1).toLowerCase();
+  }
+
+  String _normalizeWalletCode(String wallet) {
+    // Map numeric codes to wallet names (correct mapping)
+    switch (wallet.trim()) {
+      case '1': return 'main';
+      case '2': return 'p2p';
+      case '3': return 'bot';
+      case '4': return 'spot';
+      default: return wallet.toLowerCase();
+    }
+  }
+
+  String _getCoinIconUrl(String coin) {
+    switch (coin.toUpperCase()) {
+      case 'BTC': return 'https://assets.coingecko.com/coins/images/1/small/bitcoin.png';
+      case 'ETH': return 'https://assets.coingecko.com/coins/images/279/small/ethereum.png';
+      case 'USDT': return 'https://assets.coingecko.com/coins/images/325/small/Tether.png';
+      case 'BNB': return 'https://assets.coingecko.com/coins/images/825/small/bnb-icon2_2x.png';
+      case 'SOL': return 'https://assets.coingecko.com/coins/images/4128/small/solana.png';
+      case 'ADA': return 'https://assets.coingecko.com/coins/images/975/small/cardano.png';
+      case 'DOT': return 'https://assets.coingecko.com/coins/images/12171/small/polkadot.png';
+      case 'MATIC': return 'https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png';
+      case 'AVAX': return 'https://assets.coingecko.com/coins/images/12559/small/Avalanche_Circle_RedWhite_Trans.png';
+      case 'LINK': return 'https://assets.coingecko.com/coins/images/877/small/chainlink-new-logo.png';
+      case 'UNI': return 'https://assets.coingecko.com/coins/images/12504/small/uniswap-uni.png';
+      case 'LTC': return 'https://assets.coingecko.com/coins/images/2/small/litecoin.png';
+      case 'XRP': return 'https://assets.coingecko.com/coins/images/44/small/xrp-symbol-white-128.png';
+      default: return '';
+    }
   }
 
   String _getCoinSymbol(String coin) {
@@ -614,12 +866,54 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
   }
 
   Widget _transactionHistoryItem(Map<String, dynamic> transaction) {
+    final String type = transaction['transactionType']?.toString() ?? transaction['type']?.toString() ?? 'Transaction';
+    final String coin = transaction['coin']?.toString() ?? 'USDT';
+    final double amount = double.tryParse(transaction['amount']?.toString() ?? '0') ?? 0.0;
+    final String status = transaction['status']?.toString() ?? 'Completed';
+    final DateTime date = transaction['createdAt'] != null 
+        ? DateTime.tryParse(transaction['createdAt'].toString()) ?? DateTime.now()
+        : DateTime.now();
+    final String dateStr = DateFormat('dd MMM, HH:mm').format(date);
+    final String walletType = transaction['walletType']?.toString() ?? '';
+    
+    Color statusColor = const Color(0xFF84BD00);
+    IconData typeIcon = Icons.swap_horiz;
+    
+    switch (type.toLowerCase()) {
+      case 'deposit':
+      case 'credit':
+        typeIcon = Icons.arrow_downward;
+        break;
+      case 'withdrawal':
+      case 'debit':
+        typeIcon = Icons.arrow_upward;
+        break;
+      case 'transfer':
+        typeIcon = Icons.swap_horiz;
+        break;
+    }
+    
+    switch (status.toLowerCase()) {
+      case 'pending':
+        statusColor = Colors.orange;
+        break;
+      case 'failed':
+      case 'rejected':
+        statusColor = Colors.red;
+        break;
+      case 'completed':
+      case 'success':
+        statusColor = const Color(0xFF84BD00);
+        break;
+    }
+    
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: const Color(0xFF1E1E20),
         borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
       ),
       child: Row(
         children: [
@@ -627,10 +921,10 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
             width: 32,
             height: 32,
             decoration: BoxDecoration(
-              color: const Color(0xFF84BD00).withValues(alpha: 0.1),
+              color: statusColor.withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.history, color: Color(0xFF84BD00), size: 16),
+            child: Icon(typeIcon, color: statusColor, size: 16),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -638,19 +932,30 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  transaction['type'] ?? 'Transaction',
+                  type[0].toUpperCase() + type.substring(1),
                   style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
                 ),
+                const SizedBox(height: 2),
                 Text(
-                  transaction['date'] ?? '',
-                  style: const TextStyle(color: Colors.white54, fontSize: 9),
+                  '$dateStr${walletType.isNotEmpty ? ' • ${walletType.toUpperCase()}' : ''}',
+                  style: const TextStyle(color: Colors.white54, fontSize: 10),
                 ),
               ],
             ),
           ),
-          Text(
-            transaction['amount'] ?? '',
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${amount.toStringAsFixed(4)} $coin',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                status[0].toUpperCase() + status.substring(1),
+                style: TextStyle(color: statusColor, fontSize: 9, fontWeight: FontWeight.w500),
+              ),
+            ],
           ),
         ],
       ),
