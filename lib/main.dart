@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:device_preview/device_preview.dart';
 import 'screens/splash_screen.dart';
 
 void main() {
-  runApp(const CreddXApp());
+  runApp(
+    DevicePreview(
+      enabled: true,
+      builder: (context) => const CreddXApp(),
+    ),
+  );
 }
 
 class CreddXApp extends StatelessWidget {
@@ -13,6 +19,9 @@ class CreddXApp extends StatelessWidget {
     return MaterialApp(
       title: 'CreddX',
       debugShowCheckedModeBanner: false,
+      useInheritedMediaQuery: true,
+      locale: DevicePreview.locale(context),
+      builder: DevicePreview.appBuilder,
       theme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: const Color(0xFF161618),
