@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
+  <!-- Candlestick 1 -->
+  <rect x="10" y="16" width="4" height="12" fill="#84BD00"/>
+  <rect x="11" y="12" width="2" height="4" fill="#84BD00"/>
+  <rect x="11" y="28" width="2" height="4" fill="#84BD00"/>
+  
+  <!-- Candlestick 2 -->
+  <rect x="22" y="20" width="4" height="10" fill="#FF3B30"/>
+  <rect x="23" y="14" width="2" height="6" fill="#FF3B30"/>
+  <rect x="23" y="30" width="2" height="4" fill="#FF3B30"/>
+  
+  <!-- Candlestick 3 -->
+  <rect x="34" y="14" width="4" height="16" fill="#84BD00"/>
+  <rect x="35" y="8" width="2" height="6" fill="#84BD00"/>
+  <rect x="35" y="30" width="2" height="6" fill="#84BD00"/>
+</svg>
