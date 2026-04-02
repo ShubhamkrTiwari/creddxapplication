@@ -41,8 +41,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   // Asset prices
   Map<String, double> _assetPrices = {'ETH': 2450.00, 'USDT': 1.00, 'USDC': 1.00};
   
-  static const String _wsBaseUrl = 'ws://13.235.89.109:9001';
-  static const String _httpBaseUrl = 'http://13.235.89.109:9000';
+  static const String _wsBaseUrl = 'ws://52.66.230.156:9001';
+  static const String _httpBaseUrl = 'http://52.66.230.156:9000';
 
   @override
   void initState() {
@@ -134,7 +134,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       });
       
       _walletWsChannel = WebSocketChannel.connect(
-        Uri.parse('ws://13.235.89.109:9001/ws'),
+        Uri.parse('ws://52.66.230.156:9001/ws'),
         protocols: ['websocket'],
       );
       

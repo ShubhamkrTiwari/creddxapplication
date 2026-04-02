@@ -23,7 +23,7 @@ class _MarketScreenState extends State<MarketScreen> with TickerProviderStateMix
   bool _isLoading = true;
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
-  final String _spotBaseUrl = 'http://13.235.89.109:9000';
+  final String _spotBaseUrl = 'http://52.66.230.156:9000';
   Timer? _priceUpdateTimer;
   final NumberFormat _priceFormat = NumberFormat.currency(symbol: "₹", decimalDigits: 2);
 

@@ -6,14 +6,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'auth_service.dart';
 
 class SpotService {
-  static const String _baseUrl = 'http://13.235.89.109:9000';
-  static const String _wsUrl = 'ws://13.235.89.109:9001';
+  static const String _baseUrl = 'http://52.66.230.156:9000';
+  static const String _wsUrl = 'ws://52.66.230.156:9001';
   static WebSocketChannel? _channel;
   static StreamController<Map<String, dynamic>>? _tickerController;
   static StreamController<Map<String, dynamic>>? _orderbookController;
   static StreamController<Map<String, dynamic>>? _tradesController;
   static StreamController<Map<String, dynamic>>? _ordersController;
   static StreamController<Map<String, dynamic>>? _fillsController;
+  static StreamController<Map<String, dynamic>>? _balanceController;
   
   // Persistent order data across screen navigation
   static List<Map<String, dynamic>> userBuyOrders = [];
@@ -977,6 +978,7 @@ class SpotService {
       _tradesController = StreamController<Map<String, dynamic>>.broadcast();
       _ordersController = StreamController<Map<String, dynamic>>.broadcast();
       _fillsController = StreamController<Map<String, dynamic>>.broadcast();
+      _balanceController = StreamController<Map<String, dynamic>>.broadcast();
 
       // Listen for messages
       _channel!.stream.listen(
@@ -1021,6 +1023,10 @@ class SpotService {
           break;
         case 'auth_ok':
           print('WebSocket authenticated for user ${data['user_id']}');
+          break;
+        case 'balance_update':
+          _balanceController?.add(data);
+          print('Balance update received: ${data['data']}');
           break;
         default:
           print('Unknown WebSocket message type: $type');
@@ -1105,6 +1111,20 @@ class SpotService {
     return _fillsController?.stream ?? Stream.empty();
   }
 
+  // Subscribe to balance updates (requires auth)
+  static Stream<Map<String, dynamic>> getBalanceUpdatesStream() {
+    if (_channel == null) {
+      connectWebSocket();
+      Future.delayed(Duration(seconds: 1));
+    }
+    
+    // Authenticate for private events
+    _authenticateWebSocket();
+    
+    print('Subscribed to balance updates');
+    return _balanceController?.stream ?? Stream.empty();
+  }
+
   // Authenticate WebSocket for private events
   static Future<void> _authenticateWebSocket() async {
     final userId = await _getUserId();
@@ -1132,12 +1152,14 @@ class SpotService {
     _tradesController?.close();
     _ordersController?.close();
     _fillsController?.close();
+    _balanceController?.close();
     
     _tickerController = null;
     _orderbookController = null;
     _tradesController = null;
     _ordersController = null;
     _fillsController = null;
+    _balanceController = null;
   }
 
   // Check WebSocket connection status

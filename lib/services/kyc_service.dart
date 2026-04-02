@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 
 class KYCService {
-  static const String _baseUrl = 'http://13.235.89.109:9000';
+  static const String _baseUrl = 'http://52.66.230.156:9000';
   
   // Get KYC status for current user
   static Future<Map<String, dynamic>> getKYCStatus() async {
@@ -88,7 +88,7 @@ class KYCService {
       // Create multipart request with new API endpoint
       var request = http.MultipartRequest(
         'POST',
-        Uri.parse('http://13.235.89.109:8085/user/v1/kyc/kyc-upload-and-verify'),
+        Uri.parse('http://52.66.230.156:8085/user/v1/kyc/kyc-upload-and-verify'),
       );
 
       // Add headers
@@ -231,7 +231,7 @@ class KYCService {
       final userId = prefs.getString('user_id') ?? '';
 
       final response = await http.post(
-        Uri.parse('http://13.235.89.109:8085/user/v1/kyc/kyc-validate'),
+        Uri.parse('http://52.66.230.156:8085/user/v1/kyc/kyc-validate'),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
@@ -299,7 +299,7 @@ class KYCService {
       // Create multipart request for selfie verification
       var request = http.MultipartRequest(
         'POST',
-        Uri.parse('http://13.235.89.109:8085/user/v1/kyc/kyc-selfie-verify'),
+        Uri.parse('http://52.66.230.156:8085/user/v1/kyc/kyc-selfie-verify'),
       );
 
       // Add headers

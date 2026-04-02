@@ -72,7 +72,7 @@ class BotPosition {
 }
 
 class BotService {
-  static const String baseUrl = 'http://13.235.89.109:8085';
+  static const String baseUrl = 'http://52.66.230.156:8085';
   
   static Future<Map<String, String>> _getHeaders() async {
     final token = await AuthService.getToken();

@@ -8,7 +8,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'user_service.dart';
 
 class AuthService {
-  static const String _baseUrl = 'http://13.235.89.109:8085';
+  static const String _baseUrl = 'http://52.66.230.156:8085';
   static const String _tokenKey = 'auth_token';
   static const String _userKey = 'user_data';
 

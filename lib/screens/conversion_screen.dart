@@ -25,7 +25,7 @@ class _ConversionScreenState extends State<ConversionScreen> {
   double _usdtBalance = 0.00;
   bool _isLoading = false;
   
-  final String _baseUrl = 'http://13.235.89.109:9000';
+  final String _baseUrl = 'http://52.66.230.156:9000';
   
   @override
   void initState() {
@@ -45,7 +45,7 @@ class _ConversionScreenState extends State<ConversionScreen> {
     try {
       final token = await UserService().getToken();
       final response = await http.get(
-        Uri.parse('http://13.235.89.109:8085/wallet/v1/wallet/all-wallet-balance'),
+        Uri.parse('http://52.66.230.156:8085/wallet/v1/wallet/all-wallet-balance'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
