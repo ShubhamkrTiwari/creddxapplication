@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:device_preview/device_preview.dart';
 import 'screens/splash_screen.dart';
@@ -5,7 +6,7 @@ import 'screens/splash_screen.dart';
 void main() {
   runApp(
     DevicePreview(
-      enabled: true,
+      enabled: kIsWeb, // Only enable on web platform
       builder: (context) => const CreddXApp(),
     ),
   );

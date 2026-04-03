@@ -8,6 +8,7 @@ import 'auth_service.dart';
 class SpotService {
   static const String _baseUrl = 'http://52.66.230.156:9000';
   static const String _wsUrl = 'ws://52.66.230.156:9001';
+  static const String _newApiUrl = 'https://api11.hathmetech.com';
   static WebSocketChannel? _channel;
   static StreamController<Map<String, dynamic>>? _tickerController;
   static StreamController<Map<String, dynamic>>? _orderbookController;
@@ -71,14 +72,14 @@ class SpotService {
   static Future<Map<String, dynamic>> getOrderBook(String symbol) async {
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/book/$symbol'),
+        Uri.parse('https://api11.hathmetech.com/orderbook?symbol=$symbol'),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
       ).timeout(const Duration(seconds: 30));
 
-      print('OrderBook Response: ${response.body}');
+      print('OrderBook Response from new API: ${response.body}');
 
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
@@ -104,6 +105,7 @@ class SpotService {
         };
       }
     } catch (e) {
+      print('Error fetching order book from new API: $e');
       return {
         'success': false,
         'data': null,

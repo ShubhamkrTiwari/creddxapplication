@@ -8,6 +8,7 @@ import 'package:android_intent_plus/android_intent.dart';
 import 'package:android_intent_plus/flag.dart';
 import '../services/wallet_service.dart';
 import '../services/auth_service.dart';
+import 'payment_proof_screen.dart';
 
 class UpiDetailsScreen extends StatefulWidget {
   final String amount;
@@ -23,6 +24,8 @@ class _UpiDetailsScreenState extends State<UpiDetailsScreen> {
   List<dynamic> _upiList = [];
   Map<String, dynamic>? _selectedUpi;
   String? _selectedUpiApp;
+  bool _paymentInitiated = false;
+  bool _showUpiApps = false;
 
   // Map app names to their Android package names
   final Map<String, String> _upiPackageNames = {
@@ -54,11 +57,24 @@ class _UpiDetailsScreenState extends State<UpiDetailsScreen> {
       
       await intent.launch();
       debugPrint('Intent launched successfully');
+      
+      // Mark payment as initiated
+      if (mounted) {
+        setState(() {
+          _paymentInitiated = true;
+        });
+      }
     } catch (e) {
       debugPrint('Error launching specific app: $e');
       final uri = Uri.parse(upiString);
       if (await canLaunchUrl(uri)) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
+        // Mark payment as initiated
+        if (mounted) {
+          setState(() {
+            _paymentInitiated = true;
+          });
+        }
       } else {
         throw Exception('No UPI app found to handle payment');
       }
@@ -221,76 +237,214 @@ class _UpiDetailsScreenState extends State<UpiDetailsScreen> {
                       'Select UPI App to Pay',
                       style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500),
                     ),
-                    const SizedBox(height: 12),
-                    _buildUpiAppOption(
-                      appName: 'gpay',
-                      logo: Image.asset(
-                        'assets/images/logogoogle.png',
-                        width: 24,
-                        height: 24,
-                      ),
-                      label: 'GPay',
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Or skip to directly submit payment proof',
+                      style: TextStyle(color: Color(0xFF8E8E93), fontSize: 12),
                     ),
-                    const SizedBox(height: 10),
-                    _buildUpiAppOption(
-                      appName: 'paytm',
-                      logo: RichText(
-                        text: const TextSpan(
+                    const SizedBox(height: 12),
+                    
+                    // UPI App Selector (Expandable)
+                    GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _showUpiApps = !_showUpiApps;
+                        });
+                      },
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1C1C1E),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFF2C2C2E)),
+                        ),
+                        child: Row(
                           children: [
-                            TextSpan(
-                              text: 'Pay',
+                            // Show selected app icon or default icon
+                            if (_selectedUpiApp != null) ...[
+                              _getAppIcon(_selectedUpiApp!),
+                            ] else ...[
+                              Container(
+                                width: 24,
+                                height: 24,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF84BD00).withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: const Icon(
+                                  Icons.account_balance_wallet,
+                                  color: Color(0xFF84BD00),
+                                  size: 16,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                _selectedUpiApp != null 
+                                    ? _getAppName(_selectedUpiApp!)
+                                    : 'Choose UPI App',
+                                style: const TextStyle(color: Colors.white, fontSize: 16),
+                              ),
+                            ),
+                            Icon(
+                              _showUpiApps ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                              color: const Color(0xFF8E8E93),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    
+                    // Show UPI app options when expanded
+                    if (_showUpiApps) ...[
+                      const SizedBox(height: 12),
+                      _buildUpiAppOption(
+                        appName: 'gpay',
+                        logo: Image.asset(
+                          'assets/images/logogoogle.png',
+                          width: 24,
+                          height: 24,
+                        ),
+                        label: 'GPay',
+                      ),
+                      const SizedBox(height: 10),
+                      _buildUpiAppOption(
+                        appName: 'paytm',
+                        logo: RichText(
+                          text: const TextSpan(
+                            children: [
+                              TextSpan(
+                                text: 'Pay',
+                                style: TextStyle(
+                                  color: Color(0xFF20336B),
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              TextSpan(
+                                text: 'tm',
+                                style: TextStyle(
+                                  color: Color(0xFF00BAF2),
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        label: 'Paytm',
+                      ),
+                      const SizedBox(height: 10),
+                      _buildUpiAppOption(
+                        appName: 'phonepe',
+                        logo: Container(
+                          width: 24,
+                          height: 24,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF6739B7),
+                            borderRadius: BorderRadius.all(Radius.circular(4)),
+                          ),
+                          child: const Center(
+                            child: Text(
+                              'P',
                               style: TextStyle(
-                                color: Color(0xFF20336B),
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                        label: 'PhonePe',
+                      ),
+                      const SizedBox(height: 10),
+                      _buildUpiAppOption(
+                        appName: 'credd',
+                        logo: Image.asset(
+                          'assets/images/cred.png',
+                          width: 28,
+                          height: 28,
+                        ),
+                        label: 'CREDD UPI',
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    // Payment Proof Section - Show after payment is initiated
+                    if (_paymentInitiated) ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF84BD00).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFF84BD00).withOpacity(0.3)),
+                        ),
+                        child: Column(
+                          children: [
+                            const Icon(
+                              Icons.check_circle_outline,
+                              color: Color(0xFF84BD00),
+                              size: 32,
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Payment Initiated',
+                              style: TextStyle(
+                                color: Color(0xFF84BD00),
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                            TextSpan(
-                              text: 'tm',
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Complete your payment in the UPI app and submit proof below',
                               style: TextStyle(
-                                color: Color(0xFF00BAF2),
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
+                                color: Colors.white70,
+                                fontSize: 14,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 16),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 45,
+                              child: ElevatedButton(
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => PaymentProofScreen(
+                                        amount: widget.amount,
+                                        paymentMethod: 'UPI Payment',
+                                        account: _selectedUpi?['upiId'],
+                                        senderAccountName: _selectedUpi?['accountHolderName'],
+                                      ),
+                                    ),
+                                  );
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF84BD00),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  elevation: 0,
+                                ),
+                                child: const Text(
+                                  'Submit Payment Proof',
+                                  style: TextStyle(
+                                    color: Colors.black,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                  ),
+                                ),
                               ),
                             ),
                           ],
                         ),
                       ),
-                      label: 'Paytm',
-                    ),
-                    const SizedBox(height: 10),
-                    _buildUpiAppOption(
-                      appName: 'phonepe',
-                      logo: Container(
-                        width: 24,
-                        height: 24,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFF6739B7),
-                          borderRadius: BorderRadius.all(Radius.circular(4)),
-                        ),
-                        child: const Center(
-                          child: Text(
-                            'P',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
-                      label: 'PhonePe',
-                    ),
-                    const SizedBox(height: 10),
-                    _buildUpiAppOption(
-                      appName: 'credd',
-                      logo: Image.asset(
-                        'assets/images/cred.png',
-                        width: 28,
-                        height: 28,
-                      ),
-                      label: 'CREDD UPI',
-                    ),
+                    ],
                   ],
                 ],
               ),
@@ -303,16 +457,25 @@ class _UpiDetailsScreenState extends State<UpiDetailsScreen> {
             height: 50,
             child: ElevatedButton(
               onPressed: () async {
-                if (_selectedUpiApp == null) {
+                if (_selectedUpi == null) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Please select a UPI app')),
+                    const SnackBar(content: Text('No UPI selected')),
                   );
                   return;
                 }
                 
-                if (_selectedUpi == null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('No UPI selected')),
+                // If no UPI app selected, go directly to payment proof screen
+                if (_selectedUpiApp == null) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => PaymentProofScreen(
+                        amount: widget.amount,
+                        paymentMethod: 'UPI Payment',
+                        account: _selectedUpi?['upiId'],
+                        senderAccountName: _selectedUpi?['accountHolderName'],
+                      ),
+                    ),
                   );
                   return;
                 }
@@ -358,9 +521,13 @@ class _UpiDetailsScreenState extends State<UpiDetailsScreen> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 elevation: 0,
               ),
-              child: const Text(
-                'Pay Now',
-                style: TextStyle(
+              child: Text(
+                _paymentInitiated 
+                    ? 'Payment Initiated' 
+                    : _selectedUpiApp == null 
+                        ? 'Submit Payment Proof' 
+                        : 'Pay Now',
+                style: const TextStyle(
                   color: Colors.black,
                   fontWeight: FontWeight.bold,
                   fontSize: 16,
@@ -449,5 +616,86 @@ class _UpiDetailsScreenState extends State<UpiDetailsScreen> {
         ),
       ),
     );
+  }
+
+  // Helper functions for app icon and name
+  Widget _getAppIcon(String appName) {
+    switch (appName) {
+      case 'gpay':
+        return Image.asset('assets/images/logogoogle.png', width: 24, height: 24);
+      case 'paytm':
+        return RichText(
+          text: const TextSpan(
+            children: [
+              TextSpan(
+                text: 'Pay',
+                style: TextStyle(
+                  color: Color(0xFF20336B),
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              TextSpan(
+                text: 'tm',
+                style: TextStyle(
+                  color: Color(0xFF00BAF2),
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        );
+      case 'phonepe':
+        return Container(
+          width: 24,
+          height: 24,
+          decoration: const BoxDecoration(
+            color: Color(0xFF6739B7),
+            borderRadius: BorderRadius.all(Radius.circular(4)),
+          ),
+          child: const Center(
+            child: Text(
+              'P',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        );
+      case 'credd':
+        return Image.asset('assets/images/cred.png', width: 28, height: 28);
+      default:
+        return Container(
+          width: 24,
+          height: 24,
+          decoration: BoxDecoration(
+            color: const Color(0xFF84BD00).withOpacity(0.2),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: const Icon(
+            Icons.account_balance_wallet,
+            color: Color(0xFF84BD00),
+            size: 16,
+          ),
+        );
+    }
+  }
+
+  String _getAppName(String appName) {
+    switch (appName) {
+      case 'gpay':
+        return 'GPay';
+      case 'paytm':
+        return 'Paytm';
+      case 'phonepe':
+        return 'PhonePe';
+      case 'credd':
+        return 'CREDD UPI';
+      default:
+        return 'Unknown App';
+    }
   }
 }

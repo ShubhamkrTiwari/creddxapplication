@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import '../utils/coin_icon_mapper.dart';
 
 class MarketScreen extends StatefulWidget {
   const MarketScreen({super.key});
@@ -336,17 +337,25 @@ class _MarketScreenState extends State<MarketScreen> with TickerProviderStateMix
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Expanded(
-            flex: 2,
-            child: Text(
-              item['symbol']?.toString().replaceAll('USDT', '') ?? '',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
+          Row(
+            children: [
+              CoinIconMapper.getCoinIcon(
+                item['symbol']?.toString().replaceAll('USDT', '') ?? '',
+                size: 20,
               ),
-              overflow: TextOverflow.ellipsis,
-            ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  item['symbol']?.toString().replaceAll('USDT', '') ?? '',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
           ),
           Expanded(
             flex: 3,
@@ -465,23 +474,9 @@ class _MarketScreenState extends State<MarketScreen> with TickerProviderStateMix
                   children: [
                     Row(
                       children: [
-                        Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF84BD00).withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Center(
-                            child: Text(
-                              item['symbol']?.toString().replaceAll('USDT', '') ?? '',
-                              style: const TextStyle(
-                                color: Color(0xFF84BD00),
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
+                        CoinIconMapper.getCoinIcon(
+                          item['symbol']?.toString().replaceAll('USDT', '') ?? '',
+                          size: 40,
                         ),
                         const SizedBox(width: 12),
                         Column(
