@@ -139,28 +139,37 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
                         onPressed: () {
                           Navigator.pop(context);
                           if (isConfirmingInvestment) {
-                            setState(() {
-                              BotTradeDetailScreen.isInvested = true;
-                            });
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Investment successful!'),
-                                backgroundColor: Color(0xFF84BD00),
-                                duration: Duration(seconds: 2),
-                              ),
-                            );
+                            // Get the investment amount from the controller
+                            final amountText = controller.text.trim();
+                            final amount = double.tryParse(amountText) ?? 0.0;
+                            
+                            if (amount > 0) {
+                              _makeInvestment(amount);
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Please enter a valid amount'),
+                                  backgroundColor: Colors.red,
+                                  duration: Duration(seconds: 2),
+                                ),
+                              );
+                            }
                           } else {
                             // Logic for withdrawal confirmation
-                            setState(() {
-                              BotTradeDetailScreen.isInvested = false;
-                            });
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Withdrawal successful!'),
-                                backgroundColor: Colors.orange,
-                                duration: Duration(seconds: 2),
-                              ),
-                            );
+                            final amountText = controller.text.trim();
+                            final amount = double.tryParse(amountText) ?? 0.0;
+                            
+                            if (amount > 0) {
+                              _makeWithdrawal(amount);
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Please enter a valid amount'),
+                                  backgroundColor: Colors.red,
+                                  duration: Duration(seconds: 2),
+                                ),
+                              );
+                            }
                           }
                         },
                         style: ElevatedButton.styleFrom(
@@ -194,6 +203,118 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
         context,
         MaterialPageRoute(builder: (context) => const PackageProgramScreen()),
       ).then((_) => setState(() {})); 
+    }
+  }
+
+  Future<void> _makeWithdrawal(double amount) async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final result = await BotService.withdraw(
+        botId: widget.name,
+        amount: amount,
+        strategy: widget.name,
+      );
+
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+
+        if (result['success'] == true) {
+          setState(() {
+            BotTradeDetailScreen.isInvested = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['message'] ?? 'Withdrawal successful!'),
+              backgroundColor: const Color(0xFF84BD00),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+          // Refresh total investment across the app
+          BotService.updateTotalInvestment(amount, isAddition: false);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['error'] ?? 'Withdrawal failed'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _makeInvestment(double amount) async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final result = await BotService.invest(
+        botId: widget.name,
+        amount: amount,
+        strategy: widget.name,
+      );
+
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+
+        if (result['success'] == true) {
+          setState(() {
+            BotTradeDetailScreen.isInvested = true;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['message'] ?? 'Investment successful!'),
+              backgroundColor: const Color(0xFF84BD00),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+          // Refresh total investment across the app
+          BotService.updateTotalInvestment(amount, isAddition: true);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['error'] ?? 'Investment failed'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
     }
   }
 
@@ -319,7 +440,7 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
                             child: SizedBox(
                               height: 56,
                               child: OutlinedButton(
-                                onPressed: _handleInvestClick,
+                                onPressed: null, // Disabled when already invested
                                 style: OutlinedButton.styleFrom(
                                   side: BorderSide(color: Colors.white.withOpacity(0.2)),
                                   backgroundColor: const Color(0xFF1C1C1E),
@@ -328,9 +449,9 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
                                   ),
                                 ),
                                 child: const Text(
-                                  'Invest',
+                                  'Invested',
                                   style: TextStyle(
-                                    color: Colors.white,
+                                    color: Colors.grey,
                                     fontSize: 16,
                                     fontWeight: FontWeight.bold,
                                   ),

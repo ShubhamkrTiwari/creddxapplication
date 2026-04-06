@@ -57,8 +57,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   static const String _inrToUsdtApiUrl = 'http://localhost:8085/wallet/v1/inr/convert/inr-to-usdt';
   static const String _usdtToInrApiUrl = 'http://localhost:8085/wallet/v1/inr/convert/usdt-to-inr';
   
-  static const String _wsBaseUrl = 'ws://52.66.230.156:9001';
-  static const String _httpBaseUrl = 'http://52.66.230.156:9000';
+  static const String _wsBaseUrl = 'ws://13.202.34.205:9001';
+  static const String _httpBaseUrl = 'http://13.202.34.205:9000';
 
   @override
   void initState() {
@@ -195,7 +195,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       
       try {
         _walletWsChannel = WebSocketChannel.connect(
-          Uri.parse('ws://52.66.230.156:9001/ws'),
+          Uri.parse('ws://13.202.34.205:9001/ws'),
           protocols: ['websocket'],
         );
         
@@ -599,6 +599,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
   Future<void> _loadUserData() async {
     await _userService.initUserData();
+    await _userService.fetchKYCStatusFromAPI(); // Refresh KYC status
     if (mounted) {
       setState(() {});
     }
@@ -827,7 +828,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
   IconData _getKYCIcon() {
     switch (_userService.kycStatus) {
-      case 'Verified':
+      case 'Completed':
         return Icons.verified;
       case 'Pending':
         return Icons.pending;
@@ -840,7 +841,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
   String _getKYCDescription() {
     switch (_userService.kycStatus) {
-      case 'Verified':
+      case 'Completed':
         return 'Your identity has been verified';
       case 'Pending':
         return 'Verification in progress';

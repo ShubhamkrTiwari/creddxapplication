@@ -3,7 +3,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:flutter/material.dart';
 
 class WebSocketTest {
-  static const String _wsUrl = 'ws://52.66.230.156:9001';
+  static const String _wsUrl = 'ws://13.202.34.205:9001';
   static WebSocketChannel? _channel;
   static bool _isConnected = false;
   static String _lastMessage = '';

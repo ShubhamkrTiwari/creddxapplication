@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import '../services/bot_service.dart';
 import 'bot_trade_detail_screen.dart';
 
 class PackageProgramScreen extends StatefulWidget {
@@ -9,7 +11,74 @@ class PackageProgramScreen extends StatefulWidget {
 }
 
 class _PackageProgramScreenState extends State<PackageProgramScreen> {
-  bool _isLoading = false;
+  bool _isSubscribing = false;
+  bool _isSubscribed = false;
+  int _daysLeft = 3;
+  Timer? _countdownTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserSubscription();
+    _startCountdownTimer();
+  }
+
+  Future<void> _loadUserSubscription() async {
+    try {
+      final response = await BotService.getUserSubscription();
+      if (response['success'] == true && response['subscription'] != null) {
+        final subscription = response['subscription'];
+        final startDate = DateTime.tryParse(subscription['startDate'] ?? '');
+        final duration = subscription['duration'] ?? 30;
+        
+        if (startDate != null) {
+          final endDate = startDate.add(Duration(days: duration));
+          final now = DateTime.now();
+          final daysLeft = endDate.difference(now).inDays;
+          
+          if (daysLeft > 0) {
+            setState(() {
+              _isSubscribed = true;
+              _daysLeft = daysLeft;
+            });
+            BotTradeDetailScreen.hasPackage = true;
+          } else {
+            setState(() {
+              _isSubscribed = false;
+              _daysLeft = 0;
+            });
+            BotTradeDetailScreen.hasPackage = false;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading user subscription: $e');
+    }
+  }
+
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startCountdownTimer() {
+    _countdownTimer = Timer.periodic(const Duration(hours: 24), (timer) {
+      if (_isSubscribed && _daysLeft > 0) {
+        setState(() {
+          _daysLeft--;
+        });
+        
+        // When subscription expires
+        if (_daysLeft == 0) {
+          setState(() {
+            _isSubscribed = false;
+          });
+          BotTradeDetailScreen.hasPackage = false;
+        }
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -32,154 +101,191 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
         ),
         centerTitle: true,
       ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Column(
-              children: [
-                const SizedBox(height: 10),
-                // Package Card
-                Container(
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1C1C1E),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: Colors.white.withOpacity(0.1),
-                      width: 1,
-                    ),
-                  ),
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            // Basic Package Card
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1C1C1E),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: const Color(0xFF84BD00),
+                  width: 2,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Basic Package',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                            ),
+                      const Text(
+                        'Basic Package',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF84BD00),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: const Text(
+                          'POPULAR',
+                          style: TextStyle(
+                            color: Colors.black,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
                           ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 18, vertical: 8),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF84BD00),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Text(
-                              '\$50',
-                              style: TextStyle(
-                                color: Colors.black,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 24),
-                      _buildFeatureItem(
-                        'Advanced Edge',
-                        'Enhanced AI decision-making based on real-time signals.',
-                      ),
-                      _buildFeatureItem(
-                        'Trade Pro',
-                        'Access to professional-grade trade execution tools.',
-                      ),
-                      _buildFeatureItem(
-                        '70-30 Ratio',
-                        'Keep 70% of profits while 30% goes to strategy fees.',
-                      ),
-                      _buildFeatureItem(
-                        'Cap 100\$ - 2000\$',
-                        'Designed for small-to-mid-sized portfolios.',
-                      ),
-                      _buildFeatureItem(
-                        '1 Month',
-                        'Full-month access to premium features',
-                      ),
-                      _buildFeatureItem(
-                        'Profit Master',
-                        'Auto-optimization strategies for maximum ROI.',
+                        ),
                       ),
                     ],
                   ),
-                ),
-                const SizedBox(height: 20),
-                // Button
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 20.0),
-                  child: SizedBox(
+                  const SizedBox(height: 16),
+                  
+                  // Price
+                  const Text(
+                    '\$20',
+                    style: TextStyle(
+                      color: const Color(0xFF84BD00),
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _isSubscribed ? '$_daysLeft days remaining' : 'Annual Subscription',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.7),
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  
+                  // Features
+                  _buildFeature('Advanced Edge'),
+                  _buildFeature('Trade Pro'),
+                  _buildFeature('70-30 Ratio'),
+                  _buildFeature('Cap 100\$-2000\$'),
+                  _buildFeature('1 Month'),
+                  _buildFeature('Profit Master'),
+                  
+                  const SizedBox(height: 32),
+                  
+                  // Subscribe Button
+                  SizedBox(
                     width: double.infinity,
                     height: 56,
                     child: ElevatedButton(
-                      onPressed: _isLoading ? null : _handleGetFreePlan,
+                      onPressed: _isSubscribing 
+                          ? null 
+                          : () => _subscribeToBasicPackage(),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF84BD00),
-                        disabledBackgroundColor: const Color(0xFF84BD00).withOpacity(0.5),
-                        foregroundColor: Colors.black,
-                        elevation: 0,
+                        backgroundColor: _isSubscribed 
+                            ? Colors.grey 
+                            : const Color(0xFF84BD00),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      child: Center(
-                        child: _isLoading
-                            ? const SizedBox(
-                                height: 20,
-                                width: 20,
-                                child: CircularProgressIndicator(
-                                  color: Colors.black,
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text(
-                                'Get a Free Plan',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                      child: _isSubscribing
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
                               ),
-                      ),
+                            )
+                          : Text(
+                              _isSubscribed 
+                                  ? 'Already Subscribed'
+                                  : 'Get a Free Plan',
+                              style: TextStyle(
+                                color: _isSubscribed ? Colors.white : Colors.black,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ),
+          // Show subscription details if user is subscribed
+          if (_isSubscribed) ...[
+            const SizedBox(height: 20),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1C1C1E),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: const Color(0xFF84BD00).withOpacity(0.3),
+                  width: 1,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Subscription Details',
+                    style: TextStyle(
+                      color: Color(0xFF84BD00),
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildDetailRow('Plan', 'Free Plan'),
+                  _buildDetailRow('Status', 'Active'),
+                  _buildDetailRow('Days Remaining', '$_daysLeft days'),
+                  _buildDetailRow('Price', '\$20'),
+                  _buildDetailRow('Duration', '30 Days'),
+                ],
+              ),
+            ),
+          ],
+        ],
       ),
-    );
+    ));  // Scaffold
   }
 
-  Widget _buildFeatureItem(String title, String description) {
+  Widget _buildFeature(String feature) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 22.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
         children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
+          Container(
+            width: 20,
+            height: 20,
+            decoration: BoxDecoration(
+              color: const Color(0xFF84BD00),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.check,
+              color: Colors.black,
+              size: 14,
             ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            description,
-            style: const TextStyle(
-              color: Color(0xFF8E8E93),
-              fontSize: 13,
-              height: 1.3,
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              feature,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.9),
+                fontSize: 16,
+              ),
             ),
           ),
         ],
@@ -187,50 +293,116 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
     );
   }
 
-  Future<void> _handleGetFreePlan() async {
-    setState(() {
-      _isLoading = true;
-    });
+  Widget _buildDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.7),
+              fontSize: 14,
+            ),
+          ),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
+  Future<void> _subscribeToBasicPackage() async {
+    setState(() => _isSubscribing = true);
+    
     try {
-      // Simulate API call for free plan subscription
-      await Future.delayed(const Duration(seconds: 1));
+      debugPrint('=== SUBSCRIBING TO FREE PLAN ===');
       
-      if (mounted) {
+      final response = await BotService.subscribeToPlan(
+        plan: 'Free Plan',
+        price: 20.0, // Set price to 20 USD as required by API
+      );
+      
+      if (response['success'] == true) {
+        setState(() {
+          _isSubscribed = true;
+          _daysLeft = 30; // 30 days for free plan
+        });
+        
         // Set the global package state to true
         BotTradeDetailScreen.hasPackage = true;
-
-        // Show activation message
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Free plan activated successfully!'),
-            backgroundColor: Color(0xFF84BD00),
-            duration: Duration(seconds: 1),
-          ),
-        );
         
-        await Future.delayed(const Duration(seconds: 1));
-        
-        if (mounted) {
-          // Go back to the Bot Trading Details screen
-          Navigator.pop(context);
-        }
+        _showSuccessDialog('Subscription successful!', response['message'] ?? 'You are now subscribed to Free Plan');
+      } else {
+        _showErrorDialog('Subscription failed', response['error'] ?? 'Something went wrong');
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to activate free plan: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      debugPrint('Subscription error: $e');
+      _showErrorDialog('Error', 'Network error. Please try again.');
     } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      setState(() => _isSubscribing = false);
     }
+  }
+
+  void _showSuccessDialog(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1C1C1E),
+        title: Text(
+          title,
+          style: const TextStyle(color: Color(0xFF84BD00)),
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(color: Colors.white),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context); // Close dialog
+              Navigator.pop(context); // Go back to previous screen
+            },
+            child: const Text(
+              'OK',
+              style: TextStyle(color: Color(0xFF84BD00)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showErrorDialog(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1C1C1E),
+        title: Text(
+          title,
+          style: const TextStyle(color: Color(0xFFFF3B30)),
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(color: Colors.white),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'OK',
+              style: TextStyle(color: Color(0xFFFF3B30)),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

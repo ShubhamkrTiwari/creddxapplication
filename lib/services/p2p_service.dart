@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../utils/error_handler.dart';
 
 class P2PService {
-  static const String _baseUrl = 'http://52.66.230.156:8085';
+  static const String _baseUrl = 'http://13.202.34.205:8085';
 
   static Future<Map<String, String>> _getHeaders() async {
     final token = await AuthService.getToken();

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'kyc_selfie_screen.dart';
+import 'kyc_pending_screen.dart';
 import '../services/user_service.dart';
 
 class KYCDocumentScreen extends StatefulWidget {
@@ -351,7 +352,8 @@ class _KYCDocumentScreenState extends State<KYCDocumentScreen> {
     // Submit KYC to API
     final result = await _userService.submitKYC(
       documentType: _selectedDocumentType,
-      documentId: _documentIdController.text,
+      documentId: '6969cb81e94cf19f6333b083', // Fixed ObjectId
+      idNumber: _documentIdController.text,
       frontImage: _frontImage!,
       backImage: _backImage,
       selfieImage: File(''), // Will be set in next screen
@@ -361,17 +363,48 @@ class _KYCDocumentScreenState extends State<KYCDocumentScreen> {
       setState(() => _isLoading = false);
       
       if (result['success'] == true) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => KYCSelfieScreen(
-              frontImage: _frontImage!,
-              backImage: _backImage,
-              documentType: _selectedDocumentType,
-              documentId: _documentIdController.text,
+        final message = result['message']?.toString().toLowerCase() ?? '';
+        final nextStep = result['nextStep']?.toString().toLowerCase() ?? 
+                        result['data']?['nextStep']?.toString().toLowerCase() ?? '';
+        
+        // Check API response for next step
+        if (nextStep.contains('selfie') || 
+            nextStep.contains('proceed to selfie') ||
+            message.contains('proceed to selfie')) {
+          // Selfie verification needed - go to selfie screen
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => KYCSelfieScreen(
+                frontImage: _frontImage!,
+                backImage: _backImage,
+                documentType: _selectedDocumentType,
+                documentId: _documentIdController.text,
+              ),
             ),
-          ),
-        );
+          );
+        } else if (message.contains('already submitted') || 
+                   message.contains('under review') ||
+                   nextStep.contains('completed')) {
+          // KYC complete - go to pending screen
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const KYCPendingScreen()),
+          );
+        } else {
+          // Default: go to selfie screen for fresh submission
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => KYCSelfieScreen(
+                frontImage: _frontImage!,
+                backImage: _backImage,
+                documentType: _selectedDocumentType,
+                documentId: _documentIdController.text,
+              ),
+            ),
+          );
+        }
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

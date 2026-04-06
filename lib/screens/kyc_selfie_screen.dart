@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
-import 'kyc_final_screen.dart';
+import 'kyc_pending_screen.dart';
 import '../services/user_service.dart';
 
 class KYCSelfieScreen extends StatefulWidget {
@@ -244,7 +244,7 @@ class _KYCSelfieScreenState extends State<KYCSelfieScreen> {
         if (result['success'] == true) {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (context) => const KYCFinalScreen()),
+            MaterialPageRoute(builder: (context) => const KYCPendingScreen()),
           );
         } else {
           ScaffoldMessenger.of(context).showSnackBar(

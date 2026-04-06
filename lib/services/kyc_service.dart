@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 
 class KYCService {
-  static const String _baseUrl = 'http://52.66.230.156:9000';
+  static const String _baseUrl = 'http://13.202.34.205:8085';
   
   // Get KYC status for current user
   static Future<Map<String, dynamic>> getKYCStatus() async {
@@ -69,6 +69,7 @@ class KYCService {
   static Future<Map<String, dynamic>> submitKYC({
     required String documentType,
     required String documentId,
+    required String idNumber,
     required File frontImage,
     required File? backImage,
     required File selfieImage,
@@ -88,7 +89,7 @@ class KYCService {
       // Create multipart request with new API endpoint
       var request = http.MultipartRequest(
         'POST',
-        Uri.parse('http://52.66.230.156:8085/user/v1/kyc/kyc-upload-and-verify'),
+        Uri.parse('$_baseUrl/user/v1/kyc/kyc-upload-and-verify'),
       );
 
       // Add headers
@@ -99,7 +100,7 @@ class KYCService {
 
       // Add form fields
       request.fields['docId'] = documentId;
-      request.fields['idNumber'] = documentId;
+      request.fields['idNumber'] = idNumber;
 
       // Add images
       if (frontImage.existsSync()) {
@@ -231,7 +232,7 @@ class KYCService {
       final userId = prefs.getString('user_id') ?? '';
 
       final response = await http.post(
-        Uri.parse('http://52.66.230.156:8085/user/v1/kyc/kyc-validate'),
+        Uri.parse('$_baseUrl/user/v1/kyc/kyc-validate'),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
@@ -299,7 +300,7 @@ class KYCService {
       // Create multipart request for selfie verification
       var request = http.MultipartRequest(
         'POST',
-        Uri.parse('http://52.66.230.156:8085/user/v1/kyc/kyc-selfie-verify'),
+        Uri.parse('$_baseUrl/user/v1/kyc/kyc-selfie-verify'),
       );
 
       // Add headers
@@ -323,7 +324,7 @@ class KYCService {
         final selfieFileName = selfieImage.path.split('/').last;
         request.files.add(
           http.MultipartFile.fromBytes(
-            'selfie_image',
+            'selfie',
             selfieImageBytes,
             filename: selfieFileName,
           ),
@@ -368,7 +369,7 @@ class KYCService {
     }
   }
 
-  // Check KYC requirements
+  // Get KYC requirements
   static Future<Map<String, dynamic>> getKYCRequirements() async {
     try {
       final response = await http.get(
@@ -405,6 +406,63 @@ class KYCService {
       }
     } catch (e) {
       print('KYC Requirements Error: $e');
+      return {
+        'success': false,
+        'data': null,
+        'error': 'Network error: $e'
+      };
+    }
+  }
+
+  // Get KYC document
+  static Future<Map<String, dynamic>> getKYCDocument() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getString('user_id') ?? '';
+      
+      if (userId.isEmpty) {
+        return {
+          'success': false,
+          'error': 'User not logged in',
+          'data': null
+        };
+      }
+
+      final response = await http.get(
+        Uri.parse('$_baseUrl/user/v1/kyc/kyc-document?user_id=$userId'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer ${prefs.getString('auth_token') ?? ''}',
+        },
+      ).timeout(const Duration(seconds: 30));
+
+      print('KYC Document Response: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final responseData = json.decode(response.body);
+        if (responseData['success'] == true) {
+          return {
+            'success': true,
+            'data': responseData['data'],
+            'error': null
+          };
+        } else {
+          return {
+            'success': false,
+            'data': null,
+            'error': responseData['error'] ?? 'Failed to get KYC document'
+          };
+        }
+      } else {
+        return {
+          'success': false,
+          'data': null,
+          'error': 'Server error: ${response.statusCode}'
+        };
+      }
+    } catch (e) {
+      print('KYC Document Error: $e');
       return {
         'success': false,
         'data': null,

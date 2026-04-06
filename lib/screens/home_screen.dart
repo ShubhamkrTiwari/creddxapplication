@@ -21,7 +21,7 @@ import '../services/user_service.dart';
 import '../services/wallet_service.dart';
 import '../services/spot_service.dart';
 import '../services/binance_service.dart';
-import '../utils/websocket_test.dart';
+import '../utils/coin_icon_mapper.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 
 // Custom Crypto-themed Refresh Indicator
@@ -264,7 +264,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final List<String> _timeframes = ['Line', '15 Min', '1 Hour', '4 Hour', '1 Day', 'More'];
   
   Timer? _priceTimer;
-  final String _marketBaseUrl = 'http://52.66.230.156:9000';
+  final String _marketBaseUrl = 'http://13.202.34.205:9000';
   
   // Binance market data
   List<Map<String, dynamic>> _binanceMarketData = [];
@@ -542,7 +542,6 @@ class _HomeScreenState extends State<HomeScreen> {
               'change': item['priceChangePercent'],
               'volume': item['quoteVolume'],
               'marketCap': marketCap,
-              'icon': _getCoinIcon(symbol),
             };
           }).toList();
         });
@@ -577,11 +576,6 @@ class _HomeScreenState extends State<HomeScreen> {
       'TRXUSDT': 'TRON',
     };
     return names[symbol] ?? symbol.replaceAll('USDT', '');
-  }
-  
-  // Get coin icon from symbol
-  String _getCoinIcon(String symbol) {
-    return symbol.replaceAll('USDT', '');
   }
   
   void _startPriceUpdates() {
@@ -1097,8 +1091,6 @@ class _HomeScreenState extends State<HomeScreen> {
         final crypto = favorites[index];
         final cryptoName = crypto['name']?.toString() ?? _getCoinName(crypto['symbol']?.toString() ?? 'BTCUSDT');
         final cryptoSymbol = crypto['symbol']?.toString() ?? 'BTCUSDT';
-        final icon = crypto['icon']?.toString() ?? cryptoSymbol.replaceAll('USDT', '');
-        
         // Get real-time data from WebSocket or use the data from Binance API
         final wsData = _favoritesMarketData[cryptoSymbol];
         final apiPrice = double.tryParse(crypto['price']?.toString() ?? '0') ?? 0.0;
@@ -1135,23 +1127,9 @@ class _HomeScreenState extends State<HomeScreen> {
             margin: const EdgeInsets.only(bottom: 16),
             child: Row(
               children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: _getCoinColor(cryptoName),
-                  shape: BoxShape.circle,
-                ),
-                child: Center(
-                  child: Text(
-                    icon,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                    ),
-                  ),
-                ),
+              CoinIconMapper.getCoinIcon(
+                cryptoSymbol.replaceAll('USDT', ''),
+                size: 48,
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -1284,7 +1262,6 @@ class _HomeScreenState extends State<HomeScreen> {
         final cryptoName = crypto['name']?.toString() ?? 'Unknown';
         final cryptoSymbol = crypto['symbol']?.toString() ?? '???';
         final baseSymbol = cryptoSymbol.replaceAll('USDT', '');
-        final icon = crypto['icon']?.toString() ?? baseSymbol;
         final price = double.tryParse(crypto['price']?.toString() ?? '0.0') ?? 0.0;
         final change = double.tryParse(crypto['change']?.toString() ?? '0.0') ?? 0.0;
         final marketCap = double.tryParse(crypto['marketCap']?.toString() ?? '0.0') ?? 0.0;
@@ -1294,23 +1271,9 @@ class _HomeScreenState extends State<HomeScreen> {
           margin: const EdgeInsets.only(bottom: 20), 
           child: Row(
             children: [
-              Container(
-                width: 48, 
-                height: 48, 
-                decoration: BoxDecoration(
-                  color: _getCoinColor(cryptoName),
-                  shape: BoxShape.circle,
-                ),
-                child: Center(
-                  child: Text(
-                    icon,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16, 
-                    ),
-                  ),
-                ),
+              CoinIconMapper.getCoinIcon(
+                baseSymbol,
+                size: 48,
               ),
               const SizedBox(width: 16), 
               Expanded(

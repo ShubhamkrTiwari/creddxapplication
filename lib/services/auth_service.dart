@@ -8,7 +8,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'user_service.dart';
 
 class AuthService {
-  static const String _baseUrl = 'http://52.66.230.156:8085';
+  static const String _baseUrl = 'http://13.202.34.205:8085';
   static const String _tokenKey = 'auth_token';
   static const String _userKey = 'user_data';
 
@@ -131,6 +131,9 @@ class AuthService {
         // Fetch IP address immediately after login
         await _fetchAndSaveIPAddress();
         
+        // Check KYC status after login
+        await _checkAndSaveKYCStatus();
+        
         debugPrint('Login successful, token saved');
         return {'success': true, 'message': 'Login successful'};
       } else {
@@ -172,6 +175,47 @@ class AuthService {
       }
     } catch (e) {
       debugPrint('Error fetching IP on login: $e');
+    }
+  }
+
+  // Check KYC status and save it locally
+  static Future<void> _checkAndSaveKYCStatus() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString(_tokenKey);
+      final userId = prefs.getString('user_id');
+
+      if (token == null || userId == null) return;
+
+      final response = await http.get(
+        Uri.parse('$_baseUrl/user/v1/kyc/status/$userId'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final responseData = json.decode(response.body);
+        if (responseData['success'] == true && responseData['data'] != null) {
+          final kycData = responseData['data'];
+          final kycStatus = kycData['status']?.toString() ?? 'not_started';
+          await prefs.setString('kyc_status', kycStatus);
+          debugPrint('KYC Status saved: $kycStatus');
+        }
+      }
+    } catch (e) {
+      debugPrint('Error checking KYC status: $e');
+    }
+  }
+
+  // Get saved KYC status
+  static Future<String> getKYCStatus() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString('kyc_status') ?? 'not_started';
+    } catch (e) {
+      return 'not_started';
     }
   }
 

@@ -17,13 +17,14 @@ class WalletScreen extends StatefulWidget {
   State<WalletScreen> createState() => _WalletScreenState();
 }
 
-class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderStateMixin {
+class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late TabController _tabController;
   final NumberFormat _currencyFormat = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
   StreamSubscription<Map<String, dynamic>>? _balanceUpdateSubscription;
   Timer? _balanceRefreshTimer;
   
   bool _isLoading = true;
+  bool _isScreenVisible = true;
   String _walletAddress = '0x2340....3420';
   double _totalBalance = 0.0;
   Map<String, dynamic> _walletBalances = {};
@@ -34,10 +35,35 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _tabController = TabController(length: 2, vsync: this);
     _fetchWalletData();
     _connectWebSocketBalanceUpdates();
-    _startPeriodicBalanceRefresh();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    switch (state) {
+      case AppLifecycleState.resumed:
+        // Screen is visible again, refresh data
+        if (mounted) {
+          _isScreenVisible = true;
+          _fetchWalletData();
+          _startPeriodicBalanceRefresh();
+        }
+        break;
+      case AppLifecycleState.paused:
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.detached:
+        // Screen is not visible, stop refresh
+        _isScreenVisible = false;
+        _stopPeriodicBalanceRefresh();
+        break;
+      case AppLifecycleState.hidden:
+        // TODO: Handle this case.
+        throw UnimplementedError();
+    }
   }
 
   void _connectWebSocketBalanceUpdates() {
@@ -45,8 +71,8 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
     _balanceUpdateSubscription = SpotService.getBalanceUpdatesStream().listen(
       (balanceData) {
         debugPrint('Balance update received via WebSocket: $balanceData');
-        if (mounted) {
-          // Update state immediately with new balance data
+        if (mounted && _isScreenVisible) {
+          // Update state immediately with new balance data only if screen is visible
           if (balanceData is Map<String, dynamic>) {
             setState(() {
               // Handle different wallet types from WebSocket
@@ -451,16 +477,25 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
   }
 
   void _startPeriodicBalanceRefresh() {
+    // Only start periodic refresh if screen is visible
+    if (!_isScreenVisible) return;
+    
     // Refresh balance every 10 seconds to stay synchronized with spot screen
     _balanceRefreshTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
-      if (mounted) {
+      if (mounted && _isScreenVisible) {
         _fetchWalletData();
       }
     });
   }
 
+  void _stopPeriodicBalanceRefresh() {
+    _balanceRefreshTimer?.cancel();
+    _balanceRefreshTimer = null;
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _tabController.dispose();
     _balanceUpdateSubscription?.cancel();
     _balanceRefreshTimer?.cancel();

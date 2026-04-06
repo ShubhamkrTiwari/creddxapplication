@@ -15,6 +15,8 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
   bool isLoadingUserData = true;
   bool isLoadingStrategies = true;
   Map<String, dynamic>? strategyPerformanceData;
+  Map<String, dynamic>? botBalanceData;
+  bool isLoadingBotBalance = true;
 
   final List<Map<String, dynamic>> _strategies = [
     {
@@ -49,11 +51,194 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
     },
   ];
 
+  Widget _buildBotBalanceSection() {
+    if (isLoadingBotBalance) {
+      return Container(
+        margin: const EdgeInsets.symmetric(horizontal: 20),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0F0F0F),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: Colors.white.withOpacity(0.1),
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF84BD00)),
+              ),
+            ),
+            SizedBox(width: 8),
+            Text(
+              'Loading balance...',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (botBalanceData == null) {
+      return Container(
+        margin: const EdgeInsets.symmetric(horizontal: 20),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0F0F0F),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: Colors.white.withOpacity(0.1),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.account_balance_wallet, color: Colors.grey, size: 16),
+            SizedBox(width: 8),
+            Text(
+              'Balance unavailable',
+              style: TextStyle(
+                color: Colors.grey,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final currency = botBalanceData!['currency'] ?? 'USDT';
+    final totalBalance = botBalanceData!['totalBalance']?.toString() ?? '0.00';
+    final availableBalance = botBalanceData!['availableBalance']?.toString() ?? '0.00';
+    final investedBalance = botBalanceData!['investedBalance']?.toString() ?? '0.00';
+    
+    debugPrint('=== BALANCE UI VALUES ===');
+    debugPrint('Currency: $currency');
+    debugPrint('Total Balance: $totalBalance');
+    debugPrint('Available Balance: $availableBalance');
+    debugPrint('Invested Balance: $investedBalance');
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F0F0F),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.1),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.account_balance_wallet, color: Color(0xFF84BD00), size: 16),
+              SizedBox(width: 6),
+              Text(
+                'Bot Balance',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Total Balance',
+                    style: TextStyle(
+                      color: Color(0xFF8E8E93),
+                      fontSize: 10,
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    '$totalBalance $currency',
+                    style: TextStyle(
+                      color: Color(0xFF84BD00),
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    'Available',
+                    style: TextStyle(
+                      color: Color(0xFF8E8E93),
+                      fontSize: 10,
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    '$availableBalance $currency',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    'Invested',
+                    style: TextStyle(
+                      color: Color(0xFF8E8E93),
+                      fontSize: 10,
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    '$investedBalance $currency',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
     _fetchUserData();
     _fetchStrategyPerformance();
+    _fetchBotBalance();
+  }
+
+  @override
+  void didUpdateWidget(oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Refresh user data when returning from other screens
+    _fetchUserData();
   }
 
   Future<void> _fetchStrategyPerformance() async {
@@ -76,6 +261,31 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
           isLoadingStrategies = false;
         });
       }
+    }
+  }
+
+  Future<void> _fetchBotBalance() async {
+    try {
+      final result = await BotService.getBotBalance();
+      debugPrint('=== BOT BALANCE RESULT ===');
+      debugPrint('Result: $result');
+      if (result['success'] == true) {
+        setState(() {
+          botBalanceData = result['data'];
+          debugPrint('Bot Balance Data Set: $botBalanceData');
+          isLoadingBotBalance = false;
+        });
+      } else {
+        debugPrint('Bot Balance Failed: ${result['error']}');
+        setState(() {
+          isLoadingBotBalance = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Bot Balance Exception: $e');
+      setState(() {
+        isLoadingBotBalance = false;
+      });
     }
   }
 
@@ -133,6 +343,165 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
     ).then((_) => setState(() {}));
   }
 
+  void _showWithdrawDialog(Map<String, dynamic> strategy) {
+    final TextEditingController amountController = TextEditingController();
+    
+    // Get the invested amount for this strategy from userData
+    final investments = userData?['investments'] as Map<String, dynamic>? ?? {};
+    final strategyKey = strategy['name']?.toString() ?? '';
+    final investedAmount = investments[strategyKey]?.toString() ?? '0.0';
+    final maxWithdraw = double.tryParse(investedAmount) ?? 0.0;
+    
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Withdraw from ${strategy['name']}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: amountController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'Amount (USDT)',
+                  border: OutlineInputBorder(),
+                  hintText: 'Enter amount to withdraw',
+                  suffixText: 'Max: $investedAmount',
+                  suffixStyle: TextStyle(
+                    color: Color(0xFF84BD00),
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Maximum withdrawal: $investedAmount USDT',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF84BD00),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      amountController.text = investedAmount;
+                    },
+                    child: Text(
+                      'Set Max',
+                      style: TextStyle(
+                        color: Color(0xFF84BD00),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: 8),
+              Text(
+                'Note: Withdrawal will be processed from your active investment in this strategy.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final amount = double.tryParse(amountController.text);
+                if (amount == null || amount <= 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Please enter a valid amount'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+                
+                if (amount > maxWithdraw) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Maximum withdrawal amount is $investedAmount USDT'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+
+                Navigator.of(context).pop();
+                
+                // Show loading indicator
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) => Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                );
+
+                try {
+                  // Generate botId from strategy name
+                  String botId = strategy['name'].replaceAll('-', '_').toLowerCase();
+                  
+                  final result = await BotService.withdraw(
+                    botId: botId,
+                    amount: amount,
+                    strategy: strategy['name'],
+                  );
+
+                  Navigator.of(context).pop(); // Remove loading indicator
+
+                  if (result['success'] == true) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(result['message'] ?? 'Withdrawal successful!'),
+                        backgroundColor: Color(0xFF84BD00),
+                        duration: Duration(seconds: 3),
+                      ),
+                    );
+                    setState(() {}); // Refresh UI
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(result['error'] ?? 'Withdrawal failed'),
+                        backgroundColor: Colors.red,
+                        duration: Duration(seconds: 3),
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  Navigator.of(context).pop(); // Remove loading indicator
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              },
+              child: Text('Withdraw', style: TextStyle(color: Colors.white)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Color(0xFF84BD00),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -162,6 +531,9 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
         child: Column(
           children: [
             const SizedBox(height: 30),
+            // Bot Balance Section
+            _buildBotBalanceSection(),
+            const SizedBox(height: 20),
             // User Info Section
             if (!isLoadingUserData && userData != null)
               Container(
@@ -195,6 +567,16 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
                             'Subscription: ${userData!['subscription'] ?? 'Free'}',
                             style: const TextStyle(
                               color: Color(0xFF84BD00),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Total Investment: \$${userData!['totalInvestment'] ?? '0'}',
+                            style: const TextStyle(
+                              color: Colors.white,
                               fontSize: 10,
                               fontWeight: FontWeight.w500,
                             ),
@@ -459,7 +841,7 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: _buildActionButton('Withdraw ↗', () => _navigateToDetail(strategy)),
+                        child: _buildActionButton('Withdraw ↗', () => _showWithdrawDialog(strategy)),
                       ),
                     ],
                   ),

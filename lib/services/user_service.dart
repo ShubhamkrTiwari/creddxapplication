@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'kyc_service.dart';
+import 'auth_service.dart';
 
 class UserService {
   static final UserService _instance = UserService._internal();
@@ -126,7 +127,7 @@ class UserService {
 
       if (token != null) {
         final response = await http.get(
-          Uri.parse('http://52.66.230.156:8085/user/v1/profile'),
+          Uri.parse('http://13.202.34.205:8085/user/v1/profile'),
           headers: {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $token',
@@ -182,7 +183,7 @@ class UserService {
 
       if (token != null && _userId != null) {
         final response = await http.get(
-          Uri.parse('http://52.66.230.156:8085/user/v1/auth/loginactivity/$_userId'),
+          Uri.parse('http://13.202.34.205:8085/user/v1/auth/loginactivity/$_userId'),
           headers: {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $token',
@@ -216,20 +217,32 @@ class UserService {
   // Fetch KYC status from API
   Future<void> fetchKYCStatusFromAPI() async {
     try {
-      final result = await KYCService.getKYCStatus();
-      if (result['success'] == true) {
-        final kycData = result['data'];
-        _kycStatus = kycData['status'] ?? 'Not Started';
-        _kycSubmittedAt = kycData['submitted_at'];
-        
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString(_kycStatusKey, _kycStatus);
-        if (_kycSubmittedAt != null) {
-          await prefs.setString(_kycSubmittedAtKey, _kycSubmittedAt!);
-        }
-      }
+      // Use AuthService to get KYC status (same as login)
+      final status = await AuthService.getKYCStatus();
+      _kycStatus = _mapStatusToDisplay(status);
+      
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kycStatusKey, _kycStatus);
+      
+      debugPrint('KYC Status updated: $_kycStatus');
     } catch (e) {
       debugPrint('Failed to fetch KYC status from API: $e');
+    }
+  }
+
+  // Map API status to display status
+  String _mapStatusToDisplay(String apiStatus) {
+    switch (apiStatus.toLowerCase()) {
+      case 'approved':
+      case 'verified':
+        return 'Completed';
+      case 'pending':
+        return 'Pending';
+      case 'rejected':
+        return 'Rejected';
+      case 'not_started':
+      default:
+        return 'Not Started';
     }
   }
 
@@ -261,6 +274,7 @@ class UserService {
   Future<Map<String, dynamic>> submitKYC({
     required String documentType,
     required String documentId,
+    required String idNumber,
     required File frontImage,
     required File? backImage,
     required File selfieImage,
@@ -269,6 +283,7 @@ class UserService {
       final result = await KYCService.submitKYC(
         documentType: documentType,
         documentId: documentId,
+        idNumber: idNumber,
         frontImage: frontImage,
         backImage: backImage,
         selfieImage: selfieImage,
@@ -371,7 +386,7 @@ class UserService {
       if (avatar != null) requestBody['avatar'] = avatar;
 
       final response = await http.put(
-        Uri.parse('http://52.66.230.156:8085/user/v1/auth/create-profile'),
+        Uri.parse('http://13.202.34.205:8085/user/v1/auth/create-profile'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -410,10 +425,10 @@ class UserService {
         return {'success': false, 'error': 'User not authenticated'};
       }
 
-      debugPrint('Fetching referred friends from: http://52.66.230.156:8085/user/v1/auth/referred-friends');
+      debugPrint('Fetching referred friends from: http://13.202.34.205:8085/user/v1/auth/referred-friends');
       
       final response = await http.get(
-        Uri.parse('http://52.66.230.156:8085/user/v1/auth/referred-friends'),
+        Uri.parse('http://13.202.34.205:8085/user/v1/auth/referred-friends'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -470,10 +485,10 @@ class UserService {
       };
 
       debugPrint('Sending invitation email with verification: $requestBody');
-      debugPrint('API URL: http://52.66.230.156:8085/user/v1/auth/send-invitation');
+      debugPrint('API URL: http://13.202.34.205:8085/user/v1/auth/send-invitation');
       
       final response = await http.post(
-        Uri.parse('http://52.66.230.156:8085/user/v1/auth/send-invitation'),
+        Uri.parse('http://13.202.34.205:8085/user/v1/auth/send-invitation'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -533,10 +548,10 @@ class UserService {
       };
 
       debugPrint('Sending referral verification email: $requestBody');
-      debugPrint('API URL: http://52.66.230.156:8085/user/v1/auth/send-verification-email');
+      debugPrint('API URL: http://13.202.34.205:8085/user/v1/auth/send-verification-email');
       
       final response = await http.post(
-        Uri.parse('http://52.66.230.156:8085/user/v1/auth/send-verification-email'),
+        Uri.parse('http://13.202.34.205:8085/user/v1/auth/send-verification-email'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -598,10 +613,10 @@ class UserService {
       };
 
       debugPrint('Verifying and claiming referral: $requestBody');
-      debugPrint('API URL: http://52.66.230.156:8085/user/v1/auth/verify-claim-referral');
+      debugPrint('API URL: http://13.202.34.205:8085/user/v1/auth/verify-claim-referral');
       
       final response = await http.post(
-        Uri.parse('http://52.66.230.156:8085/user/v1/auth/verify-claim-referral'),
+        Uri.parse('http://13.202.34.205:8085/user/v1/auth/verify-claim-referral'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -666,7 +681,7 @@ class UserService {
 
   bool hasEmail() => _userEmail != null && _userEmail!.isNotEmpty;
   bool isKYCPending() => _kycStatus == 'Pending';
-  bool isKYCVerified() => _kycStatus == 'Verified';
+  bool isKYCVerified() => _kycStatus == 'Completed';
   bool isKYCRejected() => _kycStatus == 'Rejected';
   bool isKYCNotStarted() => _kycStatus == 'Not Started';
 
@@ -678,7 +693,7 @@ class UserService {
 
   Color getKYCStatusColor() {
     switch (_kycStatus) {
-      case 'Verified': return const Color(0xFF84BD00);
+      case 'Completed': return const Color(0xFF84BD00);
       case 'Pending': return Colors.orange;
       case 'Rejected': return Colors.red;
       default: return Colors.grey;

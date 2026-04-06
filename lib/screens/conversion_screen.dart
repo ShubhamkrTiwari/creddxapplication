@@ -55,7 +55,7 @@ class _ConversionScreenState extends State<ConversionScreen> {
     try {
       final token = await UserService().getToken();
       final response = await http.get(
-        Uri.parse('http://52.66.230.156:8085/wallet/v1/wallet/all-wallet-balance'),
+        Uri.parse('http://13.202.34.205:8085/wallet/v1/wallet/all-wallet-balance'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',

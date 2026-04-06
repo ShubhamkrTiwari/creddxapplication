@@ -13,12 +13,14 @@ class BotHistoryScreen extends StatefulWidget {
   State<BotHistoryScreen> createState() => _BotHistoryScreenState();
 }
 
-class _BotHistoryScreenState extends State<BotHistoryScreen> {
+class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
   String _selectedHistoryPair = 'BTC-USDT';
   String _selectedSortBy = 'date';
   String _selectedSortOrder = 'desc';
   bool _isLoading = false;
   List<BotTrade> _trades = [];
+  List<Transaction> _transactions = [];
   List<String> _availablePairs = [];
   String? _errorMessage;
   DateTime? _startDate;
@@ -27,8 +29,16 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> {
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _loadTradeHistory();
+    _loadTransactions();
     _loadAvailablePairs();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadAvailablePairs() async {
@@ -111,6 +121,41 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> {
     }
   }
 
+  Future<void> _loadTransactions() async {
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    }
+
+    try {
+      final result = await BotService.getUserTransactions();
+
+      if (mounted) {
+        if (result['success'] == true) {
+          final List<dynamic> transactionsList = result['transactions'] ?? [];
+          setState(() {
+            _transactions = transactionsList.map((transaction) => Transaction.fromJson(transaction)).toList();
+            _isLoading = false;
+          });
+        } else {
+          setState(() {
+            _errorMessage = result['error'] ?? 'Failed to load transactions';
+            _isLoading = false;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Error loading transactions: $e';
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool displayHeader = widget.showHeader;
@@ -136,129 +181,45 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 16),
-          // Horizontal Pair Selector and Sort button
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1C1C1E),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _availablePairs?.length ?? 0,
-                      physics: const BouncingScrollPhysics(),
-                      itemBuilder: (context, index) {
-                        if (_availablePairs == null || _availablePairs.isEmpty) {
-                          return const SizedBox.shrink();
-                        }
-                        final pair = _availablePairs[index];
-                        final isSelected = _selectedHistoryPair == pair;
-                        return GestureDetector(
-                          onTap: () {
-                            setState(() {
-                              _selectedHistoryPair = pair;
-                            });
-                            _loadTradeHistory();
-                          },
-                          child: Container(
-                            margin: const EdgeInsets.all(4),
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: isSelected ? const Color(0xFF2C2C2E) : Colors.transparent,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              pair,
-                              style: TextStyle(
-                                color: isSelected ? Colors.white : const Color(0xFF8E8E93),
-                                fontSize: 13,
-                                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                GestureDetector(
-                  onTap: _showSortOptions,
-                  child: Container(
-                    height: 44,
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1C1C1E),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      children: [
-                        const Text(
-                          'Sort',
-                          style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
-                        ),
-                        const SizedBox(width: 6),
-                        Icon(Icons.keyboard_arrow_down, color: Colors.white.withOpacity(0.7), size: 18),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: _showDateFilterOptions,
-                  child: Container(
-                    height: 44,
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1C1C1E),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      children: [
-                        const Text(
-                          'Date',
-                          style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
-                        ),
-                        const SizedBox(width: 6),
-                        Icon(Icons.calendar_today, color: Colors.white.withOpacity(0.7), size: 18),
-                      ],
-                    ),
-                  ),
-                ),
+          // Tabs
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1C1C1E),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: TabBar(
+              controller: _tabController,
+              indicator: BoxDecoration(
+                color: const Color(0xFF84BD00),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              labelColor: Colors.black,
+              unselectedLabelColor: Colors.white.withOpacity(0.7),
+              labelStyle: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+              ),
+              unselectedLabelStyle: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.normal,
+              ),
+              tabs: const [
+                Tab(text: 'Trades'),
+                Tab(text: 'Transactions'),
               ],
             ),
           ),
-          
-          const SizedBox(height: 20),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Divider(color: Colors.white.withOpacity(0.05), height: 1),
-          ),
-          const SizedBox(height: 12),
-          
-          // History List
+          const SizedBox(height: 16),
+          // Tab Content
           Expanded(
-            child: _isLoading 
-              ? const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)))
-              : _errorMessage != null
-                ? _buildErrorWidget()
-                : _trades.isEmpty
-                  ? _buildEmptyWidget()
-                  : ListView.builder(
-                      itemCount: _trades.length,
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
-                      physics: const BouncingScrollPhysics(),
-                      itemBuilder: (context, index) {
-                        final trade = _trades[index];
-                        return _buildTradeCard(trade);
-                      },
-                    ),
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildTradesContent(),
+                _buildTransactionsContent(),
+              ],
+            ),
           ),
         ],
       ),
@@ -708,5 +669,224 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> {
     //     builder: (context) => BotTradeDetailScreen(trade: trade),
     //   ),
     // );
+  }
+
+  Widget _buildTradesContent() {
+    return Column(
+      children: [
+        // Pair selector for trades
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              Expanded(
+                child: Container(
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1C1C1E),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _availablePairs?.length ?? 0,
+                    physics: const BouncingScrollPhysics(),
+                    itemBuilder: (context, index) {
+                      if (_availablePairs == null || _availablePairs.isEmpty) {
+                        return const SizedBox.shrink();
+                      }
+                      final pair = _availablePairs[index];
+                      final isSelected = _selectedHistoryPair == pair;
+                      return GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _selectedHistoryPair = pair;
+                          });
+                          _loadTradeHistory();
+                        },
+                        child: Container(
+                          margin: const EdgeInsets.all(4),
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: isSelected ? const Color(0xFF2C2C2E) : Colors.transparent,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            pair,
+                            style: TextStyle(
+                              color: isSelected ? Colors.white : const Color(0xFF8E8E93),
+                              fontSize: 13,
+                              fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Trades list
+        Expanded(
+          child: _isLoading 
+            ? const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)))
+            : _errorMessage != null
+              ? _buildErrorWidget()
+              : _trades.isEmpty
+                ? _buildEmptyWidget()
+                : ListView.builder(
+                    itemCount: _trades.length,
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                    physics: const BouncingScrollPhysics(),
+                    itemBuilder: (context, index) {
+                      final trade = _trades[index];
+                      return _buildTradeCard(trade);
+                    },
+                  ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTransactionsContent() {
+    return Expanded(
+      child: _isLoading 
+        ? const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)))
+        : _errorMessage != null
+          ? _buildErrorWidget()
+          : _transactions.isEmpty
+            ? _buildEmptyTransactionsWidget()
+            : ListView.builder(
+                itemCount: _transactions.length,
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                physics: const BouncingScrollPhysics(),
+                itemBuilder: (context, index) {
+                  final transaction = _transactions[index];
+                  return _buildTransactionCard(transaction);
+                },
+              ),
+    );
+  }
+
+  Widget _buildTransactionCard(Transaction transaction) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.02)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: transaction.isCredit ? const Color(0xFF00C851) : const Color(0xFFFF3B30),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Icon(
+                      transaction.isCredit ? Icons.arrow_downward : Icons.arrow_upward,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        transaction.type,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        transaction.formattedDate,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.35),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              Text(
+                transaction.formattedAmount,
+                style: TextStyle(
+                  color: transaction.isCredit ? const Color(0xFF00C851) : const Color(0xFFFF3B30),
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          if (transaction.description != null) ...[
+            const SizedBox(height: 12),
+            _buildHistoryMetric('Description:', transaction.description!),
+          ],
+          if (transaction.balance != null) ...[
+            const SizedBox(height: 8),
+            _buildHistoryMetric('Balance:', '\$${transaction.balance!.toStringAsFixed(2)}'),
+          ],
+          if (transaction.reference != null) ...[
+            const SizedBox(height: 8),
+            _buildHistoryMetric('Reference:', transaction.reference!),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyTransactionsWidget() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 100,
+            height: 100,
+            decoration: BoxDecoration(
+              color: const Color(0xFF1C1C1E),
+              borderRadius: BorderRadius.circular(50),
+            ),
+            child: const Icon(
+              Icons.receipt_long,
+              color: Color(0xFF84BD00),
+              size: 40,
+            ),
+          ),
+          const SizedBox(height: 20),
+          const Text(
+            'No Transactions Yet',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Your transaction history will appear here',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.6),
+              fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
