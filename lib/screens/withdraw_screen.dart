@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'qr_scanner_screen.dart';
 import '../services/wallet_service.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
+import '../utils/coin_icon_mapper.dart';
 
 class WithdrawScreen extends StatefulWidget {
   const WithdrawScreen({super.key});
@@ -41,7 +42,11 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
     
     if (mounted) {
       setState(() {
-        _coins = coinsData.map((data) => Coin.fromJson(data)).toList();
+        // Filter to show only USDT coin
+        _coins = coinsData
+            .map((data) => Coin.fromJson(data))
+            .where((coin) => coin.symbol == 'USDT')
+            .toList();
         
         if (_coins.isNotEmpty) {
           _selectedCoin = _coins.first.symbol;
@@ -89,21 +94,16 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
       _isFetchingBalance = true;
       _errorMessage = null;
     });
-    
-    final result = await WalletService.getAllWalletBalances();
-    
+
+    final result = await WalletService.getUSDTBalanceFromAllWallets();
+
     if (mounted) {
       setState(() {
         if (result['success'] == true && result['data'] != null) {
-          // Extract balance from the API response
-          final balanceData = result['data'];
-          
-          if (balanceData is Map) {
-            _availableBalance = double.tryParse(balanceData['balance']?.toString() ?? '0.0') ?? 0.0;
-          } else if (balanceData is List && balanceData.isNotEmpty) {
-            // If it's a list, get the first item's balance
-            final firstItem = balanceData[0] as Map<String, dynamic>;
-            _availableBalance = double.tryParse(firstItem['balance']?.toString() ?? '0.0') ?? 0.0;
+          // Extract Main wallet USDT balance
+          final mainBalance = result['data']['main'];
+          if (mainBalance != null) {
+            _availableBalance = double.tryParse(mainBalance['available']?.toString() ?? '0.0') ?? 0.0;
           }
         }
         _isFetchingBalance = false;
@@ -250,6 +250,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
                   border: Border.all(color: const Color(0xFF333333)),
                 ),
                 child: ListTile(
+                  leading: _buildCoinIcon(_selectedCoin),
                   title: Text(_selectedCoin, style: const TextStyle(color: Colors.white)),
                   trailing: const Icon(Icons.keyboard_arrow_down, color: Color(0xFF6C7278)),
                   onTap: _showCoinSelector,
@@ -462,6 +463,63 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
     );
   }
   
+  Widget _buildCoinIcon(String symbol) {
+    final coin = _coins.firstWhere(
+      (c) => c.symbol == symbol,
+      orElse: () => Coin(id: '', name: symbol, symbol: symbol, icon: '', networks: []),
+    );
+    return _buildCoinIconFromCoin(coin);
+  }
+
+  Widget _buildCoinIconFromCoin(Coin coin) {
+    final iconUrl = coin.icon;
+    
+    if (iconUrl.isNotEmpty) {
+      return Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: Image.network(
+            iconUrl,
+            width: 40,
+            height: 40,
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              return CoinIconMapper.getCoinIcon(coin.symbol, size: 40);
+            },
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) return child;
+              return Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF84BD00).withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Color(0xFF84BD00),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+    }
+    
+    return CoinIconMapper.getCoinIcon(coin.symbol, size: 40);
+  }
+
   @override
   void dispose() {
     _addressController.dispose();
@@ -487,24 +545,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
             ),
             const SizedBox(height: 20),
             ..._coins.map((coin) => ListTile(
-              leading: Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF84BD00).withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Center(
-                  child: Text(
-                    coin.symbol.substring(0, 2).toUpperCase(),
-                    style: const TextStyle(
-                      color: Color(0xFF84BD00),
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                    ),
-                  ),
-                ),
-              ),
+              leading: _buildCoinIconFromCoin(coin),
               title: Text(
                 coin.name,
                 style: const TextStyle(color: Colors.white, fontSize: 16),
