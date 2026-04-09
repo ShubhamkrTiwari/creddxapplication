@@ -568,19 +568,25 @@ class _MerchantApplicationScreenState extends State<MerchantApplicationScreen> w
     try {
       final adData = {
         "coin": _selectedCoin,
+        "coinSymbol": _selectedCoin,
         "price": _calculatePrice(),
         "amount": double.tryParse(_amountController.text) ?? 0.0,
-        "paymentMode": [_selectedPaymentMethod],
+        "quantity": double.tryParse(_amountController.text) ?? 0.0,
+        "payModes": [_selectedPaymentMethod],
         "type": _isAddAdvertBuySelected ? "buy" : "sell",
-        "paytime": 15,
+        "direction": _isAddAdvertBuySelected ? 1 : 2,
+        "payTime": 15,
         "status": "active",
         // Add min/max limits for sell orders
         if (!_isAddAdvertBuySelected) ...{
           "min": double.tryParse(_minLimitController.text) ?? 0.0,
+          "minOrder": double.tryParse(_minLimitController.text) ?? 0.0,
           "max": double.tryParse(_maxLimitController.text) ?? 0.0,
+          "maxOrder": double.tryParse(_maxLimitController.text) ?? 0.0,
         },
         "floating": _floatingValue,
         "fiat": _selectedFiat,
+        "currency": _selectedFiat,
       };
 
       debugPrint('Creating merchant advertisement with data: ${json.encode(adData)}');

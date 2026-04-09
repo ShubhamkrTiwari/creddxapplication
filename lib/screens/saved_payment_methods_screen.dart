@@ -33,8 +33,11 @@ class _SavedPaymentMethodsScreenState extends State<SavedPaymentMethodsScreen> {
   @override
   void initState() {
     super.initState();
-    _fetchSavedPaymentMethods();
-    _fetchPaymentModes();
+    // Add delay to allow API to sync newly saved data
+    Future.delayed(const Duration(milliseconds: 500), () {
+      _fetchSavedPaymentMethods();
+      _fetchPaymentModes();
+    });
   }
 
   Future<void> _fetchSavedPaymentMethods() async {
@@ -47,12 +50,23 @@ class _SavedPaymentMethodsScreenState extends State<SavedPaymentMethodsScreen> {
       
       List<dynamic> methods = [];
       
-      if (userDetails != null && userDetails['paymentMethods'] != null) {
-        // Extract payment methods from user details
-        methods = userDetails['paymentMethods'] is List 
-            ? userDetails['paymentMethods'] 
-            : (userDetails['data']?['paymentMethods'] ?? []);
-        debugPrint('Payment methods from user details: $methods');
+      if (userDetails != null) {
+        // Check multiple possible response formats
+        if (userDetails['docs'] != null && userDetails['docs'] is List) {
+          // API returns data in 'docs' field
+          methods = userDetails['docs'];
+          debugPrint('Payment methods from docs: $methods');
+        } else if (userDetails['paymentMethods'] != null) {
+          // Extract payment methods from user details
+          methods = userDetails['paymentMethods'] is List 
+              ? userDetails['paymentMethods'] 
+              : (userDetails['data']?['paymentMethods'] ?? []);
+          debugPrint('Payment methods from user details: $methods');
+        } else if (userDetails['data'] != null && userDetails['data'] is List) {
+          // Data might be directly in data field
+          methods = userDetails['data'];
+          debugPrint('Payment methods from data: $methods');
+        }
       } else {
         // Fallback to regular payment methods endpoint
         methods = await P2PService.getPaymentMethods();
@@ -62,28 +76,39 @@ class _SavedPaymentMethodsScreenState extends State<SavedPaymentMethodsScreen> {
       setState(() {
         _savedPaymentMethods = methods.map<Map<String, dynamic>>((method) {
           // Convert API response to expected format
-          if (method['type'] == 'UPI' || method['paymentType'] == 'UPI') {
+          // API uses 'name' for payment type (UPI/Bank), 'UPI_ID' for UPI, 'upiUserName' for holder
+          final paymentType = method['name']?.toString().toUpperCase() ?? 
+                             method['type']?.toString().toUpperCase() ?? 
+                             method['paymentType']?.toString().toUpperCase() ?? '';
+          
+          if (paymentType == 'UPI') {
             return {
               'type': 'UPI Payment',
-              'details': method['upiId'] ?? method['paymentId'] ?? 'Unknown UPI',
-              'holderName': method['accountHolder'] ?? method['holderName'] ?? 'Unknown Holder',
+              'details': method['UPI_ID'] ?? method['upiId'] ?? method['paymentId'] ?? 'Unknown UPI',
+              'holderName': method['upiUserName'] ?? method['accountHolder'] ?? method['holderName'] ?? 'Unknown Holder',
               'isDefault': method['isDefault'] ?? method['default'] ?? false,
-              'id': method['id'] ?? method['_id'], // Store ID for editing/deleting
+              'id': method['_id'] ?? method['id'], // Store ID for editing/deleting
             };
-          } else if (method['type'] == 'Bank' || method['paymentType'] == 'Bank') {
+          } else if (paymentType == 'BANK' || paymentType.contains('BANK')) {
             final accountNumber = method['accountNumber'] ?? '';
             final maskedNumber = accountNumber.length > 4 
                 ? '****${accountNumber.substring(accountNumber.length - 4)}'
                 : '****1234';
             return {
               'type': 'Bank Transfer',
-              'details': '${method['bankName'] ?? method['bankName'] ?? 'Unknown Bank'} $maskedNumber',
+              'details': '${method['bankName'] ?? 'Unknown Bank'} $maskedNumber',
               'holderName': method['accountHolder'] ?? method['holderName'] ?? 'Unknown Holder',
               'isDefault': method['isDefault'] ?? method['default'] ?? false,
-              'id': method['id'] ?? method['_id'], // Store ID for editing/deleting
+              'id': method['_id'] ?? method['id'], // Store ID for editing/deleting
             };
           }
-          return method as Map<String, dynamic>;
+          return {
+            'type': '$paymentType Payment',
+            'details': method['UPI_ID'] ?? method['accountNumber'] ?? 'Unknown',
+            'holderName': method['upiUserName'] ?? method['accountHolder'] ?? method['holderName'] ?? 'Unknown Holder',
+            'isDefault': method['isDefault'] ?? false,
+            'id': method['_id'] ?? method['id'],
+          };
         }).toList();
         _isLoading = false;
       });

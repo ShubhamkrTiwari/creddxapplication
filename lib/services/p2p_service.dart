@@ -72,7 +72,6 @@ class P2PService {
       );
       debugPrint('Verify OTP response status: ${response.statusCode}');
       debugPrint('Verify OTP response body: ${response.body}');
-      
       return json.decode(response.body);
     } catch (e) {
       debugPrint('Verify OTP error: $e');
@@ -201,39 +200,54 @@ class P2PService {
     final testAds = [
       {
         'coin': 'USDT',
+        'coinSymbol': 'USDT',
         'amount': 1000.0,
+        'quantity': 1000.0,
         'price': 85.50,
         'min': 500,
+        'minOrder': 500,
         'max': 10000,
-        'paymentMode': ['Bank Transfer', 'UPI'],
+        'maxOrder': 10000,
+        'payModes': ['Bank Transfer', 'UPI'],
         'type': 'sell',
         'fiat': 'INR',
+        'currency': 'INR',
         'floating': 0,
-        'paytime': 15,
+        'payTime': 15,
       },
       {
         'coin': 'USDT',
+        'coinSymbol': 'USDT',
         'amount': 500.0,
+        'quantity': 500.0,
         'price': 86.00,
         'min': 1000,
+        'minOrder': 1000,
         'max': 20000,
-        'paymentMode': ['Bank Transfer'],
+        'maxOrder': 20000,
+        'payModes': ['Bank Transfer'],
         'type': 'buy',
         'fiat': 'INR',
+        'currency': 'INR',
         'floating': 0,
-        'paytime': 15,
+        'payTime': 15,
       },
       {
         'coin': 'BTC',
+        'coinSymbol': 'BTC',
         'amount': 0.01,
+        'quantity': 0.01,
         'price': 4500000.0,
         'min': 10000,
+        'minOrder': 10000,
         'max': 100000,
-        'paymentMode': ['UPI', 'PayTM'],
+        'maxOrder': 100000,
+        'payModes': ['UPI', 'PayTM'],
         'type': 'sell',
         'fiat': 'INR',
+        'currency': 'INR',
         'floating': 0,
-        'paytime': 15,
+        'payTime': 15,
       },
     ];
     
@@ -264,15 +278,20 @@ class P2PService {
     try {
       final testAd = {
         'coin': 'USDT',
+        'coinSymbol': 'USDT',
         'amount': 1000.0,
+        'quantity': 1000.0,
         'price': 85.50,
         'min': 500,
+        'minOrder': 500,
         'max': 10000,
-        'paymentMode': ['Bank Transfer', 'UPI'],
+        'maxOrder': 10000,
+        'payModes': ['Bank Transfer', 'UPI'],
         'type': 'sell',
         'fiat': 'INR',
+        'currency': 'INR',
         'floating': 0,
-        'paytime': 15,
+        'payTime': 15,
       };
       
       debugPrint('Creating test ad: ${json.encode(testAd)}');
@@ -405,7 +424,7 @@ class P2PService {
         'min': 1000,
         'max': 50000,
         'amount': 25000,
-        'paymentMode': ['Bank Transfer', 'UPI'],
+        'payModes': ['Bank Transfer', 'UPI'],
         'type': 'sell',
         'coin': 'USDT',
         'coinSymbol': 'USDT',
@@ -418,7 +437,7 @@ class P2PService {
         'min': 500,
         'max': 25000,
         'amount': 15000,
-        'paymentMode': ['Bank Transfer'],
+        'payModes': ['Bank Transfer'],
         'type': 'sell',
         'coin': 'USDT',
         'coinSymbol': 'USDT',
@@ -431,7 +450,7 @@ class P2PService {
         'min': 2000,
         'max': 75000,
         'amount': 30000,
-        'paymentMode': ['UPI', 'PayTM'],
+        'payModes': ['UPI', 'PayTM'],
         'type': 'buy',
         'coin': 'USDT',
         'coinSymbol': 'USDT',
@@ -444,7 +463,7 @@ class P2PService {
         'min': 1500,
         'max': 60000,
         'amount': 20000,
-        'paymentMode': ['Bank Transfer', 'PhonePe'],
+        'payModes': ['Bank Transfer', 'PhonePe'],
         'type': 'sell',
         'coin': 'USDT',
         'coinSymbol': 'USDT',
@@ -457,7 +476,7 @@ class P2PService {
         'min': 800,
         'max': 30000,
         'amount': 12000,
-        'paymentMode': ['UPI', 'Google Pay'],
+        'payModes': ['UPI', 'Google Pay'],
         'type': 'buy',
         'coin': 'USDT',
         'coinSymbol': 'USDT',
@@ -483,6 +502,29 @@ class P2PService {
       
       if (response.statusCode == 200 || response.statusCode == 201) {
         return {'success': true, 'data': response.body};
+      } else if (response.statusCode == 400 && response.body.contains('Wallet did not setup correctly')) {
+        // Wallet not set up - try to set it up first
+        debugPrint('Wallet not set up. Attempting to setup wallet...');
+        final setupResult = await setupWallet();
+        if (setupResult['success'] == true) {
+          // Retry creating advertisement
+          debugPrint('Wallet setup successful. Retrying advertisement creation...');
+          final retryResponse = await http.post(
+            Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/publish'),
+            headers: headers,
+            body: json.encode(adData)
+          );
+          if (retryResponse.statusCode == 200 || retryResponse.statusCode == 201) {
+            return {'success': true, 'data': retryResponse.body};
+          } else {
+            return {
+              'success': false, 
+              'error': 'API Error ${retryResponse.statusCode}: ${retryResponse.body}'
+            };
+          }
+        } else {
+          return {'success': false, 'error': 'Wallet setup failed: ${setupResult['error']}'};
+        }
       } else {
         // Return error message for display
         return {
@@ -797,6 +839,25 @@ class P2PService {
   }
 
   // --- Wallet Operations ---
+  static Future<Map<String, dynamic>> setupWallet() async {
+    try {
+      // Use P2P wallet endpoint with POST for setup
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/p2pwallet'),
+        headers: await _getHeaders(),
+      );
+      debugPrint('P2P Wallet setup response: ${response.statusCode} - ${response.body}');
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return {'success': true, 'data': json.decode(response.body)};
+      } else {
+        return {'success': false, 'error': 'P2P Wallet setup failed: ${response.body}'};
+      }
+    } catch (e) {
+      debugPrint('P2P Wallet setup error: $e');
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
   static Future<Map<String, dynamic>?> getWalletBalance() async {
     try {
       final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/wallet/balance'), headers: await _getHeaders());
@@ -818,10 +879,31 @@ class P2PService {
 
   static Future<bool> withdrawCrypto(Map<String, dynamic> withdrawData) async {
     try {
-      final response = await http.post(Uri.parse('$_baseUrl/p2p/v1/wallet/withdraw'), headers: await _getHeaders(), 
+      final response = await http.post(Uri.parse('$_baseUrl/p2p/v1/wallet/withdraw'), headers: await _getHeaders(),
         body: json.encode(withdrawData));
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (e) { return false; }
+  }
+
+  // --- P2P Payment Methods ---
+  static Future<Map<String, dynamic>> addPaymentMethod(Map<String, dynamic> paymentData) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/payment/add-method'),
+        headers: await _getHeaders(),
+        body: json.encode(paymentData),
+      );
+      debugPrint('Add payment method response: ${response.statusCode} - ${response.body}');
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = json.decode(response.body);
+        return {'success': true, 'data': data};
+      } else {
+        return {'success': false, 'error': 'Failed to add payment method: ${response.body}'};
+      }
+    } catch (e) {
+      debugPrint('Add payment method error: $e');
+      return {'success': false, 'error': e.toString()};
+    }
   }
 
   // --- Dispute Management ---
@@ -898,14 +980,30 @@ class P2PService {
 
   static Future<bool> savePaymentMethod(Map<String, dynamic> paymentData) async {
     try {
-      final response = await http.post(Uri.parse('$_baseUrl/p2p/v1/p2p/payment/add-method'), headers: await _getHeaders(), body: json.encode(paymentData));
+      debugPrint('Saving payment method with data: ${json.encode(paymentData)}');
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/payment/add-method'), 
+        headers: await _getHeaders(), 
+        body: json.encode(paymentData)
+      );
+      debugPrint('Save payment method response: ${response.statusCode} - ${response.body}');
       return response.statusCode == 200 || response.statusCode == 201;
-    } catch (e) { return false; }
+    } catch (e) { 
+      debugPrint('Save payment method error: $e');
+      return false; 
+    }
   }
 
-  static Future<Map<String, dynamic>?> getPaymentUserDetails() async {
+  static Future<Map<String, dynamic>?> getPaymentUserDetails({List<String>? payModes}) async {
     try {
-      final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/p2p/payment/user-details'), headers: await _getHeaders());
+      final body = payModes != null && payModes.isNotEmpty 
+          ? json.encode({'payModes': payModes}) 
+          : null;
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/payment/user-details'), 
+        headers: await _getHeaders(),
+        body: body,
+      );
       if (response.statusCode == 200) return json.decode(response.body);
     } catch (e) { debugPrint('Payment user details error: $e'); }
     return null;

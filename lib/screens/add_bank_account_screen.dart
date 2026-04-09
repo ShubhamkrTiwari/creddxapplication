@@ -2,6 +2,21 @@ import 'package:flutter/material.dart';
 import '../services/p2p_service.dart';
 import 'otp_verification_screen.dart';
 import 'payment_method_screen.dart';
+import 'saved_payment_methods_screen.dart';
+
+// Country name to numeric code mapping for API
+const Map<String, String> countryCodeMap = {
+  'India': '91',
+  'United States': '1',
+  'United Kingdom': '44',
+  'Canada': '1',
+  'Australia': '61',
+  'Germany': '49',
+  'France': '33',
+  'United Arab Emirates': '971',
+  'Singapore': '65',
+  'Japan': '81',
+};
 
 class AddBankAccountScreen extends StatefulWidget {
   final String country;
@@ -141,6 +156,35 @@ class _AddBankAccountScreenState extends State<AddBankAccountScreen> {
                           ),
                   ),
                 ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const SavedPaymentMethodsScreen(),
+                        ),
+                      );
+                    },
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Color(0xFF84BD00)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: const Text(
+                      'Saved Payment Methods',
+                      style: TextStyle(
+                        color: Color(0xFF84BD00),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -232,14 +276,33 @@ class _AddBankAccountScreenState extends State<AddBankAccountScreen> {
                   
                   if (isSuccess) {
                     // Finally save the payment method after OTP verification
-                    final saveResponse = await P2PService.savePaymentMethod({
-                      'type': 'BANK',
-                      'bankName': 'Bank', // Typically selected from a list or entered
+                    // First get payment modes to find Bank mode ID
+                    final modesResponse = await P2PService.getPaymentModes(widget.country);
+                    String? bankModeId;
+                    if (modesResponse != null && modesResponse['data'] != null) {
+                      final modes = modesResponse['data'] as List<dynamic>;
+                      final bankMode = modes.firstWhere(
+                        (mode) => mode['name']?.toString().toUpperCase() == 'BANK' || 
+                                  mode['identifier']?.toString().toUpperCase() == 'BANK',
+                        orElse: () => null,
+                      );
+                      bankModeId = bankMode?['_id'];
+                    }
+                    
+                    // Use API expected field names with mode ID
+                    // Convert country name to numeric code
+                    final countryCode = countryCodeMap[widget.country] ?? widget.country;
+                    final saveData = {
+                      'name': 'Bank',
+                      'bankName': 'Bank',
                       'accountNumber': _accountNumberController.text,
                       'ifscCode': _ifscCodeController.text,
-                      'holderName': _holderNameController.text,
-                      'country': widget.country,
-                    });
+                      'accountHolder': _holderNameController.text,
+                      'country': countryCode,
+                      if (bankModeId != null) 'mode': bankModeId,
+                    };
+                    debugPrint('Saving Bank with data: $saveData');
+                    final saveResponse = await P2PService.savePaymentMethod(saveData);
                     debugPrint('Save Bank Response: $saveResponse'); // Debug log
                     
                     // Always return success to trigger navigation, even if save fails
@@ -260,11 +323,11 @@ class _AddBankAccountScreenState extends State<AddBankAccountScreen> {
 
           debugPrint('Bank navigation returned verified value: $verified'); // Debug log
           if (verified == true) {
-            // Navigate to payment list screen showing saved payment methods
-            debugPrint('Navigating to PaymentMethodScreen from bank'); // Debug log
+            // Navigate to saved payment methods screen
+            debugPrint('Navigating to SavedPaymentMethodsScreen from bank'); // Debug log
             Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(builder: (context) => const PaymentMethodScreen()),
+              MaterialPageRoute(builder: (context) => const SavedPaymentMethodsScreen()),
               (route) => false,
             );
           } else {
@@ -280,7 +343,7 @@ class _AddBankAccountScreenState extends State<AddBankAccountScreen> {
               // Fallback navigation
               Navigator.pushAndRemoveUntil(
                 context,
-                MaterialPageRoute(builder: (context) => const PaymentMethodScreen()),
+                MaterialPageRoute(builder: (context) => const SavedPaymentMethodsScreen()),
                 (route) => false,
               );
             }

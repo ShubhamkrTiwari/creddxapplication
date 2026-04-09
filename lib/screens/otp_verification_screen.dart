@@ -88,14 +88,10 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                          result['status'] == 'success';
         
         if (isSuccess) {
-          debugPrint('OTP verification successful, navigating to PaymentMethodScreen'); // Debug log
+          debugPrint('OTP verification successful, returning true to caller'); // Debug log
           if (mounted) {
-            // For payment methods, navigate to main PaymentMethodScreen
-            Navigator.pushAndRemoveUntil(
-              context,
-              MaterialPageRoute(builder: (context) => const PaymentMethodScreen()),
-              (route) => false,
-            );
+            // Return true to let caller handle navigation
+            Navigator.pop(context, true);
           }
         } else {
           debugPrint('OTP verification failed: ${result['message']}'); // Debug log

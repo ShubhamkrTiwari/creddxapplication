@@ -209,13 +209,19 @@ class _P2PSellScreenState extends State<P2PSellScreen> {
     try {
       final adData = {
         "coin": _selectedCoin,
+        "coinSymbol": _selectedCoin,
         "price": double.tryParse(_priceController.text) ?? 0.0,
         "amount": double.tryParse(_amountController.text) ?? 0.0,
+        "quantity": double.tryParse(_amountController.text) ?? 0.0,
         "min": double.tryParse(_minLimitController.text) ?? 0.0,
+        "minOrder": double.tryParse(_minLimitController.text) ?? 0.0,
         "max": double.tryParse(_maxLimitController.text) ?? 0.0,
-        "paymentMode": [_selectedPaymentMethod],
+        "maxOrder": double.tryParse(_maxLimitController.text) ?? 0.0,
+        "payModes": [_selectedPaymentMethod],
         "type": "sell",
-        "paytime": 15,
+        "direction": 2,
+        "currency": "INR",
+        "payTime": 15,
         "status": "active", // Set advertisement as active
       };
 

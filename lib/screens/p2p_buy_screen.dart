@@ -56,11 +56,15 @@ class _P2PBuyScreenState extends State<P2PBuyScreen> {
     try {
       final adData = {
         "coin": _selectedCoin,
+        "coinSymbol": _selectedCoin,
         "price": double.tryParse(_priceController.text) ?? 0.0,
         "amount": double.tryParse(_amountController.text) ?? 0.0,
-        "paymentMode": [_selectedPaymentMethod],
+        "quantity": double.tryParse(_amountController.text) ?? 0.0,
+        "payModes": [_selectedPaymentMethod],
         "type": "buy",
-        "paytime": 15,
+        "direction": 1,
+        "currency": "INR",
+        "payTime": 15,
         "status": "active", // Set advertisement as active
       };
 
