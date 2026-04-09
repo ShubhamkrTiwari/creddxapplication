@@ -57,8 +57,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   static const String _inrToUsdtApiUrl = 'http://localhost:8085/wallet/v1/inr/convert/inr-to-usdt';
   static const String _usdtToInrApiUrl = 'http://localhost:8085/wallet/v1/inr/convert/usdt-to-inr';
   
-  static const String _wsBaseUrl = 'ws://13.202.34.205:9001';
-  static const String _httpBaseUrl = 'http://13.202.34.205:9000';
+  static const String _wsBaseUrl = 'ws://65.0.196.122:9001';
+  static const String _httpBaseUrl = 'http://65.0.196.122:9000';
 
   @override
   void initState() {
@@ -546,28 +546,50 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     _connectWalletWebSocket();
   }
 
-  // Load comprehensive wallet data
+  // Load comprehensive wallet data from API
   Future<void> _loadAllWalletData() async {
+    setState(() {
+      _isLoadingWallet = true;
+    });
+    
     try {
-      // Try wallet service first
+      // Try wallet service first - fetches all wallet balances for user
       final walletResult = await WalletService.getAllWalletBalances();
-      if (walletResult['success'] == true) {
+      if (walletResult['success'] == true && walletResult['data'] != null) {
+        final data = walletResult['data'];
         setState(() {
-          _allWalletData = walletResult['data'] ?? {};
+          _allWalletData = data;
+          _walletBalances = data; // Sync with _walletBalances for UI display
+          _isLoadingWallet = false;
         });
+        debugPrint('Loaded wallet data from API: $data');
+        return;
       }
       
-      // Fallback to spot service if needed
-      if (_allWalletData.isEmpty) {
-        final spotResult = await SpotService.getBalance();
-        if (spotResult['success'] == true) {
-          setState(() {
-            _allWalletData = spotResult['data'] ?? {};
-          });
-        }
+      // Fallback to spot service if wallet service fails
+      final spotResult = await SpotService.getBalance();
+      if (spotResult['success'] == true && spotResult['data'] != null) {
+        final data = spotResult['data'];
+        setState(() {
+          _allWalletData = data;
+          _walletBalances = data; // Sync with _walletBalances for UI display
+          _isLoadingWallet = false;
+        });
+        debugPrint('Loaded spot wallet data from API: $data');
+        return;
       }
+      
+      // If both APIs fail, set empty data but mark loading as done
+      setState(() {
+        _walletBalances = {};
+        _isLoadingWallet = false;
+      });
     } catch (e) {
       debugPrint('Error loading wallet data: $e');
+      setState(() {
+        _walletBalances = {};
+        _isLoadingWallet = false;
+      });
     }
   }
   
@@ -1011,21 +1033,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     debugPrint('Getting wallet balance for: $walletType');
     debugPrint('Current wallet balances data: $_walletBalances');
     
-    // If no real data, show mock data for demonstration
+    // If no data from API, show 0.00 (no mock data)
     if (_walletBalances.isEmpty) {
-      debugPrint('No real balance data available, showing mock data');
-      switch (walletType) {
-        case 'Main':
-          return '1250.50 USDT';
-        case 'SPOT':
-          return '875.25 USDT';
-        case 'P2P':
-          return '450.75 USDT';
-        case 'INR':
-          return '50000.00 INR';
-        default:
-          return '0.00 USDT';
-      }
+      debugPrint('No wallet balance data available from API');
+      final currency = walletType == 'INR' ? 'INR' : 'USDT';
+      if (_isWalletHidden) return '*** $currency';
+      return '0.00 $currency';
     }
     
     // Map wallet type to API response keys
@@ -1133,21 +1146,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     final data = _walletBalances;
     double total = 0.0;
     
-    // If no real data, show mock data for demonstration
+    // If no data from API, show 0.00 (no mock data)
     if (_walletBalances.isEmpty) {
-      debugPrint('No real balance data available, showing mock coin data');
-      switch (coin) {
-        case 'INR':
-          return '50000.00 INR';
-        case 'USDT':
-          return '2576.50 USDT';
-        case 'BTC':
-          return '0.02500000 BTC';
-        case 'ETH':
-          return '1.25000000 ETH';
-        default:
-          return '0.00 $coin';
-      }
+      debugPrint('No coin balance data available from API');
+      if (_isWalletHidden) return '*** $coin';
+      return '0.00 $coin';
     }
     
     // Special handling for INR

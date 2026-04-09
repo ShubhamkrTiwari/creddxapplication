@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../utils/error_handler.dart';
 
 class P2PService {
-  static const String _baseUrl = 'http://13.202.34.205:8085';
+  static const String _baseUrl = 'http://65.0.196.122:8085';
 
   static Future<Map<String, String>> _getHeaders() async {
     final token = await AuthService.getToken();
@@ -117,8 +117,11 @@ class P2PService {
       );
       if (result != null) {
         final coins = result is List ? result : (result['docs'] ?? result['data'] ?? result['result'] ?? []);
+        debugPrint('Coin API raw result: $result');
+        debugPrint('Coin API parsed coins: $coins');
         if (coins.isNotEmpty) {
           debugPrint('Real P2P coins fetched: ${coins.length}');
+          debugPrint('First coin: ${coins[0]}');
           return coins;
         } else {
           debugPrint('Real API returned empty coins, using mock as fallback');
@@ -206,7 +209,7 @@ class P2PService {
         'type': 'sell',
         'fiat': 'INR',
         'floating': 0,
-        'paymentTime': 15,
+        'paytime': 15,
       },
       {
         'coin': 'USDT',
@@ -218,7 +221,7 @@ class P2PService {
         'type': 'buy',
         'fiat': 'INR',
         'floating': 0,
-        'paymentTime': 15,
+        'paytime': 15,
       },
       {
         'coin': 'BTC',
@@ -230,7 +233,7 @@ class P2PService {
         'type': 'sell',
         'fiat': 'INR',
         'floating': 0,
-        'paymentTime': 15,
+        'paytime': 15,
       },
     ];
     
@@ -241,7 +244,7 @@ class P2PService {
       try {
         final result = await createAdvertisement(testAds[i]);
         debugPrint('Test ad ${i + 1} creation result: $result');
-        if (result) anySuccess = true;
+        if (result['success'] == true) anySuccess = true;
         
         // Add small delay between creations
         await Future.delayed(Duration(milliseconds: 500));
@@ -255,7 +258,7 @@ class P2PService {
   }
 
   // --- Debug Function to Create Test Advertisement ---
-  static Future<bool> createTestAdvertisement() async {
+  static Future<Object> createTestAdvertisement() async {
     debugPrint('=== CREATING TEST ADVERTISEMENT ===');
     
     try {
@@ -269,7 +272,7 @@ class P2PService {
         'type': 'sell',
         'fiat': 'INR',
         'floating': 0,
-        'paymentTime': 15,
+        'paytime': 15,
       };
       
       debugPrint('Creating test ad: ${json.encode(testAd)}');
@@ -315,7 +318,12 @@ class P2PService {
       
       final response = await http.get(uri, headers: headers);
       debugPrint('Response Status: ${response.statusCode}');
-      debugPrint('Response Body: ${response.body.substring(0, response.body.length > 500 ? 500 : response.body.length)}');
+      debugPrint('Response Body Length: ${response.body.length}');
+      if (response.body.isNotEmpty) {
+        debugPrint('Response Body: ${response.body.substring(0, response.body.length > 500 ? 500 : response.body.length)}');
+      } else {
+        debugPrint('Response Body: EMPTY');
+      }
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -378,8 +386,11 @@ class P2PService {
       debugPrint('No ads found from API, returning empty list');
       return [];
       
-    } catch (e) { 
-      debugPrint('Advertisements fetch error: $e');
+    } catch (e, stackTrace) { 
+      debugPrint('=== ADVERTISEMENTS FETCH ERROR ===');
+      debugPrint('Error: $e');
+      debugPrint('StackTrace: $stackTrace');
+      debugPrint('====================================');
       return [];
     }
   }
@@ -455,52 +466,33 @@ class P2PService {
     ];
   }
 
-  static Future<bool> createAdvertisement(Map<String, dynamic> adData) async {
+  static Future<Map<String, dynamic>> createAdvertisement(Map<String, dynamic> adData) async {
     try {
       final headers = await _getHeaders();
       debugPrint('=== CREATE ADVERTISEMENT DEBUG ===');
       
-      // Try advertisement creation first
-      var response = await http.post(
-        Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/create'), 
-        headers: headers, 
+      // Use the publish endpoint to post advertisement
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/publish'),
+        headers: headers,
         body: json.encode(adData)
       );
       
       debugPrint('Create Ad Response Status: ${response.statusCode}');
       debugPrint('Create Ad Response Body: ${response.body}');
       
-      // If advertisement creation fails (404 or direction error), try order creation as fallback
-      if (response.statusCode == 404 || (response.statusCode == 400 && response.body.contains('direction'))) {
-        debugPrint('Falling back to order creation endpoint...');
-        
-        final orderData = {
-          "coin": adData["coin"] ?? "USDT",
-          "quantity": adData["amount"] ?? 0.0,
-          "price": adData["price"] ?? 0.0,
-          "paymentMode": adData["paymentMode"]?.first ?? "Bank",
-          "payMethod": adData["paymentMode"]?.first ?? "Bank", // Required for sell orders
-          "type": adData["type"] ?? "buy",
-          "direction": (adData["type"] ?? "buy") == "buy" ? 1 : 2, // FIXED: 1 for BUY, 2 for SELL
-          "paymentTime": adData["paymentTime"] ?? 15,
-          "fiat": adData["fiat"] ?? "INR",
-          "floating": adData["floating"] ?? 0,
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return {'success': true, 'data': response.body};
+      } else {
+        // Return error message for display
+        return {
+          'success': false, 
+          'error': 'API Error ${response.statusCode}: ${response.body}'
         };
-        
-        response = await http.post(
-          Uri.parse('$_baseUrl/p2p/v1/p2p/order/create'), 
-          headers: headers, 
-          body: json.encode(orderData)
-        );
-        
-        debugPrint('Fallback Order Response Status: ${response.statusCode}');
-        debugPrint('Fallback Order Response Body: ${response.body}');
       }
-      
-      return response.statusCode == 200 || response.statusCode == 201;
     } catch (e) { 
       debugPrint('Create ad error: $e');
-      return false;
+      return {'success': false, 'error': e.toString()};
     }
   }
 

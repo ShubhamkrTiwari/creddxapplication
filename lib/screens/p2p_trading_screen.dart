@@ -9,6 +9,7 @@ import 'merchant_application_screen.dart';
 import 'p2p_trading_orders_screen.dart';
 import 'p2p_buy_screen.dart';
 import 'p2p_sell_screen.dart';
+import 'create_advertisement_screen.dart';
 
 class P2PTradingScreen extends StatefulWidget {
   const P2PTradingScreen({super.key});
@@ -39,51 +40,64 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
 
   Future<void> _fetchData() async {
     setState(() => _isLoading = true);
-    
+
     try {
-      // Fetch Coins & Ads simultaneously from real API
-      // Get ALL ads without filtering
-      final results = await Future.wait([
-        P2PService.getP2PCoins(),
-        P2PService.getAllAdvertisements(),
-      ]);
+      // Step 1: Fetch Coins first
+      _cryptoList = await P2PService.getP2PCoins();
+      print('DEBUG: Real API Crypto list length: ${_cryptoList.length}');
+
+      // Set default crypto if empty
+      if (_cryptoList.isEmpty) {
+        _cryptoList = [
+          {'_id': 'USDT', 'coinSymbol': 'USDT', 'coinName': 'Tether', 'icon': ''},
+          {'_id': 'BTC', 'coinSymbol': 'BTC', 'coinName': 'Bitcoin', 'icon': ''},
+          {'_id': 'ETH', 'coinSymbol': 'ETH', 'coinName': 'Ethereum', 'icon': ''},
+        ];
+      }
+
+      // Find selected coin's id - try multiple possible field names
+      String coinId = _selectedCrypto; // fallback to symbol
+      final selectedCoin = _cryptoList.firstWhere(
+        (c) => c['coinSymbol'] == _selectedCrypto || c['symbol'] == _selectedCrypto,
+        orElse: () => null,
+      );
+      if (selectedCoin != null) {
+        coinId = selectedCoin['_id']?.toString() ??
+                 selectedCoin['id']?.toString() ??
+                 selectedCoin['coinId']?.toString() ??
+                 selectedCoin['coinSymbol']?.toString() ??
+                 _selectedCrypto;
+      }
+      print('DEBUG: Selected crypto: $_selectedCrypto, CoinId: $coinId');
+
+      // Step 2: Fetch Ads with proper coinId and direction
+      // direction: 1 = Buy ads, 2 = Sell ads
+      // When user wants to Buy -> show Sell ads (direction: 2)
+      // When user wants to Sell -> show Buy ads (direction: 1)
+      final int direction = _isBuySelected ? 2 : 1;
+
+      _offers = await P2PService.getAllAdvertisements(
+        coin: coinId,
+        direction: direction,
+      );
+
+      print('DEBUG: Real API Offers list length: ${_offers.length}');
+      print('DEBUG: Sample offer: ${_offers.isNotEmpty ? _offers[0] : 'No offers'}');
 
       if (mounted) {
-        setState(() {
-          _cryptoList = results[0] as List<dynamic>;
-          _offers = results[1] as List<dynamic>;
-          
-          print('DEBUG: Real API Crypto list length: ${_cryptoList.length}');
-          print('DEBUG: Real API Offers list length: ${_offers.length}');
-          print('DEBUG: Sample offer: ${_offers.isNotEmpty ? _offers[0] : 'No offers'}');
-          
-          // Set default crypto if empty
-          if (_cryptoList.isEmpty) {
-            _cryptoList = [
-              {'coinSymbol': 'USDT', 'coinName': 'Tether', 'icon': ''},
-              {'coinSymbol': 'BTC', 'coinName': 'Bitcoin', 'icon': ''},
-              {'coinSymbol': 'ETH', 'coinName': 'Ethereum', 'icon': ''},
-            ];
-          }
-          
-          if (_cryptoList.isNotEmpty) {
-            _selectedCrypto = _cryptoList[0]['coinSymbol'] ?? 'USDT';
-          }
-          
-          _isLoading = false;
-        });
+        setState(() => _isLoading = false);
       }
     } catch (e) {
       print('DEBUG: Real API fetch error: $e');
       if (mounted) {
         setState(() {
-          // Only use fallback data on actual error
           _cryptoList = [
-            {'coinSymbol': 'USDT', 'coinName': 'Tether', 'icon': ''},
-            {'coinSymbol': 'BTC', 'coinName': 'Bitcoin', 'icon': ''},
-            {'coinSymbol': 'ETH', 'coinName': 'Ethereum', 'icon': ''},
+            {'_id': 'USDT', 'coinSymbol': 'USDT', 'coinName': 'Tether', 'icon': ''},
+            {'_id': 'BTC', 'coinSymbol': 'BTC', 'coinName': 'Bitcoin', 'icon': ''},
+            {'_id': 'ETH', 'coinSymbol': 'ETH', 'coinName': 'Ethereum', 'icon': ''},
           ];
           _selectedCrypto = 'USDT';
+          _offers = [];
           _isLoading = false;
         });
       }
@@ -200,38 +214,9 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
     print('DEBUG: Building ads list with ${_offers.length} offers');
     print('DEBUG: Is buy selected: $_isBuySelected');
     print('DEBUG: Selected crypto: $_selectedCrypto');
-    
-    // Show all ads without strict filtering - just try to match by coin if possible
-    List<dynamic> filteredAds = [];
-    
-    if (_offers.isEmpty) {
-      print('DEBUG: No offers available');
-    } else {
-      // Show ALL ads first - don't filter by buy/sell type
-      // Just filter by coin if we can determine it
-      filteredAds = _offers.where((ad) {
-        // Get ad coin
-        String adCoin = '';
-        if (ad['coin'] != null) adCoin = ad['coin'].toString().toUpperCase();
-        else if (ad['coinSymbol'] != null) adCoin = ad['coinSymbol'].toString().toUpperCase();
-        else if (ad['cryptocurrency'] != null) adCoin = ad['cryptocurrency'].toString().toUpperCase();
-        else if (ad['asset'] != null) adCoin = ad['asset'].toString().toUpperCase();
-        
-        // If we can't determine coin, show it anyway
-        if (adCoin.isEmpty) return true;
-        
-        // Only filter by coin, not by type
-        return adCoin == _selectedCrypto.toUpperCase() || adCoin == 'USDT';
-      }).toList();
-      
-      print('DEBUG: Total offers: ${_offers.length}, After coin filter: ${filteredAds.length}');
-      
-      // If coin filter removed all, show all
-      if (filteredAds.isEmpty && _offers.isNotEmpty) {
-        print('DEBUG: Coin filter removed all, showing all ${_offers.length} offers');
-        filteredAds = _offers;
-      }
-    }
+
+    // API already filters by coinId and direction, so show all offers directly
+    List<dynamic> filteredAds = _offers;
 
     if (filteredAds.isEmpty) {
       String message;
@@ -623,7 +608,7 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
               title: const Text('Buy USDT', style: TextStyle(color: Colors.white)),
               onTap: () {
                 Navigator.pop(context);
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const P2PBuyScreen()));
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const CreateAdvertisementScreen(initialType: 'buy')));
               },
             ),
             ListTile(
@@ -631,7 +616,7 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
               title: const Text('Sell USDT', style: TextStyle(color: Colors.white)),
               onTap: () {
                 Navigator.pop(context);
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const P2PSellScreen()));
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const CreateAdvertisementScreen(initialType: 'sell')));
               },
             ),
             ListTile(

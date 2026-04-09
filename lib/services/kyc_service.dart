@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 
 class KYCService {
-  static const String _baseUrl = 'http://13.202.34.205:8085';
+  static const String _baseUrl = 'http://65.0.196.122:8085';
   
   // Get KYC status for current user
   static Future<Map<String, dynamic>> getKYCStatus() async {

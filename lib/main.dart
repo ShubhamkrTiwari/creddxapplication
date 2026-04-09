@@ -4,9 +4,11 @@ import 'package:device_preview/device_preview.dart';
 import 'screens/splash_screen.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  
   runApp(
     DevicePreview(
-      enabled: kIsWeb, // Only enable on web platform
+      enabled: kIsWeb,
       builder: (context) => const CreddXApp(),
     ),
   );

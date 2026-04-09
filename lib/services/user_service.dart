@@ -127,7 +127,7 @@ class UserService {
 
       if (token != null) {
         final response = await http.get(
-          Uri.parse('http://13.202.34.205:8085/user/v1/profile'),
+          Uri.parse('http://65.0.196.122:8085/user/v1/profile'),
           headers: {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $token',
@@ -183,7 +183,7 @@ class UserService {
 
       if (token != null && _userId != null) {
         final response = await http.get(
-          Uri.parse('http://13.202.34.205:8085/user/v1/auth/loginactivity/$_userId'),
+          Uri.parse('http://65.0.196.122:8085/user/v1/auth/loginactivity/$_userId'),
           headers: {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $token',
@@ -386,7 +386,7 @@ class UserService {
       if (avatar != null) requestBody['avatar'] = avatar;
 
       final response = await http.put(
-        Uri.parse('http://13.202.34.205:8085/user/v1/auth/create-profile'),
+        Uri.parse('http://65.0.196.122:8085/user/v1/auth/create-profile'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -425,10 +425,10 @@ class UserService {
         return {'success': false, 'error': 'User not authenticated'};
       }
 
-      debugPrint('Fetching referred friends from: http://13.202.34.205:8085/user/v1/auth/referred-friends');
+      debugPrint('Fetching referred friends from: http://65.0.196.122:8085/user/v1/auth/referred-friends');
       
       final response = await http.get(
-        Uri.parse('http://13.202.34.205:8085/user/v1/auth/referred-friends'),
+        Uri.parse('http://65.0.196.122:8085/user/v1/auth/referred-friends'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -485,10 +485,10 @@ class UserService {
       };
 
       debugPrint('Sending invitation email with verification: $requestBody');
-      debugPrint('API URL: http://13.202.34.205:8085/user/v1/auth/send-invitation');
+      debugPrint('API URL: http://65.0.196.122:8085/user/v1/auth/send-invitation');
       
       final response = await http.post(
-        Uri.parse('http://13.202.34.205:8085/user/v1/auth/send-invitation'),
+        Uri.parse('http://65.0.196.122:8085/user/v1/auth/send-invitation'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -548,10 +548,10 @@ class UserService {
       };
 
       debugPrint('Sending referral verification email: $requestBody');
-      debugPrint('API URL: http://13.202.34.205:8085/user/v1/auth/send-verification-email');
+      debugPrint('API URL: http://65.0.196.122:8085/user/v1/auth/send-verification-email');
       
       final response = await http.post(
-        Uri.parse('http://13.202.34.205:8085/user/v1/auth/send-verification-email'),
+        Uri.parse('http://65.0.196.122:8085/user/v1/auth/send-verification-email'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -613,10 +613,10 @@ class UserService {
       };
 
       debugPrint('Verifying and claiming referral: $requestBody');
-      debugPrint('API URL: http://13.202.34.205:8085/user/v1/auth/verify-claim-referral');
+      debugPrint('API URL: http://65.0.196.122:8085/user/v1/auth/verify-claim-referral');
       
       final response = await http.post(
-        Uri.parse('http://13.202.34.205:8085/user/v1/auth/verify-claim-referral'),
+        Uri.parse('http://65.0.196.122:8085/user/v1/auth/verify-claim-referral'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',

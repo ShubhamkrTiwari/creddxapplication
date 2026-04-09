@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import '../main_navigation.dart';
+import '../widgets/trading_view_chart.dart';
 
 class ChartScreen extends StatefulWidget {
   final String? symbol;
@@ -182,7 +183,7 @@ class _ChartScreenState extends State<ChartScreen> {
   }
 
   void _startRealTimeUpdates() {
-    _timer = Timer.periodic(const Duration(seconds: 2), (timer) {
+    _timer = Timer.periodic(const Duration(seconds: 5), (timer) {
       _updateRealTimeData();
     });
   }
@@ -342,12 +343,14 @@ class _ChartScreenState extends State<ChartScreen> {
   Widget _buildMainChartSection() {
     return Container(
       width: double.infinity,
+      height: 420,
       color: const Color(0xFF000000),
-      child: Column(
-        children: [
-          if (_selectedCandle != null) _buildCandleInfoBar(),
-          _buildChartWithGestures(),
-        ],
+      child: TradingViewChart(
+        symbol: _selectedSymbol,
+        theme: 'dark',
+        interval: _getInterval(),
+        allowSymbolChange: false,
+        hideSideToolbar: false,
       ),
     );
   }

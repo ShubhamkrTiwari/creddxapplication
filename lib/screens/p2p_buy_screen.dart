@@ -60,7 +60,7 @@ class _P2PBuyScreenState extends State<P2PBuyScreen> {
         "amount": double.tryParse(_amountController.text) ?? 0.0,
         "paymentMode": [_selectedPaymentMethod],
         "type": "buy",
-        "paymentTime": 15,
+        "paytime": 15,
         "status": "active", // Set advertisement as active
       };
 
@@ -70,7 +70,7 @@ class _P2PBuyScreenState extends State<P2PBuyScreen> {
 
       if (mounted) {
         setState(() => _isLoading = false);
-        if (success) {
+        if (success['success'] == true) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Buy advertisement created successfully!'), backgroundColor: Color(0xFF84BD00)),
           );

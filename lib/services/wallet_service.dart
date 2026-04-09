@@ -6,7 +6,7 @@ import 'spot_service.dart';
 import 'auth_service.dart';
 
 class WalletService {
-  static const String baseUrl = 'http://13.202.34.205:8085';
+  static const String baseUrl = 'http://65.0.196.122:8085';
   
   static Future<Map<String, String>> _getHeaders() async {
     final token = await AuthService.getToken();
@@ -578,9 +578,9 @@ class WalletService {
   }) async {
     try {
       final requestBody = {
-        '_id': coinId, // Coin ID
-        'from': from, // Source wallet type: 1=Spot, 2=P2P, 3=Bot
-        'to': to, // Destination wallet type: 1=Spot, 2=P2P, 3=Bot
+        '_id': coinId, // Coin ID (API expects _id field)
+        'from': from, // Source wallet type: 1=Spot, 2=P2P, 3=Bot, 4=Main
+        'to': to, // Destination wallet type: 1=Spot, 2=P2P, 3=Bot, 4=Main
         'amount': amount,
       };
       

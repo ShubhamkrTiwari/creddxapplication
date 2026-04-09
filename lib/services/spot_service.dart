@@ -6,8 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'auth_service.dart';
 
 class SpotService {
-  static const String _baseUrl = 'http://13.202.34.205:9000';
-  static const String _wsUrl = 'ws://13.202.34.205:9001';
+  static const String _baseUrl = 'http://65.0.196.122:9000';
+  static const String _wsUrl = 'ws://65.0.196.122:9001';
   static const String _newApiUrl = 'https://api11.hathmetech.com';
   static WebSocketChannel? _channel;
   static StreamController<Map<String, dynamic>>? _tickerController;

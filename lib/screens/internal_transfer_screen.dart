@@ -24,10 +24,10 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
   Map<String, String> _coinSymbolToId = {};
 
   final List<Map<String, String>> _walletTypes = [
-    {'code': 'spot', 'name': 'Spot Wallet (4)'},
+    {'code': 'main', 'name': 'Main Wallet (1)'},
     {'code': 'p2p', 'name': 'P2P Wallet (2)'},
     {'code': 'bot', 'name': 'Bot Wallet (3)'},
-    {'code': 'main', 'name': 'Main Wallet (1)'},
+    {'code': 'spot', 'name': 'Spot Wallet (4)'},
   ];
 
   @override
@@ -184,21 +184,21 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
         if (result['success'] == true && result['data'] != null) {
           final data = result['data'];
           
-          if (data['transfers'] != null) {
-            _transferHistory = List<Map<String, dynamic>>.from(data['transfers']);
-          } else if (data is List) {
+          if (data is List) {
+            // API returns data as a direct list of transfers
             _transferHistory = List<Map<String, dynamic>>.from(data);
-          } else if (data['data'] != null && data['data'] is List) {
-            _transferHistory = List<Map<String, dynamic>>.from(data['data']);
-          } else if (data['message'] == 'Success' && data is Map) {
-            // Handle the actual API response format where transfers are in data field
-            if (data['data'] is List) {
+          } else if (data is Map) {
+            // Handle nested formats
+            if (data['transfers'] != null && data['transfers'] is List) {
+              _transferHistory = List<Map<String, dynamic>>.from(data['transfers']);
+            } else if (data['data'] != null && data['data'] is List) {
+              _transferHistory = List<Map<String, dynamic>>.from(data['data']);
+            } else if (data['message'] == 'Success' && data['data'] is List) {
               _transferHistory = List<Map<String, dynamic>>.from(data['data']);
             } else {
               _transferHistory = [];
             }
           } else {
-            // Handle case where data itself contains the transfer list
             _transferHistory = [];
           }
         } else {
@@ -226,9 +226,10 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
       debugPrint('Using real coin ID: $upperSymbol -> $coinId');
       return coinId;
     } else {
-      debugPrint('Coin ID not found for: $upperSymbol, using fallback');
-      // Fallback to a common ObjectId format (this might not work but prevents crash)
-      return '680b8a3a5d9b8a001f8b4567';
+      debugPrint('ERROR: Coin ID not found for: $upperSymbol');
+      debugPrint('Available coin mappings: $_coinSymbolToId');
+      // Return empty string to trigger proper validation error
+      return '';
     }
   }
 
@@ -277,6 +278,35 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
       
       // Get proper coin ID from coin symbol
       String coinId = _getCoinId(_selectedCoin);
+      
+      // Validate coin ID is not empty
+      if (coinId.isEmpty) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Unable to find coin ID for $_selectedCoin. Please refresh and try again.'),
+              backgroundColor: Colors.red,
+              action: SnackBarAction(
+                label: 'Refresh',
+                textColor: Colors.white,
+                onPressed: () {
+                  _fetchCoins();
+                  _fetchBalances();
+                },
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      
+      debugPrint('=== TRANSFER REQUEST ===');
+      debugPrint('Coin ID: $coinId');
+      debugPrint('From Wallet: $fromWalletNumber ($_fromWallet)');
+      debugPrint('To Wallet: $toWalletNumber ($_toWallet)');
+      debugPrint('Amount: $amount');
+      debugPrint('=======================');
       
       final result = await WalletService.transferBetweenWallets(
         coinId: coinId,
@@ -370,11 +400,12 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+      body: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
             // From/To Card
             Container(
               padding: const EdgeInsets.all(16),
@@ -529,7 +560,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                 ),
               ],
             ),
-            const Spacer(),
+            const SizedBox(height: 32),
             SizedBox(
               width: double.infinity,
               height: 50,
@@ -547,7 +578,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
             const SizedBox(height: 24),
             // Transfer History Section
             Container(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: const Color(0xFF1A1A1A),
                 borderRadius: BorderRadius.circular(12),
@@ -561,7 +592,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                         'Recent Transfers',
                         style: TextStyle(
                           color: Colors.white,
-                          fontSize: 16,
+                          fontSize: 14,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -579,12 +610,12 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                         ),
                     ],
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   if (_transferHistory.isEmpty && !_isFetchingHistory)
                     const Center(
                       child: Text(
                         'No transfer history found',
-                        style: TextStyle(color: Colors.white54, fontSize: 14),
+                        style: TextStyle(color: Colors.white54, fontSize: 12),
                       ),
                     )
                   else
@@ -615,7 +646,8 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
           ],
         ),
       ),
-    );
+    ),
+  );
   }
 
   String _getWalletBalance(String walletType) {
@@ -627,16 +659,15 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
   // Helper method to convert wallet type numbers to names
   String _getWalletTypeName(int walletType) {
     switch (walletType) {
-      case 1:
+      case 4:
         return 'Spot Wallet';
       case 2:
         return 'P2P Wallet';
       case 3:
         return 'Bot Wallet';
-      case 4:
+      case 1:
         return 'Main Wallet';
-      case 5:
-        return 'Demo Bot Wallet';
+
       default:
         return 'Wallet';
     }
@@ -764,8 +795,8 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                        status == 'pending' ? Colors.orange : Colors.red;
     
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: const Color(0xFF252525),
         borderRadius: BorderRadius.circular(12),
@@ -791,7 +822,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                     'From: $cleanFromWallet',
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 14,
+                      fontSize: 12,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -824,7 +855,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                     'To: $cleanToWallet',
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 14,
+                      fontSize: 12,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -932,14 +963,14 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
   // Helper method to convert wallet names to API numbers
   int _getWalletTypeNumber(String walletType) {
     switch (walletType.toLowerCase()) {
-      case 'spot':
-        return 1;
+      case 'main':
+        return 1; // Main wallet type
       case 'p2p':
         return 2;
       case 'bot':
         return 3;
-      case 'main':
-        return 4; // Main wallet type
+      case 'spot':
+        return 4;
       case 'demo_bot':
         return 5; // Demo bot wallet type
       default:

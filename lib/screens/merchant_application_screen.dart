@@ -7,6 +7,7 @@ import 'user_profile_screen.dart';
 import 'add_upi_screen.dart';
 import 'add_bank_account_screen.dart';
 import 'confirm_advert_screen.dart';
+import 'create_advertisement_screen.dart';
 
 class MerchantApplicationScreen extends StatefulWidget {
   const MerchantApplicationScreen({super.key});
@@ -571,7 +572,7 @@ class _MerchantApplicationScreenState extends State<MerchantApplicationScreen> w
         "amount": double.tryParse(_amountController.text) ?? 0.0,
         "paymentMode": [_selectedPaymentMethod],
         "type": _isAddAdvertBuySelected ? "buy" : "sell",
-        "paymentTime": 15,
+        "paytime": 15,
         "status": "active",
         // Add min/max limits for sell orders
         if (!_isAddAdvertBuySelected) ...{
@@ -588,7 +589,7 @@ class _MerchantApplicationScreenState extends State<MerchantApplicationScreen> w
 
       if (mounted) {
         setState(() => _isLoading = false);
-        if (success) {
+        if (success['success'] == true) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text('${_isAddAdvertBuySelected ? "Buy" : "Sell"} advertisement created successfully!'),
@@ -840,273 +841,95 @@ class _MerchantApplicationScreenState extends State<MerchantApplicationScreen> w
   }
 
   Widget _buildAddAdvertsTab() {
-    return Column(
-      children: [
-        Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1C1C1E),
+              borderRadius: BorderRadius.circular(25),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: Colors.black,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _buildAddAdvertToggleItem('Buy', _isAddAdvertBuySelected, () => setState(() => _isAddAdvertBuySelected = true)),
-                      _buildAddAdvertToggleItem('Sell', !_isAddAdvertBuySelected, () => setState(() => _isAddAdvertBuySelected = false)),
-                    ],
+                GestureDetector(
+                  onTap: () => _openCreateAdScreen('buy'),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF84BD00),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.add, color: Colors.black, size: 20),
+                        SizedBox(width: 8),
+                        Text(
+                          'Buy Ad',
+                          style: TextStyle(
+                            color: Colors.black,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                const SizedBox(height: 16),
-                const Divider(color: Colors.white10, thickness: 1),
-                const SizedBox(height: 16),
-                const Text('Assets', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                const SizedBox(height: 10),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1C1C1E),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        flex: 3,
-                        child: GestureDetector(
-                          onTap: () => _showAmountInputDialog(),
-                          child: Text(
-                            _amountController.text.isEmpty ? 'Enter amount' : _amountController.text,
-                            style: TextStyle(
-                              color: _amountController.text.isEmpty ? const Color(0xFF8E8E93) : Colors.white,
-                              fontSize: 16,
-                            ),
+                const SizedBox(width: 12),
+                GestureDetector(
+                  onTap: () => _openCreateAdScreen('sell'),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.add, color: Colors.black, size: 20),
+                        SizedBox(width: 8),
+                        Text(
+                          'Sell Ad',
+                          style: TextStyle(
+                            color: Colors.black,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        flex: 2,
-                        child: _isDataLoading 
-                          ? const Center(
-                              child: SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                              ),
-                            )
-                          : Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(
-                                border: Border.all(color: Colors.white24),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: DropdownButton<String>(
-                                value: _selectedCoin,
-                                dropdownColor: const Color(0xFF1C1C1E),
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500, fontSize: 14),
-                                icon: const Icon(Icons.arrow_drop_down, color: Colors.white, size: 20),
-                                underline: const SizedBox(),
-                                isDense: true,
-                                isExpanded: true,
-                                items: _coins.asMap().entries.map((entry) {
-                                  final coin = entry.value;
-                                  final coinSymbol = coin['symbol']?.toString() ?? coin['name']?.toString() ?? 'Unknown';
-                                  final coinName = coin['name']?.toString() ?? '';
-                                  final uniqueValue = '${coinSymbol}_${entry.key}'; // Make value unique
-                                  return DropdownMenuItem<String>(
-                                    value: uniqueValue,
-                                    child: Text(
-                                      coinName.isNotEmpty ? '$coinSymbol - $coinName' : coinSymbol,
-                                      style: const TextStyle(color: Colors.white, fontSize: 14),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  );
-                                }).toList(),
-                                onChanged: (value) {
-                                  if (value != null) {
-                                    // Extract the original symbol from the unique value
-                                    final originalSymbol = value.split('_')[0] ?? '';
-                                    setState(() => _selectedCoin = value);
-                                  }
-                                },
-                              ),
-                            ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 20),
-                const Text('FIAT', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                const SizedBox(height: 10),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1C1C1E),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'India',
-                          style: const TextStyle(color: Colors.white, fontSize: 16),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _isDataLoading 
-                          ? const Center(
-                              child: SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                              ),
-                            )
-                          : Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(
-                                border: Border.all(color: Colors.white24),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: DropdownButton<String>(
-                                value: _selectedFiat,
-                                dropdownColor: const Color(0xFF1C1C1E),
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500, fontSize: 14),
-                                icon: const Icon(Icons.arrow_drop_down, color: Colors.white, size: 20),
-                                underline: const SizedBox(),
-                                isDense: true,
-                                items: _fiatCurrencies.map((fiat) {
-                                  final fiatCode = fiat['code']?.toString() ?? fiat['symbol']?.toString() ?? 'Unknown';
-                                  final fiatName = fiat['name']?.toString() ?? '';
-                                  return DropdownMenuItem<String>(
-                                    value: fiatCode,
-                                    child: Text(
-                                      fiatName.isNotEmpty ? fiatCode : fiatCode,
-                                      style: const TextStyle(color: Colors.white, fontSize: 14),
-                                    ),
-                                  );
-                                }).toList(),
-                                onChanged: (value) {
-                                  if (value != null) {
-                                    setState(() => _selectedFiat = value);
-                                  }
-                                },
-                              ),
-                            ),
-                      ),
-                      const SizedBox(width: 8),
-                      GestureDetector(
-                        onTap: _refreshCoinsAndFiat,
-                        child: const Icon(
-                          Icons.refresh,
-                          color: Colors.white70,
-                          size: 20,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 20),
-                const Text('Floating', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                const SizedBox(height: 10),
-                _buildFloatingCounter(),
-                const SizedBox(height: 24),
-                
-                // Show min/max limits only for sell orders
-                if (!_isAddAdvertBuySelected) ...[
-                  const Text('Order Limits', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1C1C1E),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: TextField(
-                            controller: _minLimitController,
-                            style: const TextStyle(color: Colors.white),
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(
-                              hintText: 'Min Limit',
-                              hintStyle: TextStyle(color: Color(0xFF8E8E93)),
-                              border: InputBorder.none,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1C1C1E),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: TextField(
-                            controller: _maxLimitController,
-                            style: const TextStyle(color: Colors.white),
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(
-                              hintText: 'Max Limit',
-                              hintStyle: TextStyle(color: Color(0xFF8E8E93)),
-                              border: InputBorder.none,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                ],
-                
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    _buildPriceColumn('Highest order price', '120 $_selectedFiat'),
-                    _buildPriceColumn('Your Price', '${_calculatePrice().toStringAsFixed(0)} $_selectedFiat', crossAxisAlignment: CrossAxisAlignment.end),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: ElevatedButton(
-                      onPressed: _isLoading ? null : _createMerchantAdvertisement,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _isLoading ? const Color(0xFF2C2C2E) : const Color(0xFF84BD00),
-                        foregroundColor: Colors.black,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        elevation: 0,
-                      ),
-                      child: _isLoading 
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.black,
-                            ),
-                          )
-                        : const Text('Next', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      ],
                     ),
                   ),
                 ),
               ],
             ),
           ),
-        ),
-      ],
+          const SizedBox(height: 24),
+          const Text(
+            'Create New Advertisement',
+            style: TextStyle(color: Colors.white54, fontSize: 14),
+          ),
+        ],
+      ),
     );
+  }
+
+  void _openCreateAdScreen(String type) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CreateAdvertisementScreen(initialType: type),
+      ),
+    ).then((result) {
+      // Refresh data when returning if ad was created
+      if (result == true) {
+        _fetchMyAdverts();
+      }
+    });
   }
 
   Widget _buildAddPaymentMethodTab() {

@@ -310,7 +310,7 @@ class _ConfirmAdvertScreenState extends State<ConfirmAdvertScreen> {
 
       if (mounted) {
         setState(() => _isLoading = false);
-        if (success) {
+        if (success['success'] == true) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Advertisement posted successfully!'),

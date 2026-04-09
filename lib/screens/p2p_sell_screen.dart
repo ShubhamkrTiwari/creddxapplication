@@ -215,7 +215,7 @@ class _P2PSellScreenState extends State<P2PSellScreen> {
         "max": double.tryParse(_maxLimitController.text) ?? 0.0,
         "paymentMode": [_selectedPaymentMethod],
         "type": "sell",
-        "paymentTime": 15,
+        "paytime": 15,
         "status": "active", // Set advertisement as active
       };
 
@@ -225,7 +225,7 @@ class _P2PSellScreenState extends State<P2PSellScreen> {
 
       if (mounted) {
         setState(() => _isLoading = false);
-        if (success) {
+        if (success['success'] == true) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Sell advertisement created successfully!'), backgroundColor: Color(0xFF84BD00)),
           );

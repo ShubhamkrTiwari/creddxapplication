@@ -72,7 +72,7 @@ class BotPosition {
 }
 
 class BotService {
-  static const String baseUrl = 'http://13.202.34.205:8085';
+  static const String baseUrl = 'http://65.0.196.122:8085';
   
   // Static cache for total investment (for demo purposes)
   static double _cachedTotalInvestment = 5000.0; // Start with mock value
