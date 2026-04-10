@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import '../services/auth_service.dart';
 import '../services/wallet_service.dart';
+import '../services/notification_service.dart';
 
 class BankWithdrawalScreen extends StatefulWidget {
   final Map<String, dynamic>? bankDetails;
@@ -72,10 +73,21 @@ class _BankWithdrawalScreenState extends State<BankWithdrawalScreen> {
       
       if (mounted) {
         if (result != null && result['success'] == true) {
+          await NotificationService.addNotification(
+            title: 'Withdrawal Request Submitted',
+            message: 'Your bank withdrawal of ₹${_amountController.text} has been submitted successfully.',
+            type: NotificationType.transaction,
+          );
           _showSuccess('Bank withdrawal request submitted successfully');
           Navigator.of(context).popUntil((route) => route.isFirst);
         } else {
-          _showError(result?['error'] ?? 'Withdrawal failed');
+          final errorMessage = result?['error'] ?? 'Withdrawal failed';
+          await NotificationService.addNotification(
+            title: 'Withdrawal Failed',
+            message: 'Your bank withdrawal of ₹${_amountController.text} failed: $errorMessage',
+            type: NotificationType.transaction,
+          );
+          _showError(errorMessage);
         }
       }
     } catch (e) {

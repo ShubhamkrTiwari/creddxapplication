@@ -247,16 +247,21 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       debugPrint('=== WebSocket Message Received ===');
       debugPrint('Full message data: $data');
       debugPrint('Data type: ${data.runtimeType}');
-      
+
       // Handle various response formats - only cancel timeout when we get actual data
-      if (data['type'] == 'balance_update' || 
-          data['channel'] == 'balance' || 
+      if (data['type'] == 'balance_update' ||
+          data['channel'] == 'balance' ||
           data['balances'] != null ||
           data['spot'] != null ||
           data['main'] != null ||
           data['p2p'] != null ||
           data['bot'] != null ||
-          data['data'] != null) {
+          data['data'] != null ||
+          data['spotBalance'] != null ||
+          data['mainBalance'] != null ||
+          data['p2pBalance'] != null ||
+          data['botBalance'] != null ||
+          data['demoBalance'] != null) {
         debugPrint('=== Balance Data Detected ===');
         debugPrint('Setting wallet balances to: ${data['data'] ?? data}');
         // Cancel timeout only when we get actual balance data
@@ -506,6 +511,86 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     return balance * price;
   }
   
+  // Get all unique coins from wallet data dynamically
+  List<String> _getAllCoinsFromWalletData() {
+    final Set<String> coins = {};
+    final data = _walletBalances;
+    
+    if (data.isEmpty) return ['INR', 'USDT', 'BTC', 'ETH'];
+    
+    // Check direct coin keys
+    final directCoinKeys = ['inr', 'usdt', 'btc', 'eth', 'usdc', 'bnb', 'ada', 'sol', 'dot', 'xrp', 'matic', 'avax'];
+    for (final key in directCoinKeys) {
+      if (data[key] != null || data['${key}_available'] != null || data['${key}_total'] != null) {
+        coins.add(key.toUpperCase());
+      }
+    }
+    
+    // Check nested data structure
+    final nestedData = data['data'];
+    if (nestedData is Map) {
+      // Check for direct coin keys in nested data
+      for (final key in directCoinKeys) {
+        if (nestedData[key] != null || nestedData['${key}_available'] != null || nestedData['${key}_total'] != null) {
+          coins.add(key.toUpperCase());
+        }
+      }
+      
+      // Check wallet structures (main, spot, p2p, bot)
+      final walletTypes = ['main', 'spot', 'p2p', 'bot'];
+      for (final walletType in walletTypes) {
+        final wallet = nestedData[walletType];
+        if (wallet is Map) {
+          final balances = wallet['balances'];
+          if (balances is List) {
+            for (final bal in balances) {
+              if (bal is Map) {
+                final coin = bal['coin']?.toString().toUpperCase() ?? bal['asset']?.toString().toUpperCase();
+                if (coin != null && coin.isNotEmpty) {
+                  coins.add(coin);
+                }
+              }
+            }
+          }
+          // Check for coin totals in wallet
+          for (final key in wallet.keys) {
+            if (key.endsWith('_total') || key.endsWith('_available')) {
+              final coin = key.replaceAll('_total', '').replaceAll('_available', '').toUpperCase();
+              if (coin.isNotEmpty) coins.add(coin);
+            }
+          }
+        }
+      }
+    }
+    
+    // Check top-level wallet structures
+    final walletTypes = ['main', 'spot', 'p2p', 'bot'];
+    for (final walletType in walletTypes) {
+      final wallet = data[walletType];
+      if (wallet is Map) {
+        final balances = wallet['balances'];
+        if (balances is List) {
+          for (final bal in balances) {
+            if (bal is Map) {
+              final coin = bal['coin']?.toString().toUpperCase() ?? bal['asset']?.toString().toUpperCase();
+              if (coin != null && coin.isNotEmpty) {
+                coins.add(coin);
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    // Ensure INR is always included if present
+    if (data['inr'] != null || data['inr_available'] != null || data['inr_total'] != null) {
+      coins.add('INR');
+    }
+    
+    final result = coins.toList()..sort();
+    return result.isEmpty ? ['INR', 'USDT', 'BTC', 'ETH'] : result;
+  }
+
   // Helper method to parse balance values with proper error handling
   double _parseBalanceValue(String balanceStr, String currency) {
     try {
@@ -551,35 +636,50 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     setState(() {
       _isLoadingWallet = true;
     });
-    
+
     try {
-      // Try wallet service first - fetches all wallet balances for user
-      final walletResult = await WalletService.getAllWalletBalances();
-      if (walletResult['success'] == true && walletResult['data'] != null) {
-        final data = walletResult['data'];
+      // Try user service first - fetches user assets from /user/v1/user
+      final userResult = await UserService.getUserAssets();
+      if (userResult['success'] == true && userResult['data'] != null) {
+        final data = userResult['data'];
+        final userData = userResult['userData'] ?? {};
         setState(() {
           _allWalletData = data;
           _walletBalances = data; // Sync with _walletBalances for UI display
           _isLoadingWallet = false;
         });
+        debugPrint('Loaded user assets from /user/v1/user API: $data');
+        debugPrint('Full user data: $userData');
+        return;
+      }
+
+      // Fallback to wallet service if user API fails
+      final walletResult = await WalletService.getAllWalletBalances();
+      if (walletResult['success'] == true && walletResult['data'] != null) {
+        final data = walletResult['data'];
+        setState(() {
+          _allWalletData = data;
+          _walletBalances = data;
+          _isLoadingWallet = false;
+        });
         debugPrint('Loaded wallet data from API: $data');
         return;
       }
-      
+
       // Fallback to spot service if wallet service fails
       final spotResult = await SpotService.getBalance();
       if (spotResult['success'] == true && spotResult['data'] != null) {
         final data = spotResult['data'];
         setState(() {
           _allWalletData = data;
-          _walletBalances = data; // Sync with _walletBalances for UI display
+          _walletBalances = data;
           _isLoadingWallet = false;
         });
         debugPrint('Loaded spot wallet data from API: $data');
         return;
       }
-      
-      // If both APIs fail, set empty data but mark loading as done
+
+      // If all APIs fail, set empty data but mark loading as done
       setState(() {
         _walletBalances = {};
         _isLoadingWallet = false;
@@ -1000,92 +1100,130 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               ),
             )
           else ...[
-            ...(_isWalletViewSelected 
-              ? ['Main', 'SPOT', 'P2P', 'INR']
-              : ['INR', 'USDT', 'BTC', 'ETH']
-            ).asMap().entries.map((entry) {
-              final index = entry.key;
-              final item = entry.value;
-              final balance = _isWalletViewSelected 
-                ? _getWalletBalance(item)
-                : _getCoinBalance(item);
-              final isLast = index == (_isWalletViewSelected ? 4 : 4) - 1;
-              
-              return Column(
-                children: [
-                  _buildWalletRow(item, balance),
-                  if (!isLast) const Divider(color: Colors.white10, height: 16),
-                ],
-              );
-            }).toList(),
+            ...(() {
+              final items = _isWalletViewSelected
+                ? ['Main', 'SPOT', 'P2P', 'Bot']
+                : ['INR', 'USDT'];
+              return items.asMap().entries.map((entry) {
+                final index = entry.key;
+                final item = entry.value;
+                final balance = _isWalletViewSelected
+                  ? _getWalletBalance(item)
+                  : _getCoinBalance(item);
+                final isLast = index == items.length - 1;
+
+                return Column(
+                  children: [
+                    _buildWalletRow(item, balance),
+                    if (!isLast) const Divider(color: Colors.white10, height: 16),
+                  ],
+                );
+              }).toList();
+            })(),
           ],
-          const SizedBox(height: 20),
-          // Portfolio Summary
-          _buildPortfolioSummary(),
         ],
       ),
     );
   }
-  
+
   String _getWalletBalance(String walletType) {
     if (_isLoadingWallet) return '...';
-    
+
     debugPrint('Getting wallet balance for: $walletType');
     debugPrint('Current wallet balances data: $_walletBalances');
-    
-    // If no data from API, show 0.00 (no mock data)
+
+    // If no data from API, show 0.00
     if (_walletBalances.isEmpty) {
       debugPrint('No wallet balance data available from API');
       final currency = walletType == 'INR' ? 'INR' : 'USDT';
       if (_isWalletHidden) return '*** $currency';
       return '0.00 $currency';
     }
-    
-    // Map wallet type to API response keys
-    final typeKey = walletType.toLowerCase();
+
     final data = _walletBalances;
-    
     double total = 0.0;
     String currency = 'USDT';
-    
+
     // Special handling for INR wallet
     if (walletType == 'INR') {
       currency = 'INR';
-      // Check for INR balance in different structures
-      if (data['inr'] != null) {
-        total = double.tryParse(data['inr'].toString()) ?? 0.0;
-        debugPrint('Found INR balance from inr key: $total');
-      } else if (data['inr_available'] != null) {
-        total = double.tryParse(data['inr_available'].toString()) ?? 0.0;
-        debugPrint('Found INR balance from inr_available key: $total');
-      } else if (data['inr_total'] != null) {
-        total = double.tryParse(data['inr_total'].toString()) ?? 0.0;
-        debugPrint('Found INR balance from inr_total key: $total');
+
+      // Try flat format first (like wallet screen)
+      if (data['mainBalance'] is Map) {
+        final mainBalance = data['mainBalance'] as Map;
+        if (mainBalance['INR'] != null) {
+          total = double.tryParse(mainBalance['INR'].toString()) ?? 0.0;
+          debugPrint('Found INR balance from flat format: $total');
+        }
       }
-      
-      // Check nested data structure
-      if (total == 0.0 && data['data'] != null) {
-        final nestedData = data['data'];
-        if (nestedData is Map) {
-          total = double.tryParse(nestedData['inr']?.toString() ?? '0') ?? 0.0;
-          debugPrint('Found INR balance from nested data inr key: $total');
-          if (total == 0.0) {
-            total = double.tryParse(nestedData['inr_available']?.toString() ?? '0') ?? 0.0;
-            debugPrint('Found INR balance from nested data inr_available key: $total');
-          }
-          if (total == 0.0) {
-            total = double.tryParse(nestedData['inr_total']?.toString() ?? '0') ?? 0.0;
-            debugPrint('Found INR balance from nested data inr_total key: $total');
+
+      // Check for INR in main wallet balances list
+      if (total == 0.0 && data['main'] != null) {
+        final main = data['main'];
+        if (main is Map && main['balances'] is List) {
+          for (final bal in main['balances']) {
+            if (bal is Map && bal['coin']?.toString().toUpperCase() == 'INR') {
+              total = double.tryParse(bal['total']?.toString() ?? bal['available']?.toString() ?? '0') ?? 0.0;
+              debugPrint('Found INR balance in main wallet balances: $total');
+              break;
+            }
           }
         }
       }
+
+      // Direct keys fallback
+      if (total == 0.0 && data['inr'] != null) {
+        total = double.tryParse(data['inr'].toString()) ?? 0.0;
+      } else if (total == 0.0 && data['inr_total'] != null) {
+        total = double.tryParse(data['inr_total'].toString()) ?? 0.0;
+      } else if (total == 0.0 && data['inr_available'] != null) {
+        total = double.tryParse(data['inr_available'].toString()) ?? 0.0;
+      }
+
+      // Nested data structure
+      if (total == 0.0 && data['data'] != null) {
+        final nestedData = data['data'];
+        if (nestedData is Map) {
+          total = double.tryParse(nestedData['inr']?.toString() ?? nestedData['inr_total']?.toString() ?? nestedData['inr_available']?.toString() ?? '0') ?? 0.0;
+        }
+      }
     } else {
-      // Handle other wallets (Main, SPOT, P2P)
-      if (data[typeKey] != null) {
+      // Handle other wallets (Main, SPOT, P2P, Bot)
+      final typeKey = walletType.toLowerCase();
+
+      // Map wallet type to flat format field names (like wallet screen)
+      final flatFieldMap = {
+        'main': 'mainBalance',
+        'spot': 'spotBalance',
+        'p2p': 'p2pBalance',
+        'bot': 'botBalance',
+      };
+
+      // Try flat format first (like wallet screen does)
+      final fieldName = flatFieldMap[typeKey];
+      if (fieldName != null && data[fieldName] != null) {
+        final walletData = data[fieldName];
+        debugPrint('Found flat format wallet data for $typeKey: $walletData');
+
+        if (walletData is Map) {
+          // Format: {USDT: Y, INR: X}
+          if (walletData['USDT'] != null) {
+            total = double.tryParse(walletData['USDT'].toString()) ?? 0.0;
+            debugPrint('Found USDT in flat format for $typeKey: $total');
+          }
+        } else if (walletData is num) {
+          // Format: spotBalance: 0 (direct number)
+          total = walletData.toDouble();
+          debugPrint('Found USDT as direct number for $typeKey: $total');
+        }
+      }
+
+      // Try nested format (balances array)
+      if (total == 0.0 && data[typeKey] != null) {
         final wallet = data[typeKey];
-        debugPrint('Found wallet data for $typeKey: $wallet');
+        debugPrint('Found nested wallet data for $typeKey: $wallet');
+
         if (wallet is Map) {
-          // Try to get USDT balance from this wallet
           final balances = wallet['balances'];
           if (balances is List) {
             debugPrint('Found balances list: $balances');
@@ -1093,47 +1231,40 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               if (bal is Map && (bal['coin']?.toString().toUpperCase() == 'USDT' || bal['asset']?.toString().toUpperCase() == 'USDT')) {
                 final available = double.tryParse(bal['available']?.toString() ?? '0') ?? 0.0;
                 final locked = double.tryParse(bal['locked']?.toString() ?? '0') ?? 0.0;
-                total = available + locked;
-                debugPrint('Found USDT balance: available=$available, locked=$locked, total=$total');
+                total = double.tryParse(bal['total']?.toString() ?? '0') ?? (available + locked);
+                debugPrint('Found USDT balance in balances array: available=$available, locked=$locked, total=$total');
                 break;
               }
             }
           } else if (wallet['usdt_total'] != null) {
             total = double.tryParse(wallet['usdt_total'].toString()) ?? 0.0;
-            debugPrint('Found USDT balance from usdt_total key: $total');
           } else if (wallet['total'] != null) {
             total = double.tryParse(wallet['total'].toString()) ?? 0.0;
-            debugPrint('Found USDT balance from total key: $total');
           }
         } else if (wallet is num) {
           total = wallet.toDouble();
-          debugPrint('Found USDT balance as number: $total');
         }
       }
-      
-      // Also check nested data structure
+
+      // Check nested data structure fallback
       if (total == 0.0 && data['data'] != null) {
         final nestedData = data['data'];
         if (nestedData is Map && nestedData[typeKey] != null) {
           final wallet = nestedData[typeKey];
-          debugPrint('Found nested wallet data for $typeKey: $wallet');
-          if (wallet is Map) {
-            if (wallet['balances'] is List) {
-              for (final bal in wallet['balances']) {
-                if (bal is Map && (bal['coin']?.toString().toUpperCase() == 'USDT' || bal['asset']?.toString().toUpperCase() == 'USDT')) {
-                  final available = double.tryParse(bal['available']?.toString() ?? '0') ?? 0.0;
-                  final locked = double.tryParse(bal['locked']?.toString() ?? '0') ?? 0.0;
-                  total = available + locked;
-                  debugPrint('Found nested USDT balance: available=$available, locked=$locked, total=$total');
-                  break;
-                }
+          if (wallet is Map && wallet['balances'] is List) {
+            for (final bal in wallet['balances']) {
+              if (bal is Map && (bal['coin']?.toString().toUpperCase() == 'USDT' || bal['asset']?.toString().toUpperCase() == 'USDT')) {
+                final available = double.tryParse(bal['available']?.toString() ?? '0') ?? 0.0;
+                final locked = double.tryParse(bal['locked']?.toString() ?? '0') ?? 0.0;
+                total = double.tryParse(bal['total']?.toString() ?? '0') ?? (available + locked);
+                break;
               }
             }
           }
         }
       }
     }
-    
+
     debugPrint('Final calculated balance for $walletType: $total $currency');
     if (_isWalletHidden) return '*** $currency';
     return '${total.toStringAsFixed(2)} $currency';
@@ -1155,14 +1286,21 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     
     // Special handling for INR
     if (coin == 'INR') {
-      if (data['inr'] != null) {
+      // First try flat format: mainBalance.INR
+      if (data['mainBalance'] is Map && data['mainBalance']['INR'] != null) {
+        total = double.tryParse(data['mainBalance']['INR'].toString()) ?? 0.0;
+        debugPrint('Found INR in mainBalance flat format: $total');
+      }
+
+      // Direct keys fallback
+      if (total == 0.0 && data['inr'] != null) {
         total = double.tryParse(data['inr'].toString()) ?? 0.0;
-      } else if (data['inr_available'] != null) {
+      } else if (total == 0.0 && data['inr_available'] != null) {
         total = double.tryParse(data['inr_available'].toString()) ?? 0.0;
-      } else if (data['inr_total'] != null) {
+      } else if (total == 0.0 && data['inr_total'] != null) {
         total = double.tryParse(data['inr_total'].toString()) ?? 0.0;
       }
-      
+
       // Check nested data structure
       if (total == 0.0 && data['data'] != null) {
         final nestedData = data['data'];
@@ -1175,36 +1313,68 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       }
     } else {
       // Sum balance from all wallets for this coin (USDT, BTC)
-      final walletTypes = ['main', 'spot', 'p2p', 'bot'];
-      
-      for (String walletType in walletTypes) {
-        if (data[walletType] != null) {
-          final wallet = data[walletType];
-          if (wallet is Map) {
-            final balances = wallet['balances'];
-            if (balances is List) {
-              for (final bal in balances) {
-                if (bal is Map && bal['coin']?.toString().toUpperCase() == coin) {
-                  final available = double.tryParse(bal['available']?.toString() ?? '0') ?? 0.0;
-                  final locked = double.tryParse(bal['locked']?.toString() ?? '0') ?? 0.0;
-                  total += available + locked;
-                  break;
-                }
-              }
-            } else if (wallet['${coinKey}_total'] != null) {
-              total += double.tryParse(wallet['${coinKey}_total'].toString()) ?? 0.0;
-            } else if (wallet[coinKey] != null) {
-              total += double.tryParse(wallet[coinKey].toString()) ?? 0.0;
+      // First try flat format (like wallet screen): mainBalance, spotBalance, p2pBalance, botBalance
+      final flatFieldMap = {
+        'main': 'mainBalance',
+        'spot': 'spotBalance',
+        'p2p': 'p2pBalance',
+        'bot': 'botBalance',
+      };
+
+      for (String walletType in flatFieldMap.keys) {
+        final fieldName = flatFieldMap[walletType]!;
+        if (data[fieldName] != null) {
+          final walletData = data[fieldName];
+          if (walletData is Map) {
+            // Format: {USDT: Y, INR: X}
+            if (walletData[coin] != null) {
+              final value = double.tryParse(walletData[coin].toString()) ?? 0.0;
+              total += value;
+              debugPrint('Found $coin in flat format $fieldName: $value');
+            }
+          } else if (walletData is num) {
+            // Format: spotBalance: 0 (direct number) - assume USDT
+            if (coin == 'USDT') {
+              final value = walletData.toDouble();
+              total += value;
+              debugPrint('Found USDT as direct number in $fieldName: $value');
             }
           }
         }
       }
-      
+
+      // Try nested format if flat format didn't find anything
+      if (total == 0.0) {
+        final walletTypes = ['main', 'spot', 'p2p', 'bot'];
+        for (String walletType in walletTypes) {
+          if (data[walletType] != null) {
+            final wallet = data[walletType];
+            if (wallet is Map) {
+              final balances = wallet['balances'];
+              if (balances is List) {
+                for (final bal in balances) {
+                  if (bal is Map && bal['coin']?.toString().toUpperCase() == coin) {
+                    final available = double.tryParse(bal['available']?.toString() ?? '0') ?? 0.0;
+                    final locked = double.tryParse(bal['locked']?.toString() ?? '0') ?? 0.0;
+                    total += available + locked;
+                    break;
+                  }
+                }
+              } else if (wallet['${coinKey}_total'] != null) {
+                total += double.tryParse(wallet['${coinKey}_total'].toString()) ?? 0.0;
+              } else if (wallet[coinKey] != null) {
+                total += double.tryParse(wallet[coinKey].toString()) ?? 0.0;
+              }
+            }
+          }
+        }
+      }
+
       // Check nested data structure
       if (total == 0.0 && data['data'] != null) {
         final nestedData = data['data'];
         if (nestedData is Map) {
-          for (String walletType in walletTypes) {
+          for (String walletType in ['main', 'spot', 'p2p', 'bot']) {
             if (nestedData[walletType] != null) {
               final wallet = nestedData[walletType];
               if (wallet is Map && wallet['balances'] is List) {
@@ -1221,7 +1391,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           }
         }
       }
-      
+
       // Also check direct coin keys in data
       if (total == 0.0 && data[coinKey] != null) {
         total = double.tryParse(data[coinKey].toString()) ?? 0.0;

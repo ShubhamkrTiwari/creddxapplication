@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'qr_scanner_screen.dart';
 import '../services/wallet_service.dart';
+import '../services/notification_service.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 import '../utils/coin_icon_mapper.dart';
 
@@ -25,6 +26,8 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   double _availableBalance = 0.0;
   double _withdrawalFees = 0.0;
   String? _errorMessage;
+  List<dynamic> _recentTransactions = [];
+  bool _isLoadingTransactions = false;
   
   @override
   void initState() {
@@ -47,23 +50,33 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
             .map((data) => Coin.fromJson(data))
             .where((coin) => coin.symbol == 'USDT')
             .toList();
-        
+
         if (_coins.isNotEmpty) {
           _selectedCoin = _coins.first.symbol;
-          _updateNetworksForCoin(_coins.first);
         }
         
         _isLoading = false;
       });
+      
+      if (_coins.isNotEmpty) {
+        await _updateNetworksForCoin(_coins.first);
+      }
       _fetchAvailableBalance();
     }
   }
   
-  void _updateNetworksForCoin(Coin coin) {
+  Future<void> _updateNetworksForCoin(Coin coin) async {
     setState(() {
-      // Use networks directly from the selected coin
-      _networks = coin.networks.where((network) => network.isActive).toList();
-      
+      // Use networks directly from the coin object (already parsed from API)
+      _networks = coin.networks
+          .where((n) => n.isActive)
+          .toList();
+
+      debugPrint('Networks loaded from coin: ${_networks.length} found');
+      for (var n in _networks) {
+        debugPrint('Network: ${n.name} (${n.type}) - Active: ${n.isActive}, Fee: ${n.fee}');
+      }
+
       if (_networks.isNotEmpty) {
         _selectedNetwork = _networks.first.name;
       } else {
@@ -72,12 +85,12 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
     });
   }
   
-  void _onCoinChanged(String coinSymbol) {
+  void _onCoinChanged(String coinSymbol) async {
     setState(() {
       _selectedCoin = coinSymbol;
-      final selectedCoin = _coins.firstWhere((coin) => coin.symbol == coinSymbol);
-      _updateNetworksForCoin(selectedCoin);
     });
+    final selectedCoin = _coins.firstWhere((coin) => coin.symbol == coinSymbol);
+    await _updateNetworksForCoin(selectedCoin);
     _fetchAvailableBalance();
   }
   
@@ -95,22 +108,54 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
       _errorMessage = null;
     });
 
-    final result = await WalletService.getUSDTBalanceFromAllWallets();
+    // Use getAllWalletBalances to get mainBalance.USDT
+    final result = await WalletService.getAllWalletBalances();
+    debugPrint('Withdraw Screen - API Result: $result');
 
     if (mounted) {
       setState(() {
         if (result['success'] == true && result['data'] != null) {
-          // Extract Main wallet USDT balance
-          final mainBalance = result['data']['main'];
-          if (mainBalance != null) {
-            _availableBalance = double.tryParse(mainBalance['available']?.toString() ?? '0.0') ?? 0.0;
+          final data = result['data'];
+          debugPrint('Withdraw Screen - Data: $data');
+
+          // Extract USDT from mainBalance
+          if (data is Map && data['mainBalance'] is Map) {
+            final mainBalance = data['mainBalance'] as Map;
+            final usdtBalance = mainBalance['USDT'];
+            if (usdtBalance != null) {
+              _availableBalance = double.tryParse(usdtBalance.toString()) ?? 0.0;
+            }
           }
+          debugPrint('Withdraw Screen - Parsed USDT Balance: $_availableBalance');
+        } else {
+          debugPrint('Withdraw Screen - API failed: ${result['error']}');
+          _errorMessage = result['error']?.toString();
         }
         _isFetchingBalance = false;
       });
     }
   }
   
+  Future<void> _fetchFallbackBalance() async {
+    try {
+      final result = await WalletService.getUSDTBalanceFromAllWallets();
+      if (result['success'] == true && result['data'] != null) {
+        final mainBalance = result['data']['main'];
+        if (mainBalance != null) {
+          final fallbackBalance = double.tryParse(mainBalance['available']?.toString() ?? '0.0') ?? 0.0;
+          if (fallbackBalance > 0 && mounted) {
+            setState(() {
+              _availableBalance = fallbackBalance;
+            });
+            debugPrint('Withdraw Screen - Fallback Balance: $_availableBalance');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Withdraw Screen - Fallback error: $e');
+    }
+  }
+
   Future<void> _fetchWithdrawalFees() async {
     if (_amountController.text.isEmpty) return;
     
@@ -147,7 +192,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   
   void _setMaxAmount() {
     if (_availableBalance > 0) {
-      _amountController.text = _availableBalance.toString();
+      _amountController.text = _availableBalance.toStringAsFixed(2);
       _fetchWithdrawalFees();
     }
   }
@@ -196,6 +241,13 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
     );
     
     if (result != null) {
+      // Log successful withdrawal notification
+      await NotificationService.addNotification(
+        title: 'Withdrawal Initiated',
+        message: 'Your withdrawal of $amount $_selectedCoin to ${_addressController.text.substring(0, 6)}... has been submitted.',
+        type: NotificationType.transaction,
+      );
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Withdrawal successful'),
@@ -204,6 +256,13 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
       );
       Navigator.of(context).pop();
     } else {
+      // Log failed withdrawal notification
+      await NotificationService.addNotification(
+        title: 'Withdrawal Failed',
+        message: 'Failed to withdraw $amount $_selectedCoin. Please check your balance and try again.',
+        type: NotificationType.transaction,
+      );
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Withdrawal failed'),
@@ -258,35 +317,100 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
               ),
               
               const SizedBox(height: 24),
-              
+
               // Address Field
               const Text(
-                'Address',
+                'Recipient Address',
                 style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500),
               ),
               const SizedBox(height: 8),
               Container(
                 decoration: BoxDecoration(
                   color: const Color(0xFF1A1A1A),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: const Color(0xFF333333)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.2),
+                      blurRadius: 8,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
-                child: TextField(
-                  controller: _addressController,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: InputDecoration(
-                    hintText: 'Long press to paste',
-                    hintStyle: const TextStyle(color: Color(0xFF6C7278)),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.all(16),
-                    prefixIcon: Container(
-                      padding: const EdgeInsets.all(12),
-                      child: IconButton(
-                        icon: const Icon(Icons.qr_code_scanner, color: Color(0xFF6C7278), size: 20),
-                        onPressed: _scanQRCode,
+                child: Column(
+                  children: [
+                    // Address Input Row
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        children: [
+                          // Wallet Icon Badge
+                          Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF84BD00).withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(Icons.account_balance_wallet, color: Color(0xFF84BD00), size: 20),
+                          ),
+                          const SizedBox(width: 12),
+                          // Address Input Field
+                          Expanded(
+                            child: TextField(
+                              controller: _addressController,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              decoration: const InputDecoration(
+                                hintText: 'Enter wallet address',
+                                hintStyle: TextStyle(
+                                  color: Color(0xFF6C7278),
+                                  fontSize: 16,
+                                ),
+                                border: InputBorder.none,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
+                    // Divider with Actions
+                    Container(
+                      height: 1,
+                      color: const Color(0xFF333333),
+                    ),
+                    // Action Buttons Row
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          // Scan QR Button
+                          _buildAddressActionButton(
+                            icon: Icons.qr_code_scanner,
+                            label: 'Scan QR',
+                            onTap: _scanQRCode,
+                          ),
+                          Container(width: 1, height: 24, color: const Color(0xFF333333)),
+                          // Paste Button
+                          _buildAddressActionButton(
+                            icon: Icons.content_paste,
+                            label: 'Paste',
+                            onTap: () async {
+                              final clipboard = await Clipboard.getData('text/plain');
+                              if (clipboard?.text != null) {
+                                _addressController.text = clipboard!.text!;
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
               
@@ -312,133 +436,311 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
               ),
               
               const SizedBox(height: 24),
-              
+
               // Withdrawal Amount
               const Text(
                 'Withdrawal Amount',
                 style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
+
+              // Modern Amount Input
               Container(
                 decoration: BoxDecoration(
                   color: const Color(0xFF1A1A1A),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: const Color(0xFF333333)),
-                ),
-                child: TextField(
-                  controller: _amountController,
-                  keyboardType: TextInputType.number,
-                  onChanged: _onAmountChanged,
-                  style: const TextStyle(color: Colors.white, fontSize: 18),
-                  decoration: InputDecoration(
-                    hintText: 'Minimum 0',
-                    hintStyle: const TextStyle(color: Color(0xFF6C7278), fontSize: 18),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.all(16),
-                    suffixIcon: Container(
-                      padding: const EdgeInsets.all(12),
-                      child: ElevatedButton(
-                        onPressed: _setMaxAmount,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF1A1A1A),
-                          side: const BorderSide(color: Color(0xFF6C7278)),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        ),
-                        child: Text(
-                          '$_selectedCoin Max',
-                          style: const TextStyle(color: Color(0xFF6C7278), fontSize: 12),
-                        ),
-                      ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.2),
+                      blurRadius: 8,
+                      offset: const Offset(0, 4),
                     ),
-                  ),
-                ),
-              ),
-              
-              const SizedBox(height: 16),
-              
-              // Available Balance
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1A1A1A),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.account_balance_wallet, color: Color(0xFF6C7278), size: 16),
-                    const SizedBox(width: 8),
-                    const Text(
-                      'Available: ',
-                      style: TextStyle(color: Color(0xFF6C7278), fontSize: 12),
-                    ),
-                    _isFetchingBalance
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: BitcoinLoadingIndicator(size: 16),
-                          )
-                        : Text(
-                            '$_availableBalance $_selectedCoin',
-                            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
-                          ),
                   ],
-                ),
-              ),
-              
-              const SizedBox(height: 24),
-              
-              // Summary Section
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1A1A1A),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFF333333)),
                 ),
                 child: Column(
                   children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Receive Amount',
-                          style: TextStyle(color: Color(0xFF6C7278), fontSize: 14),
-                        ),
-                        Text(
-                          '${(_amountController.text.isNotEmpty ? (double.tryParse(_amountController.text) ?? 0.0) - _withdrawalFees : 0.0).toStringAsFixed(6)} $_selectedCoin',
-                          style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Network Fee',
-                          style: TextStyle(color: Color(0xFF6C7278), fontSize: 14),
-                        ),
-                        _isFetchingFees
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: BitcoinLoadingIndicator(size: 16),
-                              )
-                            : Text(
-                                '$_withdrawalFees $_selectedCoin',
-                                style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500),
+                    // Amount Input Row
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        children: [
+                          // Coin Icon Badge
+                          Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF84BD00).withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Center(
+                              child: Text(
+                                _selectedCoin.substring(0, _selectedCoin.length > 3 ? 3 : _selectedCoin.length),
+                                style: const TextStyle(
+                                  color: Color(0xFF84BD00),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
                               ),
-                      ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          // Input Field
+                          Expanded(
+                            child: TextField(
+                              controller: _amountController,
+                              keyboardType: TextInputType.numberWithOptions(decimal: true),
+                              onChanged: _onAmountChanged,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 24,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              decoration: const InputDecoration(
+                                hintText: '0.00',
+                                hintStyle: TextStyle(
+                                  color: Color(0xFF6C7278),
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                border: InputBorder.none,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                            ),
+                          ),
+                          // Coin Symbol
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF333333),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              _selectedCoin,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Divider
+                    Container(
+                      height: 1,
+                      color: const Color(0xFF333333),
+                    ),
+                    // Available Balance Row
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.account_balance_wallet_outlined, color: Color(0xFF6C7278), size: 16),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Available: ',
+                            style: TextStyle(color: Color(0xFF6C7278), fontSize: 13),
+                          ),
+                          _isFetchingBalance
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Color(0xFF84BD00),
+                                  ),
+                                )
+                              : Text(
+                                  '${_availableBalance.toStringAsFixed(2)} $_selectedCoin',
+                                  style: const TextStyle(
+                                    color: Color(0xFF84BD00),
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
               ),
               
               const SizedBox(height: 24),
+
+              // Summary Section
+              Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1A1A1A),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFF333333)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Header
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF84BD00).withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(Icons.receipt_long, color: Color(0xFF84BD00), size: 18),
+                          ),
+                          const SizedBox(width: 12),
+                          const Text(
+                            'Summary',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Divider
+                    Container(height: 1, color: const Color(0xFF333333)),
+                    // Summary Rows
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          // You Send
+                          _buildSummaryRow(
+                            label: 'You Send',
+                            value: _amountController.text.isNotEmpty
+                                ? '${(double.tryParse(_amountController.text) ?? 0.0).toStringAsFixed(2)} $_selectedCoin'
+                                : '0.00 $_selectedCoin',
+                            valueColor: Colors.white,
+                          ),
+                          const SizedBox(height: 12),
+                          // Network Fee
+                          _buildSummaryRow(
+                            label: 'Network Fee',
+                            value: _isFetchingFees
+                                ? 'Calculating...'
+                                : '${_withdrawalFees.toStringAsFixed(2)} $_selectedCoin',
+                            valueColor: const Color(0xFF6C7278),
+                          ),
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 12),
+                            child: Divider(color: Color(0xFF333333), height: 1),
+                          ),
+                          // Recipient Receives
+                          _buildSummaryRow(
+                            label: 'Recipient Receives',
+                            value: '${(_amountController.text.isNotEmpty
+                                    ? (double.tryParse(_amountController.text) ?? 0.0) - _withdrawalFees
+                                    : 0.0).toStringAsFixed(2)} $_selectedCoin',
+                            valueColor: const Color(0xFF84BD00),
+                            isBold: true,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               
+              const SizedBox(height: 24),
+
+              // Recent Transactions Section
+              if (_recentTransactions.isNotEmpty || _isLoadingTransactions) ...[
+                Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1A1A1A),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFF333333)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Header
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF84BD00).withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(Icons.history, color: Color(0xFF84BD00), size: 18),
+                            ),
+                            const SizedBox(width: 12),
+                            const Text(
+                              'Recent Transactions',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Divider
+                      Container(height: 1, color: const Color(0xFF333333)),
+                      // Transaction List
+                      if (_isLoadingTransactions)
+                        const Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Center(child: CircularProgressIndicator(color: Color(0xFF84BD00))),
+                        )
+                      else
+                        ListView.separated(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: _recentTransactions.length,
+                          separatorBuilder: (_, __) => Container(height: 1, color: const Color(0xFF333333)),
+                          itemBuilder: (context, index) {
+                            final tx = _recentTransactions[index];
+                            return ListTile(
+                              leading: Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: (tx['type'] == 'withdraw' ? Colors.red : const Color(0xFF84BD00)).withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Icon(
+                                  tx['type'] == 'withdraw' ? Icons.arrow_outward : Icons.arrow_downward,
+                                  color: tx['type'] == 'withdraw' ? Colors.red : const Color(0xFF84BD00),
+                                  size: 20,
+                                ),
+                              ),
+                              title: Text(
+                                tx['title'] ?? 'Transaction',
+                                style: const TextStyle(color: Colors.white, fontSize: 14),
+                              ),
+                              subtitle: Text(
+                                tx['date'] ?? '',
+                                style: const TextStyle(color: Color(0xFF6C7278), fontSize: 12),
+                              ),
+                              trailing: Text(
+                                '${tx['type'] == 'withdraw' ? '-' : '+'}${tx['amount'] ?? '0.00'} ${tx['coin'] ?? 'USDT'}',
+                                style: TextStyle(
+                                  color: tx['type'] == 'withdraw' ? Colors.red : const Color(0xFF84BD00),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
+
               // Withdraw Button
               SizedBox(
                 width: double.infinity,
@@ -518,6 +820,60 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
     }
     
     return CoinIconMapper.getCoinIcon(coin.symbol, size: 40);
+  }
+
+  Widget _buildSummaryRow({
+    required String label,
+    required String value,
+    required Color valueColor,
+    bool isBold = false,
+  }) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: const Color(0xFF6C7278),
+            fontSize: 14,
+            fontWeight: isBold ? FontWeight.w500 : FontWeight.normal,
+          ),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            color: valueColor,
+            fontSize: 14,
+            fontWeight: isBold ? FontWeight.w700 : FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAddressActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: const Color(0xFF84BD00), size: 18),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF84BD00),
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -602,12 +958,8 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
                       ),
                     ),
                     title: Text(
-                      network.name,
+                      '${network.name} (${network.type})${network.fee != null ? ' — Fee: ${network.fee!.toStringAsFixed(0)} USD' : ''}',
                       style: const TextStyle(color: Colors.white, fontSize: 16),
-                    ),
-                    subtitle: Text(
-                      network.type,
-                      style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 14),
                     ),
                     trailing: network.isActive
                         ? const Icon(Icons.check_circle, color: Color(0xFF84BD00), size: 20)

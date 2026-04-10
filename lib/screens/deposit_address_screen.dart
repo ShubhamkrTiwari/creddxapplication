@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import '../services/wallet_service.dart';
+import '../services/notification_service.dart';
 
 class DepositAddressScreen extends StatefulWidget {
   final String coin;
@@ -48,6 +49,12 @@ class _DepositAddressScreenState extends State<DepositAddressScreen> {
           }
           if (_address == null || _address!.isEmpty) {
             _errorMessage = 'No deposit address returned from server';
+          } else {
+            NotificationService.addNotification(
+              title: 'Deposit Address Generated',
+              message: 'Your ${widget.coin} deposit address on ${widget.network} has been generated.',
+              type: NotificationType.info,
+            );
           }
         } else {
           _errorMessage = result['error'] ?? 'Failed to fetch deposit address';

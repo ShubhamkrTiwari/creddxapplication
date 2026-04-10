@@ -142,9 +142,9 @@ class P2PService {
   // Mock P2P coins for development/testing
   static List<dynamic> _getMockP2PCoins() {
     return [
-      {'coinSymbol': 'USDT', 'coinName': 'Tether', 'icon': ''},
-      {'coinSymbol': 'BTC', 'coinName': 'Bitcoin', 'icon': ''},
-      {'coinSymbol': 'ETH', 'coinName': 'Ethereum', 'icon': ''},
+      {'_id': 'USDT', 'coinSymbol': 'USDT', 'coinName': 'Tether', 'icon': ''},
+      {'_id': 'BTC', 'coinSymbol': 'BTC', 'coinName': 'Bitcoin', 'icon': ''},
+      {'_id': 'ETH', 'coinSymbol': 'ETH', 'coinName': 'Ethereum', 'icon': ''},
     ];
   }
 
@@ -316,6 +316,7 @@ class P2PService {
     int? page,
   }) async {
     debugPrint('=== GETTING REAL ADVERTISEMENTS ===');
+    debugPrint('Filters: coin=$coin, direction=$direction, currency=$currency, amount=$amount');
     
     try {
       final headers = await _getHeaders();
@@ -335,43 +336,29 @@ class P2PService {
       final uri = Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/all').replace(queryParameters: queryParams);
       debugPrint('Fetching from: $uri');
       
-      final response = await http.get(uri, headers: headers);
+      var response = await http.get(uri, headers: headers);
       debugPrint('Response Status: ${response.statusCode}');
-      debugPrint('Response Body Length: ${response.body.length}');
-      if (response.body.isNotEmpty) {
-        debugPrint('Response Body: ${response.body.substring(0, response.body.length > 500 ? 500 : response.body.length)}');
-      } else {
-        debugPrint('Response Body: EMPTY');
-      }
       
+      if (response.statusCode != 200) {
+        debugPrint('Failed to fetch ads. Trying without coinId filter as fallback...');
+        final fallbackParams = Map<String, String>.from(queryParams)..remove('coinId');
+        final fallbackUri = Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/all').replace(queryParameters: fallbackParams);
+        debugPrint('Fallback fetching from: $fallbackUri');
+        response = await http.get(fallbackUri, headers: headers);
+        debugPrint('Fallback Response Status: ${response.statusCode}');
+      }
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        debugPrint('Response Data Type: ${data.runtimeType}');
-        
-        // Print full response for debugging
-        debugPrint('=== FULL RESPONSE ===');
-        if (response.body.length > 1000) {
-          debugPrint('${response.body.substring(0, 1000)}...');
-        } else {
-          debugPrint(response.body);
-        }
-        debugPrint('=== END RESPONSE ===');
         
         List<dynamic> ads = [];
         
         if (data is List) {
           ads = data;
         } else if (data is Map) {
-          // Debug: Print all keys and their types
-          debugPrint('Response keys: ${data.keys.toList()}');
-          for (var key in data.keys) {
-            debugPrint('Key: $key, Type: ${data[key].runtimeType}');
-          }
-          
           // Direct extraction of finalData which contains the ads list
           if (data['finalData'] != null && data['finalData'] is List) {
             ads = data['finalData'] as List<dynamic>;
-            debugPrint('finalData extracted as List, count: ${ads.length}');
           } else if (data['data'] != null && data['data'] is List) {
             ads = data['data'] as List<dynamic>;
           } else if (data['result'] != null && data['result'] is List) {
@@ -390,15 +377,7 @@ class P2PService {
         
         if (ads.isNotEmpty) {
           debugPrint('Advertisements fetched: ${ads.length}');
-          debugPrint('First ad sample: ${ads[0]}');
           return ads;
-        } else {
-          debugPrint('Ads list is empty after parsing. Checking all keys in response:');
-          if (data is Map) {
-            for (var key in data.keys) {
-              debugPrint('Key: $key, Value type: ${data[key].runtimeType}');
-            }
-          }
         }
       }
       
@@ -408,8 +387,6 @@ class P2PService {
     } catch (e, stackTrace) { 
       debugPrint('=== ADVERTISEMENTS FETCH ERROR ===');
       debugPrint('Error: $e');
-      debugPrint('StackTrace: $stackTrace');
-      debugPrint('====================================');
       return [];
     }
   }

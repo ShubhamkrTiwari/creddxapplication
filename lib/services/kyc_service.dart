@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
+import 'notification_service.dart';
 
 class KYCService {
   static const String _baseUrl = 'http://65.0.196.122:8085';
@@ -148,6 +149,13 @@ class KYCService {
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
         if (responseData['success'] == true) {
+          // Log KYC submission notification
+          await NotificationService.addNotification(
+            title: 'KYC Submitted',
+            message: 'Your KYC documents have been successfully submitted and are under review.',
+            type: NotificationType.security,
+          );
+
           return {
             'success': true,
             'data': responseData['data'],

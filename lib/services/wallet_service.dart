@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'spot_service.dart';
 import 'auth_service.dart';
+import 'notification_service.dart';
 
 class WalletService {
   static const String baseUrl = 'http://65.0.196.122:8085';
@@ -53,6 +54,48 @@ class WalletService {
       }
     } catch (e) {
       debugPrint('Error fetching all wallet balances: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  // Fetch withdraw available balance from the API
+  static Future<Map<String, dynamic>> getWithdrawAvailableBalance() async {
+    try {
+      debugPrint('Fetching withdraw available balance from: $baseUrl/wallet/v1/withdraw/available-balance');
+      final response = await http.get(
+        Uri.parse('$baseUrl/wallet/v1/withdraw/available-balance'),
+        headers: await _getHeaders(),
+      );
+
+      debugPrint('Withdraw Available Balance API Response Status: ${response.statusCode}');
+      debugPrint('Withdraw Available Balance API Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          return {
+            'success': true,
+            'data': data['data'],
+          };
+        } else {
+          debugPrint('Withdraw Available Balance API returned success: false');
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to fetch withdraw available balance',
+          };
+        }
+      } else {
+        debugPrint('Withdraw Available Balance API failed with status: ${response.statusCode}');
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching withdraw available balance: $e');
       return {
         'success': false,
         'error': 'Network error: $e',
@@ -598,6 +641,14 @@ class WalletService {
       
       if (response.statusCode == 200 || response.statusCode == 201) {
         final data = json.decode(response.body);
+        
+        // Log wallet transfer notification
+        await NotificationService.addNotification(
+          title: 'Wallet Transfer',
+          message: 'Transferred $amount USDT from ${_getWalletTypeName(from)} to ${_getWalletTypeName(to)}.',
+          type: NotificationType.transaction,
+        );
+
         return {
           'success': true,
           'data': data['data'] ?? data,
@@ -635,6 +686,24 @@ class WalletService {
         return 5; // Demo bot wallet type
       default:
         return 1; // Default to Spot
+    }
+  }
+
+  // Helper method to convert API numbers to wallet names
+  static String _getWalletTypeName(int walletType) {
+    switch (walletType) {
+      case 1:
+        return 'Spot Wallet';
+      case 2:
+        return 'P2P Wallet';
+      case 3:
+        return 'Bot Wallet';
+      case 4:
+        return 'Main Wallet';
+      case 5:
+        return 'Demo Bot Wallet';
+      default:
+        return 'Unknown Wallet';
     }
   }
   
@@ -810,7 +879,43 @@ class WalletService {
   }
 
   static Future<Map<String, dynamic>?> withdrawCrypto({required String coin, required String network, required String address, required double amount, String? otp}) async {
-    return {'success': true};
+    try {
+      debugPrint('Submitting crypto withdraw: coin=$coin, network=$network, amount=$amount');
+
+      final requestBody = {
+        'coin': coin,
+        'network': network,
+        'address': address,
+        'amount': amount,
+        if (otp != null && otp.isNotEmpty) 'otp': otp,
+      };
+
+      debugPrint('Withdraw request body: $requestBody');
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/wallet/v1/withdraw/crypto-withdraw'),
+        headers: await _getHeaders(),
+        body: json.encode(requestBody),
+      );
+
+      debugPrint('Withdraw API Response Status: ${response.statusCode}');
+      debugPrint('Withdraw API Response Body: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          return {'success': true, 'data': data['data']};
+        } else {
+          return {'success': false, 'error': data['message'] ?? 'Withdrawal failed'};
+        }
+      } else {
+        final error = json.decode(response.body);
+        return {'success': false, 'error': error['message'] ?? error['error'] ?? 'Error ${response.statusCode}'};
+      }
+    } catch (e) {
+      debugPrint('Error in withdrawCrypto: $e');
+      return {'success': false, 'error': 'Network error: $e'};
+    }
   }
 
   static Future<Map<String, dynamic>?> submitInrWithdrawal({
@@ -834,12 +939,18 @@ class WalletService {
         if (ifscCode != null) 'ifscCode': ifscCode,
         if (upiId != null) 'upiId': upiId,
       };
+      
+      debugPrint('Submitting INR withdrawal: $requestBody');
+      
       final url = '$baseUrl/wallet/v1/wallet/deposit/inr-withdraw-request'; 
       final response = await http.post(
         Uri.parse(url),
         headers: await _getHeaders(),
         body: json.encode(requestBody),
       );
+      
+      debugPrint('INR Withdrawal Response: ${response.statusCode} - ${response.body}');
+      
       if (response.statusCode == 200 || response.statusCode == 201) {
         final data = json.decode(response.body);
         return {'success': true, 'data': data};
@@ -890,7 +1001,8 @@ class Coin {
 class Network {
   final String id, name, type;
   final bool isActive;
-  Network({required this.id, required this.name, required this.type, required this.isActive});
+  final double? fee;
+  Network({required this.id, required this.name, required this.type, required this.isActive, this.fee});
   
   factory Network.fromJson(Map<String, dynamic> json) {
     debugPrint('Parsing network from JSON: $json');
@@ -911,13 +1023,27 @@ class Network {
       isActive = true; // Default to active if not specified
     }
     
-    debugPrint('Parsed network: $name ($type) - active: $isActive');
+    // Parse fee if available - handle both numeric and string formats like "1 USD"
+    double? fee;
+    String? feeRaw = json['fee']?.toString() ?? json['withdrawalFee']?.toString() ?? json['networkFee']?.toString();
+    if (feeRaw != null && feeRaw.isNotEmpty) {
+      // Extract numeric part from strings like "1 USD" or "5 USD"
+      final match = RegExp(r'^(\d+(?:\.\d+)?)').firstMatch(feeRaw);
+      if (match != null) {
+        fee = double.tryParse(match.group(1)!);
+      } else {
+        fee = double.tryParse(feeRaw);
+      }
+    }
+    
+    debugPrint('Parsed network: $name ($type) - active: $isActive, fee: $fee');
     
     return Network(
       id: id,
-      name: name, 
-      type: type, 
+      name: name,
+      type: type,
       isActive: isActive,
+      fee: fee,
     );
   }
 }

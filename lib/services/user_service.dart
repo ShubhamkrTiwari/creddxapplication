@@ -691,6 +691,64 @@ class UserService {
     return prefs.getString('auth_token');
   }
 
+  // Fetch user assets from /user/v1/user endpoint
+  static Future<Map<String, dynamic>> getUserAssets() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('auth_token');
+
+      if (token == null) {
+        return {
+          'success': false,
+          'error': 'Authentication required',
+        };
+      }
+
+      debugPrint('Fetching user assets from: http://65.0.196.122:8085/user/v1/user');
+      final response = await http.get(
+        Uri.parse('http://65.0.196.122:8085/user/v1/user'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      debugPrint('User Assets API Response Status: ${response.statusCode}');
+      debugPrint('User Assets API Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true && data['data'] != null) {
+          final userData = data['data'];
+          // Extract assets from user data
+          final assets = userData['assets'] ?? userData['wallet'] ?? userData['balances'] ?? {};
+          return {
+            'success': true,
+            'data': assets,
+            'userData': userData,
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to fetch user assets',
+          };
+        }
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching user assets: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
   Color getKYCStatusColor() {
     switch (_kycStatus) {
       case 'Completed': return const Color(0xFF84BD00);

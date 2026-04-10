@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import '../services/auth_service.dart';
 import '../services/wallet_service.dart';
+import '../services/notification_service.dart';
 
 class UpWithdrawalScreen extends StatefulWidget {
   final Map<String, dynamic>? upiDetails;
@@ -61,10 +62,21 @@ class _UpWithdrawalScreenState extends State<UpWithdrawalScreen> {
       
       if (mounted) {
         if (result != null && result['success'] == true) {
+          await NotificationService.addNotification(
+            title: 'UPI Withdrawal Submitted',
+            message: 'Your UPI withdrawal of ₹${_amountController.text} to ${_upiController.text} was submitted successfully.',
+            type: NotificationType.transaction,
+          );
           _showSuccess('UPI withdrawal request submitted successfully');
           Navigator.of(context).popUntil((route) => route.isFirst);
         } else {
-          _showError(result?['error'] ?? 'Withdrawal failed');
+          final errorMessage = result?['error'] ?? 'Withdrawal failed';
+          await NotificationService.addNotification(
+            title: 'UPI Withdrawal Failed',
+            message: 'Your UPI withdrawal of ₹${_amountController.text} failed: $errorMessage',
+            type: NotificationType.transaction,
+          );
+          _showError(errorMessage);
         }
       }
     } catch (e) {

@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'user_service.dart';
+import 'notification_service.dart';
 
 class AuthService {
   static const String _baseUrl = 'http://65.0.196.122:8085';
@@ -120,6 +121,13 @@ class AuthService {
         final formattedTime = '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year} | ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
         await prefs.setString('last_login', formattedTime);
         
+        // Log login notification
+        await NotificationService.addNotification(
+          title: 'Login Successful',
+          message: 'New login detected from ${getDeviceName()}',
+          type: NotificationType.security,
+        );
+
         // Store user ID as String
         if (data['user'] != null) {
           final userId = data['user']['_id'] ?? data['user']['id'] ?? data['user']['userId'];
@@ -130,6 +138,13 @@ class AuthService {
         
         // Fetch IP address immediately after login
         await _fetchAndSaveIPAddress();
+        
+        // Log login notification
+        await NotificationService.addNotification(
+          title: 'Login Successful',
+          message: 'New login detected from ${getDeviceName()}',
+          type: NotificationType.security,
+        );
         
         // Check KYC status after login
         await _checkAndSaveKYCStatus();
@@ -390,6 +405,13 @@ class AuthService {
         final formattedTime = '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year} | ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
         await prefs.setString('last_login', formattedTime);
         
+        // Log login notification
+        await NotificationService.addNotification(
+          title: 'Login Successful',
+          message: 'New login detected from ${getDeviceName()}',
+          type: NotificationType.security,
+        );
+
         // Store user ID as String
         if (data['user'] != null) {
           final userId = data['user']['_id'] ?? data['user']['id'] ?? data['user']['userId'];
@@ -446,6 +468,13 @@ class AuthService {
           }
         }
         
+        // Log signup notification
+        await NotificationService.addNotification(
+          title: 'Welcome to CreddX!',
+          message: 'Your account has been successfully created.',
+          type: NotificationType.info,
+        );
+
         return {'success': true, 'message': 'Signup successful'};
       } else {
         final errorData = json.decode(response.body);

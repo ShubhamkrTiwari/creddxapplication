@@ -243,7 +243,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   String _selectedTab = 'Favorites';
-  final List<String> _tabs = ['Favorites', 'Perp Futures', 'Std. Futures', 'Innovation '];
+  final List<String> _tabs = ['Market', 'Perp Futures', 'Std. Futures'];
   final NumberFormat _compactFormat = NumberFormat.compactCurrency(symbol: '', decimalDigits: 1);
   
   List<Map<String, dynamic>> _cryptoData = [];
@@ -272,6 +272,8 @@ class _HomeScreenState extends State<HomeScreen> {
   
   // Market cap data from CoinGecko
   Map<String, double> _marketCapData = {};
+
+  String _selectedSpotSymbol = 'BTCUSDT';
   
   @override
   void initState() {
@@ -1021,6 +1023,32 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Row(
         children: _tabs.map((tab) {
           bool isSelected = _selectedTab == tab;
+          // Special handling for Spot tab with dropdown
+          if (tab == 'Spot') {
+            return GestureDetector(
+              onTap: () => setState(() => _selectedTab = tab),
+              child: Container(
+                margin: const EdgeInsets.only(right: 30),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          'Spot',
+                          style: TextStyle(
+                            color: isSelected ? Colors.white : Colors.white54,
+                            fontSize: 16,
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal
+                          )
+                        ),
+                      ],
+                    ),
+                    if (isSelected) Container(margin: const EdgeInsets.only(top: 8), height: 3, width: 24, color: const Color(0xFF84BD00)),
+                  ],
+                ),
+              ),
+            );
+          }
           return GestureDetector(
             onTap: () => setState(() => _selectedTab = tab),
             child: Container(
@@ -1045,19 +1073,107 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // Show market selector dialog for Spot tab
+  void _showSpotMarketSelector() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1E1E20),
+          title: const Text(
+            'Select Market',
+            style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: 400,
+            child: _binanceMarketData.isEmpty
+              ? const Center(
+                  child: Text(
+                    'No markets available',
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: _binanceMarketData.length,
+                  itemBuilder: (context, index) {
+                    final market = _binanceMarketData[index];
+                    final symbol = market['symbol']?.toString() ?? 'BTCUSDT';
+                    final baseSymbol = symbol.replaceAll('USDT', '');
+                    final price = double.tryParse(market['price']?.toString() ?? '0.0') ?? 0.0;
+                    final change = double.tryParse(market['priceChangePercent']?.toString() ?? '0.0') ?? 0.0;
+                    final isSelected = symbol == _selectedSpotSymbol;
+
+                    return ListTile(
+                      leading: CoinIconMapper.getCoinIcon(baseSymbol, size: 32),
+                      title: Text(
+                        baseSymbol,
+                        style: TextStyle(
+                          color: isSelected ? const Color(0xFF84BD00) : Colors.white,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      ),
+                      subtitle: Text(
+                        '\$${_formatPrice(price)}',
+                        style: const TextStyle(color: Colors.white54, fontSize: 12),
+                      ),
+                      trailing: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: change >= 0
+                            ? const Color(0xFF00C087).withOpacity(0.2)
+                            : const Color(0xFFFF3B30).withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          '${change >= 0 ? '+' : ''}${change.toStringAsFixed(2)}%',
+                          style: TextStyle(
+                            color: change >= 0 ? const Color(0xFF00C087) : const Color(0xFFFF3B30),
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      onTap: () {
+                        setState(() {
+                          _selectedSpotSymbol = symbol;
+                        });
+                        Navigator.pop(context);
+                      },
+                      tileColor: isSelected ? const Color(0xFF84BD00).withOpacity(0.1) : null,
+                    );
+                  },
+                ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildCryptoList() {
     // Show candlestick chart for Std. Futures tab
     if (_selectedTab == 'Std. Futures') {
       return _buildCandlestickChartSection();
     }
-    
+
     // Show real-time WebSocket data for Favorites tab
     if (_selectedTab == 'Favorites') {
       return _buildFavoritesWebSocketList();
     }
-    
+
+    // Show selected market data for Spot tab
+    if (_selectedTab == 'Spot') {
+      return _buildSpotMarketList();
+    }
+
     if (_isLoading) return const Padding(padding: EdgeInsets.all(40), child: Center(child: BitcoinLoadingIndicator(size: 40)));
-    
+
     if (_cryptoData.isEmpty) {
       return const Center(
         child: Text(
@@ -1066,8 +1182,236 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     }
-    
+
     return _buildCryptoDataList(_cryptoData);
+  }
+
+  // Build market selector dropdown for Spot screen
+  Widget _buildSpotMarketDropdown() {
+    return GestureDetector(
+      onTap: _showSpotMarketSelector,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF2C2C2E),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFF84BD00).withOpacity(0.3)),
+        ),
+        child: Row(
+          children: [
+            CoinIconMapper.getCoinIcon(_selectedSpotSymbol.replaceAll('USDT', ''), size: 28),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _selectedSpotSymbol.replaceAll('USDT', ''),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    '/USDT',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.6),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.keyboard_arrow_down,
+              color: Color(0xFF84BD00),
+              size: 24,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Build Spot tab market list - shows selected symbol details
+  Widget _buildSpotMarketList() {
+    // Find selected symbol data
+    final selectedMarket = _binanceMarketData.firstWhere(
+      (m) => m['symbol']?.toString() == _selectedSpotSymbol,
+      orElse: () => <String, dynamic>{},
+    );
+
+    final hasData = selectedMarket.isNotEmpty;
+    final symbol = hasData ? selectedMarket['symbol']?.toString() ?? _selectedSpotSymbol : _selectedSpotSymbol;
+    final baseSymbol = symbol.replaceAll('USDT', '');
+    final price = hasData ? double.tryParse(selectedMarket['price']?.toString() ?? '0.0') ?? 0.0 : 0.0;
+    final change = hasData ? double.tryParse(selectedMarket['priceChangePercent']?.toString() ?? '0.0') ?? 0.0 : 0.0;
+    final high24h = hasData ? double.tryParse(selectedMarket['highPrice']?.toString() ?? '0.0') ?? 0.0 : 0.0;
+    final low24h = hasData ? double.tryParse(selectedMarket['lowPrice']?.toString() ?? '0.0') ?? 0.0 : 0.0;
+    final volume = hasData ? double.tryParse(selectedMarket['quoteVolume']?.toString() ?? '0.0') ?? 0.0 : 0.0;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Market selector dropdown - always visible
+          _buildSpotMarketDropdown(),
+          const SizedBox(height: 16),
+          // Market data - shown when available
+          if (hasData) ...[
+            // Market header with large price
+            Row(
+            children: [
+              CoinIconMapper.getCoinIcon(baseSymbol, size: 48),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      baseSymbol,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '/USDT',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.6),
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '\$${_formatPrice(price)}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: change >= 0
+                        ? const Color(0xFF00C087).withOpacity(0.2)
+                        : const Color(0xFFFF3B30).withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      '${change >= 0 ? '+' : ''}${change.toStringAsFixed(2)}%',
+                      style: TextStyle(
+                        color: change >= 0 ? const Color(0xFF00C087) : const Color(0xFFFF3B30),
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          // Market stats grid
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E1E20),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildMarketStatItem('24h High', '\$${_formatPrice(high24h)}', Colors.white),
+                    ),
+                    Expanded(
+                      child: _buildMarketStatItem('24h Low', '\$${_formatPrice(low24h)}', Colors.white),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                const Divider(color: Colors.white10, height: 1),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildMarketStatItem('24h Volume', _formatVolume(volume), Colors.white),
+                    ),
+                    Expanded(
+                      child: _buildMarketStatItem('24h Change', '${change >= 0 ? '+' : ''}${change.toStringAsFixed(2)}%', 
+                        change >= 0 ? const Color(0xFF00C087) : const Color(0xFFFF3B30)),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          // Trade button
+          if (hasData)
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => SpotScreen(initialSymbol: symbol),
+                    ),
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF84BD00),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                child: Text(
+                  'Trade $baseSymbol',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMarketStatItem(String label, String value, Color valueColor) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.6),
+            fontSize: 12,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(
+            color: valueColor,
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
   }
   
   // Build favorites list with WebSocket real-time data - shows all Binance coins

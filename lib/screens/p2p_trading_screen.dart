@@ -58,7 +58,7 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
       // Find selected coin's id - try multiple possible field names
       String coinId = _selectedCrypto; // fallback to symbol
       final selectedCoin = _cryptoList.firstWhere(
-        (c) => c['coinSymbol'] == _selectedCrypto || c['symbol'] == _selectedCrypto,
+        (c) => (c['coinSymbol'] ?? c['symbol'] ?? '') == _selectedCrypto,
         orElse: () => null,
       );
       if (selectedCoin != null) {
@@ -71,7 +71,7 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
       print('DEBUG: Selected crypto: $_selectedCrypto, CoinId: $coinId');
 
       // Step 2: Fetch Ads with proper coinId and direction
-      // direction: 1 = Buy ads, 2 = Sell ads
+      // direction: 1 = Buy ads (posted by buyers), 2 = Sell ads (posted by sellers)
       // When user wants to Buy -> show Sell ads (direction: 2)
       // When user wants to Sell -> show Buy ads (direction: 1)
       final int direction = _isBuySelected ? 2 : 1;
@@ -80,6 +80,15 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
         coin: coinId,
         direction: direction,
       );
+
+      // Fallback: If no ads found with coinId, try with coinSymbol
+      if (_offers.isEmpty && coinId != _selectedCrypto) {
+        print('DEBUG: No ads with coinId, trying with coinSymbol: $_selectedCrypto');
+        _offers = await P2PService.getAllAdvertisements(
+          coin: _selectedCrypto,
+          direction: direction,
+        );
+      }
 
       print('DEBUG: Real API Offers list length: ${_offers.length}');
       print('DEBUG: Sample offer: ${_offers.isNotEmpty ? _offers[0] : 'No offers'}');

@@ -29,10 +29,12 @@ class _InrWithdrawBankScreenState extends State<InrWithdrawBankScreen> {
       final headers = {
         if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
       };
+      debugPrint('Fetching bank details from: ${WalletService.baseUrl}/wallet/v1/wallet/deposit/bank-details');
       final response = await http.get(
         Uri.parse('${WalletService.baseUrl}/wallet/v1/wallet/deposit/bank-details'),
         headers: headers,
       );
+      debugPrint('Bank details response: ${response.statusCode} - ${response.body}');
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
         final data = responseData is Map ? (responseData['data'] ?? responseData) : responseData;
@@ -42,11 +44,14 @@ class _InrWithdrawBankScreenState extends State<InrWithdrawBankScreen> {
             _selectedBank = _bankList.isNotEmpty ? _bankList.first : null;
             _isLoading = false;
           });
+        } else {
+          setState(() => _isLoading = false);
         }
       } else {
         setState(() => _isLoading = false);
       }
     } catch (e) {
+      debugPrint('Error fetching bank details: $e');
       setState(() => _isLoading = false);
     }
   }

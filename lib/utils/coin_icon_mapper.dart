@@ -62,13 +62,25 @@ class CoinIconMapper {
   };
 
   static String getCoinIconPath(String symbol) {
-    final upperSymbol = symbol.toUpperCase().replaceAll('USDT', '').replaceAll('USDC', '').replaceAll('BUSD', '');
-    return _coinIconMap[upperSymbol] ?? '';
+    final upperSymbol = symbol.toUpperCase();
+    // Direct lookup for stablecoins and exact matches
+    if (_coinIconMap.containsKey(upperSymbol)) {
+      return _coinIconMap[upperSymbol]!;
+    }
+    // For trading pairs like BTCUSDT, extract the base coin
+    final cleanedSymbol = upperSymbol.replaceAll('USDT', '').replaceAll('USDC', '').replaceAll('BUSD', '');
+    return _coinIconMap[cleanedSymbol] ?? '';
   }
 
   static bool hasCoinIcon(String symbol) {
-    final upperSymbol = symbol.toUpperCase().replaceAll('USDT', '').replaceAll('USDC', '').replaceAll('BUSD', '');
-    return _coinIconMap.containsKey(upperSymbol);
+    final upperSymbol = symbol.toUpperCase();
+    // Direct check for exact matches
+    if (_coinIconMap.containsKey(upperSymbol)) {
+      return true;
+    }
+    // For trading pairs
+    final cleanedSymbol = upperSymbol.replaceAll('USDT', '').replaceAll('USDC', '').replaceAll('BUSD', '');
+    return _coinIconMap.containsKey(cleanedSymbol);
   }
 
   static Widget getCoinIcon(String symbol, {double size = 24, Color? fallbackColor}) {

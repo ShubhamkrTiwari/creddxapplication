@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/notification_service.dart';
 
 class NotificationScreen extends StatefulWidget {
   const NotificationScreen({super.key});
@@ -8,6 +9,20 @@ class NotificationScreen extends StatefulWidget {
 }
 
 class _NotificationScreenState extends State<NotificationScreen> {
+  late Future<List<AppNotification>> _notificationsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadNotifications();
+  }
+
+  void _loadNotifications() {
+    setState(() {
+      _notificationsFuture = NotificationService.getNotifications();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -24,135 +39,187 @@ class _NotificationScreenState extends State<NotificationScreen> {
           style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
         ),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(top: 24, right: 8),
-            child: TextButton(
-              onPressed: () {
-                // Handle mark as read action
-              },
-              child: const Text(
-                'Mark as read',
-                style: TextStyle(color: Color(0xFF84BD00), fontSize: 14),
-              ),
+          TextButton(
+            onPressed: () async {
+              await NotificationService.markAllAsRead();
+              _loadNotifications();
+            },
+            child: const Text(
+              'Mark as read',
+              style: TextStyle(color: Color(0xFF84BD00), fontSize: 14),
             ),
           ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline, color: Colors.white70),
+            onPressed: () async {
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  backgroundColor: const Color(0xFF1E1E20),
+                  title: const Text('Clear all notifications?', style: TextStyle(color: Colors.white)),
+                  content: const Text('This action cannot be undone.', style: TextStyle(color: Colors.white70)),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      child: const Text('Clear All', style: TextStyle(color: Color(0xFFE74C3C))),
+                    ),
+                  ],
+                ),
+              );
+
+              if (confirmed == true) {
+                await NotificationService.clearAll();
+                _loadNotifications();
+              }
+            },
+          ),
+          const SizedBox(width: 8),
         ],
         centerTitle: true,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Latest',
-              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+      body: FutureBuilder<List<AppNotification>>(
+        future: _notificationsFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)));
+          }
+
+          if (snapshot.hasError) {
+            return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.white)));
+          }
+
+          final notifications = snapshot.data ?? [];
+
+          if (notifications.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.notifications_off_outlined, size: 64, color: Colors.white.withOpacity(0.2)),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No notifications yet',
+                    style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 16),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          return RefreshIndicator(
+            onRefresh: () async {
+              _loadNotifications();
+            },
+            color: const Color(0xFF84BD00),
+            backgroundColor: const Color(0xFF1E1E20),
+            child: ListView.builder(
+              padding: const EdgeInsets.all(24),
+              itemCount: notifications.length,
+              itemBuilder: (context, index) {
+                final notification = notifications[index];
+                return _buildNotificationItem(notification);
+              },
             ),
-            const SizedBox(height: 16),
-            _buildNotificationItem(
-              'Transaction Successful',
-              'Your deposit of \$500.00 has been completed',
-              '2 minutes ago',
-              Icons.check_circle,
-              const Color(0xFF84BD00),
-            ),
-            _buildNotificationItem(
-              'Price Alert',
-              'BTC has reached \$45,000',
-              '15 minutes ago',
-              Icons.trending_up,
-              const Color(0xFFF7931A),
-            ),
-            const SizedBox(height: 32),
-            const Text(
-              'Last 7 Days',
-              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            _buildNotificationItem(
-              'Security Alert',
-              'New login detected from mobile device',
-              '2 days ago',
-              Icons.security,
-              const Color(0xFFE74C3C),
-            ),
-            _buildNotificationItem(
-              'Transaction Failed',
-              'Withdrawal of \$200.00 failed',
-              '3 days ago',
-              Icons.error,
-              const Color(0xFFE74C3C),
-            ),
-            _buildNotificationItem(
-              'Weekly Summary',
-              'Your weekly profit is \$1,250.00',
-              '5 days ago',
-              Icons.analytics,
-              const Color(0xFF627EEA),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
 
-  Widget _buildNotificationItem(String title, String description, String time, IconData icon, Color iconColor) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E1E20),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withOpacity(0.1)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: iconColor.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(
-              icon,
-              color: iconColor,
-              size: 20,
-            ),
+  Widget _buildNotificationItem(AppNotification notification) {
+    IconData icon;
+    Color iconColor;
+
+    switch (notification.type) {
+      case NotificationType.transaction:
+        icon = Icons.swap_horiz;
+        iconColor = const Color(0xFF84BD00);
+        break;
+      case NotificationType.security:
+        icon = Icons.security;
+        iconColor = const Color(0xFFE74C3C);
+        break;
+      case NotificationType.price:
+        icon = Icons.trending_up;
+        iconColor = const Color(0xFFF7931A);
+        break;
+      case NotificationType.info:
+      default:
+        icon = Icons.info_outline;
+        iconColor = const Color(0xFF627EEA);
+        break;
+    }
+
+    return GestureDetector(
+      onTap: () async {
+        if (!notification.isRead) {
+          await NotificationService.markAsRead(notification.id);
+          _loadNotifications();
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: notification.isRead ? const Color(0xFF1E1E20) : const Color(0xFF252528),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: notification.isRead ? Colors.white.withOpacity(0.1) : const Color(0xFF84BD00).withOpacity(0.3),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: iconColor.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                icon,
+                color: iconColor,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    notification.title,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: notification.isRead ? FontWeight.w500 : FontWeight.bold,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  description,
-                  style: const TextStyle(
-                    color: Color(0xFF6C7278),
-                    fontSize: 12,
+                  const SizedBox(height: 4),
+                  Text(
+                    notification.message,
+                    style: const TextStyle(
+                      color: Color(0xFF6C7278),
+                      fontSize: 12,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          Text(
-            time,
-            style: const TextStyle(
-              color: Color(0xFF6C7278),
-              fontSize: 10,
+            Text(
+              notification.relativeTime,
+              style: const TextStyle(
+                color: Color(0xFF6C7278),
+                fontSize: 10,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

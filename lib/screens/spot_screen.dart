@@ -696,8 +696,11 @@ class _SpotScreenState extends State<SpotScreen> {
     });
 
     try {
-      // Validate amount
-      final amount = double.tryParse(_amount.toStringAsFixed(8)) ?? 0.0;
+      // Refresh balance before placing order to get latest available amount
+      await _loadBalance();
+      
+      // Validate amount - max 5 decimal places for quantity
+      final amount = double.tryParse(_amount.toStringAsFixed(5)) ?? 0.0;
       if (amount <= 0) {
         _showMessage('Invalid amount format', isError: true);
         setState(() { _isLoading = false; });
@@ -706,6 +709,30 @@ class _SpotScreenState extends State<SpotScreen> {
 
       // Validate price for limit orders
       final price = _orderType == 'Market' ? 0.0 : double.tryParse(_currentPrice.toStringAsFixed(2)) ?? 0.0;
+      
+      // Client-side balance validation
+      final orderTotal = amount * price;
+      if (_isBuy) {
+        final availableUsdt = _balance?['usdt_available'] ?? 0.0;
+        if (orderTotal > availableUsdt) {
+          _showMessage(
+            'Insufficient balance. Required: ${orderTotal.toStringAsFixed(2)} USDT, Available: ${availableUsdt.toStringAsFixed(2)} USDT',
+            isError: true,
+          );
+          setState(() { _isLoading = false; });
+          return;
+        }
+      } else {
+        final availableBtc = _balance?['free'] ?? 0.0;
+        if (amount > availableBtc) {
+          _showMessage(
+            'Insufficient balance. Required: ${amount.toStringAsFixed(5)} BTC, Available: ${availableBtc.toStringAsFixed(5)} BTC',
+            isError: true,
+          );
+          setState(() { _isLoading = false; });
+          return;
+        }
+      }
       
       print('=== ORDER PLACEMENT ===');
       print('Amount: $amount');
@@ -1142,8 +1169,10 @@ class _SpotScreenState extends State<SpotScreen> {
           const SizedBox(height: 20),
           _buildOrderTypeToggle(),
           const SizedBox(height: 20),
-          _buildPriceInput(),
-          const SizedBox(height: 16),
+          if (_orderType == 'Limit') ...[
+            _buildPriceInput(),
+            const SizedBox(height: 16),
+          ],
           _buildAmountInput(),
           const SizedBox(height: 12),
           _buildPercentageButtons(),
@@ -1514,6 +1543,22 @@ class _SpotScreenState extends State<SpotScreen> {
                 child: TextField(
                   controller: _amountController,
                   onChanged: (value) {
+                    // Limit to 5 decimal places for BTC
+                    if (value.contains('.')) {
+                      final decimalPart = value.split('.').last;
+                      if (decimalPart.length > 5) {
+                        final trimmedValue = value.substring(0, value.indexOf('.') + 6);
+                        _amountController.value = TextEditingValue(
+                          text: trimmedValue,
+                          selection: TextSelection.collapsed(offset: trimmedValue.length),
+                        );
+                        setState(() {
+                          _amount = double.tryParse(trimmedValue) ?? 0.0;
+                          _sliderValue = _amount > 0 ? (_amount / 1.0).clamp(0.0, 1.0) : 0.0;
+                        });
+                        return;
+                      }
+                    }
                     setState(() {
                       _amount = double.tryParse(value) ?? 0.0;
                       _sliderValue = _amount > 0 ? (_amount / 1.0).clamp(0.0, 1.0) : 0.0;
@@ -1564,66 +1609,106 @@ class _SpotScreenState extends State<SpotScreen> {
   }
 
   Widget _buildPercentageButtons() {
-    if (_orderType != 'Limit') return const SizedBox.shrink();
+    final percentages = [0.1, 0.25, 0.5, 0.75, 1.0];
+    final labels = ['10%', '25%', '50%', '75%', '100%'];
+    final activeColor = _isBuy ? const Color(0xFF84BD00) : Colors.red;
     
     return Container(
-      height: 32,
-      child: Row(
-        children: ['10%', '25%', '50%', '75%', '100%'].map((percent) {
-          return Expanded(
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 2),
-              child: GestureDetector(
+      height: 44,
+      child: Column(
+        children: [
+          // Labels row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: List.generate(5, (index) {
+              final percentage = percentages[index];
+              final isSelected = (_sliderValue - percentage).abs() < 0.05;
+              
+              return GestureDetector(
                 onTap: () {
-                  final percentage = double.parse(percent.replaceAll('%', '')) / 100;
                   setState(() {
                     _sliderValue = percentage;
                     if (_isBuy) {
-                      // Calculate amount based on available USDT divided by limit price
                       final availableUsdt = double.tryParse(_balance?['usdt_available']?.toString() ?? '10000') ?? 10000;
-                      _amount = (availableUsdt * percentage) / _currentPrice;
+                      // 2% fee buffer for 100% to ensure sufficient balance
+                      final feeBuffer = percentage >= 1.0 ? 0.98 : 1.0;
+                      // If USDT selected, show USDT amount directly; else convert to BTC quantity
+                      if (_selectedAmountCoin == 'USDT') {
+                        _amount = availableUsdt * percentage * feeBuffer;
+                      } else {
+                        _amount = (availableUsdt * percentage * feeBuffer) / _currentPrice;
+                      }
                     } else {
-                      // Calculate amount based on available BTC value divided by limit price
                       final availableBtc = double.tryParse(_balance?['free']?.toString() ?? '0.1') ?? 0.1;
-                      final btcValue = availableBtc * _currentPrice; // Convert BTC to USDT value
-                      _amount = (btcValue * percentage) / _currentPrice; // Calculate BTC amount based on percentage of value
+                      // 2% fee buffer for 100% to ensure sufficient balance
+                      final feeBuffer = percentage >= 1.0 ? 0.98 : 1.0;
+                      final btcValue = availableBtc * _currentPrice;
+                      // If USDT selected, show USDT value; else show BTC quantity
+                      if (_selectedAmountCoin == 'USDT') {
+                        _amount = btcValue * percentage * feeBuffer;
+                      } else {
+                        _amount = (btcValue * percentage * feeBuffer) / _currentPrice;
+                      }
                     }
-                    // Update the amount controller to show the calculated amount
-                    _amountController.text = _amount.toStringAsFixed(8);
+                    // Ensure minimum order quantity for BTCUSDT (0.001 BTC) only when BTC selected
+                    if (_selectedAmountCoin == 'BTC') {
+                      const minQty = 0.001;
+                      if (_amount < minQty && _selectedSymbol == 'BTCUSDT') {
+                        _amount = minQty;
+                      }
+                    }
+                    _amountController.text = _amount.toStringAsFixed(_selectedAmountCoin == 'USDT' ? 2 : 8);
                   });
                 },
-                child: Container(
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: _sliderValue == double.parse(percent.replaceAll('%', '')) / 100
-                        ? (_isBuy ? const Color(0xFF84BD00) : Colors.red)
-                        : const Color(0xFF2A2A2A),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Center(
-                    child: Text(
-                      percent,
-                      style: TextStyle(
-                        color: _sliderValue == double.parse(percent.replaceAll('%', '')) / 100
-                            ? Colors.white
-                            : Colors.white.withValues(alpha: 0.7),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+                child: Text(
+                  labels[index],
+                  style: TextStyle(
+                    color: isSelected ? activeColor : Colors.white.withValues(alpha: 0.6),
+                    fontSize: 11,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
                   ),
                 ),
-              ),
+              );
+            }),
+          ),
+          const SizedBox(height: 6),
+          // Green line progress bar
+          Container(
+            height: 3,
+            decoration: BoxDecoration(
+              color: const Color(0xFF2A2A2A),
+              borderRadius: BorderRadius.circular(2),
             ),
-          );
-        }).toList(),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return Stack(
+                  children: [
+                    // Green progress line
+                    Container(
+                      width: constraints.maxWidth * _sliderValue,
+                      decoration: BoxDecoration(
+                        color: activeColor,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildTotalInfo() {
-    final total = _currentPrice * _amount;
-    final fundsRequired = _orderType == 'Limit' ? total : 0.0;
+    // Calculate funds required based on selected coin type
+    final fundsRequired = _orderType == 'Limit'
+        ? (_selectedAmountCoin == 'USDT' ? _amount : _currentPrice * _amount)
+        : 0.0;
+
+    // Calculate total for Market orders
+    final total = _selectedAmountCoin == 'USDT' ? _amount : _currentPrice * _amount;
     
     // Get available balance - show actual value or default
     String availableBalanceText;
@@ -2046,21 +2131,26 @@ class _SpotScreenState extends State<SpotScreen> {
           child: Row(
             children: [
               Expanded(
-                flex: 2,
+                flex: 3,
                 child: Row(
                   children: [
-                    Text(
-                      price.toStringAsFixed(2),
-                      style: TextStyle(
-                        color: isMyOrder ? Colors.red : Colors.red.withValues(alpha: 0.9), 
-                        fontSize: 9,
-                        fontWeight: isMyOrder ? FontWeight.bold : FontWeight.normal,
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          price.toStringAsFixed(2),
+                          style: TextStyle(
+                            color: isMyOrder ? Colors.red : Colors.red.withValues(alpha: 0.9), 
+                            fontSize: 9,
+                            fontWeight: isMyOrder ? FontWeight.bold : FontWeight.normal,
+                          ),
+                        ),
                       ),
                     ),
                     if (isMyOrder) ...[
-                      const SizedBox(width: 4),
+                      const SizedBox(width: 2),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 0),
                         decoration: BoxDecoration(
                           color: Colors.red.withValues(alpha: 0.3),
                           borderRadius: BorderRadius.circular(2),
@@ -2069,7 +2159,7 @@ class _SpotScreenState extends State<SpotScreen> {
                           'You',
                           style: TextStyle(
                             color: Colors.red,
-                            fontSize: 7,
+                            fontSize: 6,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -2128,21 +2218,26 @@ class _SpotScreenState extends State<SpotScreen> {
           child: Row(
             children: [
               Expanded(
-                flex: 2,
+                flex: 3,
                 child: Row(
                   children: [
-                    Text(
-                      price.toStringAsFixed(2),
-                      style: TextStyle(
-                        color: isMyOrder ? const Color(0xFF84BD00) : const Color(0xFF84BD00).withValues(alpha: 0.9), 
-                        fontSize: 9,
-                        fontWeight: isMyOrder ? FontWeight.bold : FontWeight.normal,
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          price.toStringAsFixed(2),
+                          style: TextStyle(
+                            color: isMyOrder ? const Color(0xFF84BD00) : const Color(0xFF84BD00).withValues(alpha: 0.9), 
+                            fontSize: 9,
+                            fontWeight: isMyOrder ? FontWeight.bold : FontWeight.normal,
+                          ),
+                        ),
                       ),
                     ),
                     if (isMyOrder) ...[
-                      const SizedBox(width: 4),
+                      const SizedBox(width: 2),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 0),
                         decoration: BoxDecoration(
                           color: const Color(0xFF84BD00).withValues(alpha: 0.3),
                           borderRadius: BorderRadius.circular(2),
@@ -2151,7 +2246,7 @@ class _SpotScreenState extends State<SpotScreen> {
                           'You',
                           style: TextStyle(
                             color: Color(0xFF84BD00),
-                            fontSize: 7,
+                            fontSize: 6,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -2427,11 +2522,11 @@ class _SpotScreenState extends State<SpotScreen> {
       child: Row(
         children: [
           Expanded(flex: 2, child: _tableCell('${orderPrice.toStringAsFixed(1)} USDT', 10)),
-          Expanded(flex: 2, child: _tableCell('${orderQty.toStringAsFixed(4)} BTC', 10)),
-          Expanded(flex: 2, child: _tableCell('${executed.toStringAsFixed(4)} BTC', 10)),
+          Expanded(flex: 2, child: _tableCell('${orderQty.toStringAsFixed(2)} BTC', 10)),
+          Expanded(flex: 2, child: _tableCell('${executed.toStringAsFixed(2)} BTC', 10)),
           Expanded(flex: 2, child: _tableCell('${total.toStringAsFixed(2)} USDT', 10)),
           Expanded(flex: 3, child: _tableCell(order['order_type'] ?? 'Limit', 10)),
-          Expanded(flex: 2, child: _buildActionCell(remaining > 0, orderId, symbol: _selectedSymbol, price: orderPrice, side: orderSide)),
+          Expanded(flex: 2, child: _buildActionCell(remaining == 0, orderId, symbol: _selectedSymbol, price: orderPrice, side: orderSide)),
         ],
       ),
     );
