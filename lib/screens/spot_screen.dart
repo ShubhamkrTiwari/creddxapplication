@@ -710,13 +710,17 @@ class _SpotScreenState extends State<SpotScreen> {
       // Validate price for limit orders
       final price = _orderType == 'Market' ? 0.0 : double.tryParse(_currentPrice.toStringAsFixed(2)) ?? 0.0;
       
-      // Client-side balance validation
-      final orderTotal = amount * price;
+      // Calculate order total based on selected coin type
+      // If USDT selected, amount is already in USDT; if BTC, convert to USDT
+      final orderTotal = _selectedAmountCoin == 'USDT' ? amount : amount * price;
+      
+      // Client-side balance validation with 3% fee buffer
       if (_isBuy) {
         final availableUsdt = _balance?['usdt_available'] ?? 0.0;
-        if (orderTotal > availableUsdt) {
+        final requiredWithFee = orderTotal * 1.03; // 3% fee buffer
+        if (requiredWithFee > availableUsdt) {
           _showMessage(
-            'Insufficient balance. Required: ${orderTotal.toStringAsFixed(2)} USDT, Available: ${availableUsdt.toStringAsFixed(2)} USDT',
+            'Insufficient balance. Required: ~${requiredWithFee.toStringAsFixed(2)} USDT (with fees), Available: ${availableUsdt.toStringAsFixed(2)} USDT',
             isError: true,
           );
           setState(() { _isLoading = false; });
@@ -724,9 +728,10 @@ class _SpotScreenState extends State<SpotScreen> {
         }
       } else {
         final availableBtc = _balance?['free'] ?? 0.0;
-        if (amount > availableBtc) {
+        final requiredWithFee = amount * 1.03; // 3% fee buffer
+        if (requiredWithFee > availableBtc) {
           _showMessage(
-            'Insufficient balance. Required: ${amount.toStringAsFixed(5)} BTC, Available: ${availableBtc.toStringAsFixed(5)} BTC',
+            'Insufficient balance. Required: ~${requiredWithFee.toStringAsFixed(5)} BTC (with fees), Available: ${availableBtc.toStringAsFixed(5)} BTC',
             isError: true,
           );
           setState(() { _isLoading = false; });
