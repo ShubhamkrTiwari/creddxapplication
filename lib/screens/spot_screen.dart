@@ -61,6 +61,10 @@ class _SpotScreenState extends State<SpotScreen> {
   bool _isLoadingSymbols = false;
 
   Timer? _connectionCheckTimer;
+  
+  // Binance market data for dropdown
+  List<Map<String, dynamic>> _binanceMarketData = [];
+  bool _isLoadingMarkets = false;
 
   @override
   void initState() {
@@ -96,6 +100,9 @@ class _SpotScreenState extends State<SpotScreen> {
     
     // Load real market price immediately from Binance
     _loadRealMarketPrice();
+    
+    // Load market data for dropdown
+    _loadBinanceMarketData();
     
     _loadSpotData();
     _initializeWebSocket();
@@ -371,6 +378,31 @@ class _SpotScreenState extends State<SpotScreen> {
         // Removed auto-reconnect to prevent flickering
       }
     });
+  }
+
+  // Load Binance market data for dropdown
+  Future<void> _loadBinanceMarketData() async {
+    try {
+      setState(() {
+        _isLoadingMarkets = true;
+      });
+      
+      final marketData = await BinanceService.getTopTradingPairs(limit: 50);
+      
+      if (mounted) {
+        setState(() {
+          _binanceMarketData = marketData;
+          _isLoadingMarkets = false;
+        });
+      }
+    } catch (e) {
+      print('Error loading Binance market data: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingMarkets = false;
+        });
+      }
+    }
   }
 
   // Refresh all data
@@ -714,33 +746,19 @@ class _SpotScreenState extends State<SpotScreen> {
       // If USDT selected, amount is already in USDT; if BTC, convert to USDT
       final orderTotal = _selectedAmountCoin == 'USDT' ? amount : amount * price;
       
-      // Client-side balance validation with 3% fee buffer
-      if (_isBuy) {
-        final availableUsdt = _balance?['usdt_available'] ?? 0.0;
-        final requiredWithFee = orderTotal * 1.03; // 3% fee buffer
-        if (requiredWithFee > availableUsdt) {
-          _showMessage(
-            'Insufficient balance. Required: ~${requiredWithFee.toStringAsFixed(2)} USDT (with fees), Available: ${availableUsdt.toStringAsFixed(2)} USDT',
-            isError: true,
-          );
-          setState(() { _isLoading = false; });
-          return;
-        }
-      } else {
-        final availableBtc = _balance?['free'] ?? 0.0;
-        final requiredWithFee = amount * 1.03; // 3% fee buffer
-        if (requiredWithFee > availableBtc) {
-          _showMessage(
-            'Insufficient balance. Required: ~${requiredWithFee.toStringAsFixed(5)} BTC (with fees), Available: ${availableBtc.toStringAsFixed(5)} BTC',
-            isError: true,
-          );
-          setState(() { _isLoading = false; });
-          return;
-        }
-      }
+      // Parse available balance properly
+      final availableUsdt = double.tryParse(_balance?['usdt_available']?.toString() ?? '0') ?? 0.0;
+      final availableBtc = double.tryParse(_balance?['free']?.toString() ?? '0') ?? 0.0;
+      
+      // Use current price for Market orders since price is 0
+      final effectivePrice = price > 0 ? price : _currentPrice;
+      
+      // Convert amount to BTC quantity if USDT is selected for API
+      final qty = _selectedAmountCoin == 'USDT' ? amount / effectivePrice : amount;
       
       print('=== ORDER PLACEMENT ===');
-      print('Amount: $amount');
+      print('Amount (input): $amount');
+      print('Qty (BTC): $qty');
       print('Price: $price');
       print('Order Type: $_orderType');
       print('Side: ${_isBuy ? 'Buy' : 'Sell'}');
@@ -752,7 +770,7 @@ class _SpotScreenState extends State<SpotScreen> {
         symbol: _selectedSymbol,
         side: _isBuy ? 'Buy' : 'Sell',
         orderType: _orderType,
-        qty: amount,
+        qty: qty,
         price: price,
       );
 
@@ -920,6 +938,114 @@ class _SpotScreenState extends State<SpotScreen> {
     );
   }
 
+  // Show market dropdown with Binance market data
+  void _showMarketDropdown() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A1A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext context) {
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.7,
+          child: Column(
+            children: [
+              // Header
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2A2A2A),
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Select Market',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close, color: Colors.white),
+                    ),
+                  ],
+                ),
+              ),
+              // Market List
+              Expanded(
+                child: _binanceMarketData.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'No markets available',
+                          style: TextStyle(color: Colors.white54),
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: _binanceMarketData.length,
+                        itemBuilder: (context, index) {
+                          final market = _binanceMarketData[index];
+                          final symbol = market['symbol']?.toString() ?? 'BTCUSDT';
+                          final baseSymbol = symbol.replaceAll('USDT', '');
+                          final price = double.tryParse(market['price']?.toString() ?? '0.0') ?? 0.0;
+                          final change = double.tryParse(market['priceChangePercent']?.toString() ?? '0.0') ?? 0.0;
+                          final isSelected = symbol == _selectedSymbol;
+
+                          return ListTile(
+                            leading: CoinIconMapper.getCoinIcon(baseSymbol, size: 32),
+                            title: Text(
+                              baseSymbol,
+                              style: TextStyle(
+                                color: isSelected ? const Color(0xFF84BD00) : Colors.white,
+                                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                              ),
+                            ),
+                            subtitle: Text(
+                              '\$${price.toStringAsFixed(2)}',
+                              style: const TextStyle(color: Colors.white54, fontSize: 12),
+                            ),
+                            trailing: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: change >= 0
+                                    ? const Color(0xFF00C087).withOpacity(0.2)
+                                    : const Color(0xFFFF3B30).withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                '${change >= 0 ? '+' : ''}${change.toStringAsFixed(2)}%',
+                                style: TextStyle(
+                                  color: change >= 0 ? const Color(0xFF00C087) : const Color(0xFFFF3B30),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            tileColor: isSelected ? const Color(0xFF84BD00).withOpacity(0.1) : null,
+                            onTap: () {
+                              setState(() {
+                                _selectedSymbol = symbol;
+                                SpotService.currentSymbol = symbol;
+                              });
+                              Navigator.pop(context);
+                              _loadSpotData();
+                              _initializeWebSocket();
+                            },
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   // Show message
   void _showMessage(String message, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -963,22 +1089,33 @@ class _SpotScreenState extends State<SpotScreen> {
       backgroundColor: const Color(0xFF0D0D0D),
       elevation: 0,
       title: GestureDetector(
-        onTap: _showSymbolSelector,
-        child: Row(
-          children: [
-            Text(
-              _selectedSymbol.replaceAll('USDT', '/USDT'),
-              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(width: 8),
-            Icon(Icons.keyboard_arrow_down, color: Colors.white.withValues(alpha: 0.6), size: 20),
-            if (_isLoadingSymbols)
-              const SizedBox(
-                width: 16,
-                height: 16,
-                child: BitcoinLoadingIndicator(size: 16),
+        onTap: _showMarketDropdown,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1A1A1A),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFF2A2A2A)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CoinIconMapper.getCoinIcon(_selectedSymbol.replaceAll('USDT', ''), size: 20),
+              const SizedBox(width: 8),
+              Text(
+                _selectedSymbol.replaceAll('USDT', '/USDT'),
+                style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
               ),
-          ],
+              const SizedBox(width: 4),
+              Icon(Icons.keyboard_arrow_down, color: Colors.white.withValues(alpha: 0.6), size: 20),
+              if (_isLoadingMarkets)
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: BitcoinLoadingIndicator(size: 16),
+                ),
+            ],
+          ),
         ),
       ),
       actions: [
@@ -1635,8 +1772,8 @@ class _SpotScreenState extends State<SpotScreen> {
                     _sliderValue = percentage;
                     if (_isBuy) {
                       final availableUsdt = double.tryParse(_balance?['usdt_available']?.toString() ?? '10000') ?? 10000;
-                      // 2% fee buffer for 100% to ensure sufficient balance
-                      final feeBuffer = percentage >= 1.0 ? 0.98 : 1.0;
+                      // 10% fee buffer for 100% to ensure sufficient balance
+                      final feeBuffer = percentage >= 1.0 ? 0.90 : 1.0;
                       // If USDT selected, show USDT amount directly; else convert to BTC quantity
                       if (_selectedAmountCoin == 'USDT') {
                         _amount = availableUsdt * percentage * feeBuffer;
@@ -1645,8 +1782,8 @@ class _SpotScreenState extends State<SpotScreen> {
                       }
                     } else {
                       final availableBtc = double.tryParse(_balance?['free']?.toString() ?? '0.1') ?? 0.1;
-                      // 2% fee buffer for 100% to ensure sufficient balance
-                      final feeBuffer = percentage >= 1.0 ? 0.98 : 1.0;
+                      // 10% fee buffer for 100% to ensure sufficient balance
+                      final feeBuffer = percentage >= 1.0 ? 0.90 : 1.0;
                       final btcValue = availableBtc * _currentPrice;
                       // If USDT selected, show USDT value; else show BTC quantity
                       if (_selectedAmountCoin == 'USDT') {

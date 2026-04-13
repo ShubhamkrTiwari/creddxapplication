@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:io';
 import 'kyc_selfie_screen.dart';
 import 'kyc_pending_screen.dart';
 import '../services/user_service.dart';
@@ -15,8 +14,8 @@ class KYCDocumentScreen extends StatefulWidget {
 class _KYCDocumentScreenState extends State<KYCDocumentScreen> {
   String _selectedDocumentType = '';
   final _documentIdController = TextEditingController();
-  File? _frontImage;
-  File? _backImage;
+  XFile? _frontImage;
+  XFile? _backImage;
   List<String> _documentTypes = ['Passport', 'National ID', 'Driver License', 'Aadhaar Card', 'Voter ID'];
   bool _isLoading = false;
   final UserService _userService = UserService();
@@ -49,9 +48,9 @@ class _KYCDocumentScreenState extends State<KYCDocumentScreen> {
     if (pickedFile != null) {
       setState(() {
         if (imageType == 'front') {
-          _frontImage = File(pickedFile.path);
+          _frontImage = pickedFile;
         } else {
-          _backImage = File(pickedFile.path);
+          _backImage = pickedFile;
         }
       });
     }
@@ -223,7 +222,7 @@ class _KYCDocumentScreenState extends State<KYCDocumentScreen> {
     );
   }
 
-  Widget _buildImageUploadSection(String title, File? image, String imageType) {
+  Widget _buildImageUploadSection(String title, XFile? image, String imageType) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -245,8 +244,8 @@ class _KYCDocumentScreenState extends State<KYCDocumentScreen> {
             child: image != null
                 ? ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: Image.file(
-                      image,
+                    child: Image.network(
+                      image.path,
                       fit: BoxFit.cover,
                       errorBuilder: (context, error, stackTrace) {
                         return const Center(
@@ -356,7 +355,7 @@ class _KYCDocumentScreenState extends State<KYCDocumentScreen> {
       idNumber: _documentIdController.text,
       frontImage: _frontImage!,
       backImage: _backImage,
-      selfieImage: File(''), // Will be set in next screen
+      selfieImage: null, // Will be set in next screen
     );
 
     if (mounted) {

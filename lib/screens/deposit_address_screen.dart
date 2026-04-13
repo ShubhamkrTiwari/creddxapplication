@@ -1,5 +1,11 @@
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as path;
 import 'package:share_plus/share_plus.dart';
 import '../services/wallet_service.dart';
 import '../services/notification_service.dart';
@@ -26,11 +32,48 @@ class _DepositAddressScreenState extends State<DepositAddressScreen> {
   String? _address;
   bool _isLoading = true;
   String? _errorMessage;
+  final GlobalKey _shareCardKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
     _fetchDepositAddress();
+  }
+
+  Future<void> _shareAddressImage() async {
+    try {
+      // Find the RenderRepaintBoundary
+      final RenderRepaintBoundary boundary = _shareCardKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
+
+      // Capture the widget as an image
+      final ui.Image image = await boundary.toImage(pixelRatio: 3.0);
+      final ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+
+      if (byteData == null) {
+        throw Exception('Failed to generate image');
+      }
+
+      final Uint8List pngBytes = byteData.buffer.asUint8List();
+
+      // Save to temporary file
+      final tempDir = await getTemporaryDirectory();
+      final filePath = path.join(tempDir.path, 'deposit_address_${widget.coin}.png');
+      final file = File(filePath);
+      await file.writeAsBytes(pngBytes);
+
+      // Share the image file
+      await Share.shareXFiles(
+        [XFile(filePath)],
+        subject: '${widget.coin} Deposit Address',
+        text: 'Deposit ${widget.coin} on ${widget.network}',
+      );
+    } catch (e) {
+      // Fallback to text sharing if image generation fails
+      await Share.share(
+        'Deposit ${widget.coin} on ${widget.network} network:\n$_address',
+        subject: '${widget.coin} Deposit Address',
+      );
+    }
   }
 
   Future<void> _fetchDepositAddress() async {
@@ -122,60 +165,152 @@ class _DepositAddressScreenState extends State<DepositAddressScreen> {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     const SizedBox(height: 20),
-                    // Real QR Code Image
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Image.network(
-                        qrCodeUrl,
-                        width: 200,
-                        height: 200,
-                        fit: BoxFit.contain,
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
-                          return const SizedBox(
-                            width: 200,
-                            height: 200,
-                            child: Center(
-                              child: CircularProgressIndicator(
-                                color: Color(0xFF84BD00),
+                    // Shareable Card (similar to BingX design)
+                    RepaintBoundary(
+                      key: _shareCardKey,
+                      child: Container(
+                        padding: const EdgeInsets.all(24),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1C1C1E),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFF2C2C2E)),
+                        ),
+                        child: Column(
+                          children: [
+                            // Title
+                            Text(
+                              'Deposit ${widget.coin} to CreddX',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
-                          );
-                        },
-                        errorBuilder: (context, error, stackTrace) {
-                          return const SizedBox(
-                            width: 200,
-                            height: 200,
-                            child: Center(
-                              child: Icon(Icons.error_outline, color: Colors.red, size: 48),
+                            const SizedBox(height: 8),
+                            // Warning text
+                            Text(
+                              'Please ensure the sender enters the correct information. Any incorrect info may result in asset loss.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Colors.grey[400],
+                                fontSize: 12,
+                              ),
                             ),
-                          );
-                        },
+                            const SizedBox(height: 24),
+                            // QR Code with coin logo in center
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  Image.network(
+                                    qrCodeUrl,
+                                    width: 180,
+                                    height: 180,
+                                    fit: BoxFit.contain,
+                                    loadingBuilder: (context, child, loadingProgress) {
+                                      if (loadingProgress == null) return child;
+                                      return const SizedBox(
+                                        width: 180,
+                                        height: 180,
+                                        child: Center(
+                                          child: CircularProgressIndicator(
+                                            color: Color(0xFF84BD00),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return const SizedBox(
+                                        width: 180,
+                                        height: 180,
+                                        child: Center(
+                                          child: Icon(Icons.error_outline, color: Colors.red, size: 48),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                  // Coin logo in center
+                                  Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: Colors.white, width: 2),
+                                    ),
+                                    child: Center(
+                                      child: widget.coin.toUpperCase() == 'USDT'
+                                          ? const Icon(
+                                              Icons.currency_exchange,
+                                              color: Color(0xFF26A17B),
+                                              size: 24,
+                                            )
+                                          : Text(
+                                              widget.coin.length > 2
+                                                  ? widget.coin.substring(0, 2).toUpperCase()
+                                                  : widget.coin.toUpperCase(),
+                                              style: const TextStyle(
+                                                color: Color(0xFF84BD00),
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            // Currency row
+                            _buildInfoRow('Currency', widget.coin.toUpperCase()),
+                            const SizedBox(height: 12),
+                            // Network row
+                            _buildInfoRow('Network', widget.network),
+                            const SizedBox(height: 12),
+                            // Address row
+                            _buildAddressRow(_address!),
+                            const SizedBox(height: 16),
+                            // Warning about contract address
+                            Text(
+                              'Please do not deposit to the above address through a contract address.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Colors.grey[500],
+                                fontSize: 11,
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            // CreddX logo text
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.account_balance_wallet,
+                                  color: const Color(0xFF84BD00),
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'CreddX',
+                                  style: TextStyle(
+                                    color: Colors.grey[400],
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                     const SizedBox(height: 32),
-                    const Text(
-                      'Network',
-                      style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      widget.network,
-                      style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 32),
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Deposit Address',
-                        style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
+                    // Copy Address button
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
@@ -209,17 +344,12 @@ class _DepositAddressScreenState extends State<DepositAddressScreen> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 40),
+                    const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,
                       height: 50,
                       child: ElevatedButton(
-                        onPressed: _address != null ? () {
-                          Share.share(
-                            'Deposit ${widget.coin} on ${widget.network} network:\n$_address',
-                            subject: '${widget.coin} Deposit Address',
-                          );
-                        } : null,
+                        onPressed: _address != null ? _shareAddressImage : null,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF84BD00),
                           shape: RoundedRectangleBorder(
@@ -246,6 +376,61 @@ class _DepositAddressScreenState extends State<DepositAddressScreen> {
                 ),
               ),
             ),
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.grey[400],
+            fontSize: 14,
+          ),
+        ),
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAddressRow(String address) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Address',
+          style: TextStyle(
+            color: Colors.grey[400],
+            fontSize: 14,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                address,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

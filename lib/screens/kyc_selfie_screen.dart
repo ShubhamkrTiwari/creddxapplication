@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'kyc_pending_screen.dart';
 import '../services/user_service.dart';
 
 class KYCSelfieScreen extends StatefulWidget {
-  final File? frontImage;
-  final File? backImage;
+  final XFile? frontImage;
+  final XFile? backImage;
   final String? documentType;
   final String? documentId;
   
@@ -23,7 +23,7 @@ class KYCSelfieScreen extends StatefulWidget {
 }
 
 class _KYCSelfieScreenState extends State<KYCSelfieScreen> {
-  File? _selfieImage;
+  XFile? _selfieImage;
   bool _isLoading = false;
   final UserService _userService = UserService();
 
@@ -33,7 +33,7 @@ class _KYCSelfieScreenState extends State<KYCSelfieScreen> {
     
     if (pickedFile != null) {
       setState(() {
-        _selfieImage = File(pickedFile.path);
+        _selfieImage = pickedFile;
       });
     }
   }
@@ -148,15 +148,21 @@ class _KYCSelfieScreenState extends State<KYCSelfieScreen> {
             child: _selfieImage != null
                 ? ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: Image.file(
-                      _selfieImage!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return const Center(
-                          child: Icon(Icons.broken_image, color: Colors.white54, size: 40),
-                        );
-                      },
-                    ),
+                    child: kIsWeb 
+                      ? Image.network(
+                          _selfieImage!.path,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => const Center(
+                            child: Icon(Icons.broken_image, color: Colors.white54, size: 40),
+                          ),
+                        )
+                      : Image.network(
+                          _selfieImage!.path,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => const Center(
+                            child: Icon(Icons.broken_image, color: Colors.white54, size: 40),
+                          ),
+                        ),
                   )
                 : const Column(
                     mainAxisAlignment: MainAxisAlignment.center,

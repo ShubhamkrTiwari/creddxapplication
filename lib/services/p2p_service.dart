@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'auth_service.dart';
 import 'package:flutter/foundation.dart';
@@ -8,13 +7,18 @@ import '../utils/error_handler.dart';
 class P2PService {
   static const String _baseUrl = 'http://65.0.196.122:8085';
 
+  static get _selectedCrypto => null;
+
   static Future<Map<String, String>> _getHeaders() async {
     final token = await AuthService.getToken();
-    return {
+    final headers = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
-      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
     };
+    if (token != null && token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+    return headers;
   }
 
   static Future<Map<String, dynamic>?> _handleRequest(
@@ -34,14 +38,14 @@ class P2PService {
         );
         throw Exception(errorData['message'] ?? errorData['error'] ?? 'Request failed');
       }
-    } on SocketException {
-      ErrorHandler.logError('No internet connection', context);
-      throw Exception('No internet connection. Please check your network.');
     } on FormatException {
       ErrorHandler.logError('Invalid response format', context);
       throw Exception('Invalid response from server. Please try again.');
     } catch (e) {
       ErrorHandler.logError(e.toString(), context);
+      if (e.toString().contains('SocketException')) {
+        throw Exception('No internet connection. Please check your network.');
+      }
       rethrow;
     }
   }
@@ -142,9 +146,9 @@ class P2PService {
   // Mock P2P coins for development/testing
   static List<dynamic> _getMockP2PCoins() {
     return [
-      {'_id': 'USDT', 'coinSymbol': 'USDT', 'coinName': 'Tether', 'icon': ''},
-      {'_id': 'BTC', 'coinSymbol': 'BTC', 'coinName': 'Bitcoin', 'icon': ''},
-      {'_id': 'ETH', 'coinSymbol': 'ETH', 'coinName': 'Ethereum', 'icon': ''},
+      {'_id': '65a1234567890abcdef12345', 'coinSymbol': 'USDT', 'coinName': 'Tether', 'icon': ''},
+      {'_id': '65a1234567890abcdef12346', 'coinSymbol': 'BTC', 'coinName': 'Bitcoin', 'icon': ''},
+      {'_id': '65a1234567890abcdef12347', 'coinSymbol': 'ETH', 'coinName': 'Ethereum', 'icon': ''},
     ];
   }
 
@@ -321,72 +325,65 @@ class P2PService {
     try {
       final headers = await _getHeaders();
       
-      // Build query parameters
+      Future<List<dynamic>> fetchAds(Map<String, String> params) async {
+        final uri = Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/all').replace(queryParameters: params);
+        debugPrint('Fetching from: $uri');
+        final response = await http.get(uri, headers: await _getHeaders());
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          if (data is List) return data;
+          if (data is Map) {
+            final ads = data['finalData'] ?? data['data'] ?? data['result'] ?? data['docs'];
+            if (ads is List) return ads;
+            // Try any list in the response
+            for (var val in data.values) {
+              if (val is List) return val;
+            }
+          }
+        }
+        return [];
+      }
+
+      // 1. Try with all filters
       final queryParams = <String, String>{
-        if (coin != null) 'coinId': coin,
+        if (coin != null && coin.isNotEmpty) 'coinId': coin,
         if (direction != null) 'direction': direction.toString(),
         if (currency != null) 'currency': currency,
         if (amount != null) 'amount': amount.toString(),
         if (payMode != null) 'payMode': payMode,
-        if (limit != null) 'limit': limit.toString(),
-        if (page != null) 'page': page.toString(),
       };
       
-      // Build URI with query parameters
-      final uri = Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/all').replace(queryParameters: queryParams);
-      debugPrint('Fetching from: $uri');
+      List<dynamic> ads = await fetchAds(queryParams);
       
-      var response = await http.get(uri, headers: headers);
-      debugPrint('Response Status: ${response.statusCode}');
-      
-      if (response.statusCode != 200) {
-        debugPrint('Failed to fetch ads. Trying without coinId filter as fallback...');
-        final fallbackParams = Map<String, String>.from(queryParams)..remove('coinId');
-        final fallbackUri = Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/all').replace(queryParameters: fallbackParams);
-        debugPrint('Fallback fetching from: $fallbackUri');
-        response = await http.get(fallbackUri, headers: headers);
-        debugPrint('Fallback Response Status: ${response.statusCode}');
+      // 2. Fallback: Try with coinSymbol if coinId was used and returned nothing
+      // Many P2P systems use symbols like 'USDT' instead of MongoDB IDs
+      if (ads.isEmpty && coin != null && coin.length > 10) {
+        debugPrint('Empty results with ID, trying with coin symbol: $_selectedCrypto');
+        final params = <String, String>{
+          'coin': coin,  // Try with 'coin' parameter instead of 'coinId'
+          if (direction != null) 'direction': direction.toString(),
+        };
+        ads = await fetchAds(params);
       }
 
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        
-        List<dynamic> ads = [];
-        
-        if (data is List) {
-          ads = data;
-        } else if (data is Map) {
-          // Direct extraction of finalData which contains the ads list
-          if (data['finalData'] != null && data['finalData'] is List) {
-            ads = data['finalData'] as List<dynamic>;
-          } else if (data['data'] != null && data['data'] is List) {
-            ads = data['data'] as List<dynamic>;
-          } else if (data['result'] != null && data['result'] is List) {
-            ads = data['result'] as List<dynamic>;
-          } else {
-            // Try any list in the response
-            for (var key in data.keys) {
-              if (data[key] is List) {
-                ads = data[key] as List<dynamic>;
-                debugPrint('Found List in key: $key, count: ${ads.length}');
-                break;
-              }
-            }
-          }
-        }
-        
-        if (ads.isNotEmpty) {
-          debugPrint('Advertisements fetched: ${ads.length}');
-          return ads;
-        }
+      // 3. Fallback: Try without coinId if still empty
+      if (ads.isEmpty && queryParams.containsKey('coinId')) {
+        debugPrint('Empty results with coinId, trying without coinId (direction only)');
+        final params = {'direction': direction?.toString() ?? '2'};
+        ads = await fetchAds(params);
+      }
+
+      // 4. Fallback: Try without any filters if still empty (Absolute fallback)
+      if (ads.isEmpty) {
+        debugPrint('Still empty, trying absolute fallback (no filters)');
+        ads = await fetchAds({});
       }
       
-      debugPrint('No ads found from API, returning empty list');
-      return [];
+      debugPrint('Final advertisements count: ${ads.length}');
+      return ads;
       
-    } catch (e, stackTrace) { 
-      debugPrint('=== ADVERTISEMENTS FETCH ERROR ===');
-      debugPrint('Error: $e');
+    } catch (e) { 
+      debugPrint('=== ADVERTISEMENTS FETCH ERROR: $e ===');
       return [];
     }
   }
@@ -738,11 +735,15 @@ class P2PService {
     return null;
   }
 
-  static Future<String?> uploadChatImage(File imageFile) async {
+  static Future<String?> uploadChatImage(dynamic imageFile) async {
     try {
       final token = await AuthService.getToken();
       var request = http.MultipartRequest('POST', Uri.parse('$_baseUrl/p2p/v1/p2p/chat/image-upload'));
       request.headers.addAll({if (token != null) 'Authorization': 'Bearer $token'});
+      if (kIsWeb) {
+         // Handle web upload if needed, or skip
+         return null;
+      }
       request.files.add(await http.MultipartFile.fromPath('image', imageFile.path));
       var streamedResponse = await request.send();
       var response = await http.Response.fromStream(streamedResponse);
@@ -760,6 +761,40 @@ class P2PService {
         body: json.encode({'blockUserId': blockUserId, 'remark': remark}));
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (e) { return false; }
+  }
+
+  // --- P2P User Profile Details ---
+  static Future<Map<String, dynamic>?> getP2PUserDetails({required String userId}) async {
+    try {
+      debugPrint('=== P2P getP2PUserDetails called ===');
+      debugPrint('UserId: $userId');
+      
+      final response = await http.get(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/user/user-details?userId=$userId'),
+        headers: await _getHeaders(),
+      );
+      
+      debugPrint('P2P User Details API Status: ${response.statusCode}');
+      debugPrint('P2P User Details API Body: ${response.body}');
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        // Handle both wrapped and unwrapped responses
+        if (data is Map<String, dynamic>) {
+          if (data.containsKey('data')) {
+            return data['data'] as Map<String, dynamic>;
+          } else if (data.containsKey('user') || data.containsKey('stats')) {
+            return data;
+          }
+        }
+        return data is Map<String, dynamic> ? data : null;
+      } else {
+        debugPrint('P2P User Details API Error: ${response.statusCode} - ${response.body}');
+      }
+    } catch (e) {
+      debugPrint('P2P User Details fetch error: $e');
+    }
+    return null;
   }
 
   // --- Trusted Devices & Security ---
@@ -924,6 +959,34 @@ class P2PService {
       final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/user/trade-statistics'), headers: await _getHeaders());
       if (response.statusCode == 200) return json.decode(response.body);
     } catch (e) { debugPrint('Trade statistics error: $e'); }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> getUser30dTrades({required String userId}) async {
+    try {
+      debugPrint('=== Fetching User 30d Trades ===');
+      debugPrint('UserId: $userId');
+      
+      final response = await http.get(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/user/30d-trades?userId=$userId'),
+        headers: await _getHeaders(),
+      );
+      
+      debugPrint('30d Trades API Status: ${response.statusCode}');
+      debugPrint('30d Trades API Body: ${response.body}');
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data is Map<String, dynamic>) {
+          if (data.containsKey('data')) {
+            return data['data'] as Map<String, dynamic>;
+          }
+          return data;
+        }
+      }
+    } catch (e) {
+      debugPrint('30d trades fetch error: $e');
+    }
     return null;
   }
 

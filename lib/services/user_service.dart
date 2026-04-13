@@ -1,6 +1,5 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
-import 'dart:io';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'kyc_service.dart';
@@ -275,9 +274,9 @@ class UserService {
     required String documentType,
     required String documentId,
     required String idNumber,
-    required File frontImage,
-    required File? backImage,
-    required File selfieImage,
+    required dynamic frontImage,
+    required dynamic backImage,
+    required dynamic selfieImage,
   }) async {
     try {
       final result = await KYCService.submitKYC(
@@ -336,7 +335,7 @@ class UserService {
   }
 
   Future<Map<String, dynamic>> verifySelfie({
-    required File selfieImage,
+    required dynamic selfieImage,
     String? documentType,
     String? documentId,
   }) async {

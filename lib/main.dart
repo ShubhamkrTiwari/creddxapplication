@@ -1,17 +1,11 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:device_preview/device_preview.dart';
+import 'package:flutter/services.dart';
 import 'screens/splash_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  runApp(
-    DevicePreview(
-      enabled: kIsWeb,
-      builder: (context) => const CreddXApp(),
-    ),
-  );
+  runApp(const CreddXApp());
 }
 
 class CreddXApp extends StatelessWidget {
@@ -22,9 +16,6 @@ class CreddXApp extends StatelessWidget {
     return MaterialApp(
       title: 'CreddX',
       debugShowCheckedModeBanner: false,
-      useInheritedMediaQuery: true,
-      locale: DevicePreview.locale(context),
-      builder: DevicePreview.appBuilder,
       theme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: const Color(0xFF161618),
@@ -34,7 +25,6 @@ class CreddXApp extends StatelessWidget {
           primary: const Color(0xFF90C128),
         ),
         useMaterial3: true,
-        fontFamily: 'Inter', // Assuming standard Inter font as in many designs
       ),
       home: const SplashScreen(),
     );

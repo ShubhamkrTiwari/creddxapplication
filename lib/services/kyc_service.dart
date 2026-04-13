@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'dart:async';
-import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
@@ -24,7 +24,7 @@ class KYCService {
       }
 
       final response = await http.get(
-        Uri.parse('$_baseUrl/kyc/status/$userId'),
+        Uri.parse('$_baseUrl/user/v1/kyc/status/$userId'),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
@@ -71,9 +71,9 @@ class KYCService {
     required String documentType,
     required String documentId,
     required String idNumber,
-    required File frontImage,
-    required File? backImage,
-    required File selfieImage,
+    required dynamic frontImage,
+    required dynamic backImage,
+    required dynamic selfieImage,
   }) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -104,40 +104,63 @@ class KYCService {
       request.fields['idNumber'] = idNumber;
 
       // Add images
-      if (frontImage.existsSync()) {
-        final frontImageBytes = await frontImage.readAsBytes();
-        final frontFileName = frontImage.path.split('/').last;
-        request.files.add(
-          http.MultipartFile.fromBytes(
+      if (frontImage != null) {
+        if (kIsWeb) {
+          // On web, frontImage is likely XFile or similar
+          final bytes = await (frontImage as XFile).readAsBytes();
+          request.files.add(http.MultipartFile.fromBytes(
             'docFrontPic',
-            frontImageBytes,
-            filename: frontFileName,
-          ),
-        );
+            bytes,
+            filename: 'front.jpg',
+          ));
+        } else {
+          // On mobile, frontImage is likely File
+          final bytes = await frontImage.readAsBytes();
+          final fileName = frontImage.path.split('/').last;
+          request.files.add(http.MultipartFile.fromBytes(
+            'docFrontPic',
+            bytes,
+            filename: fileName,
+          ));
+        }
       }
 
-      if (backImage != null && backImage!.existsSync()) {
-        final backImageBytes = await backImage!.readAsBytes();
-        final backFileName = backImage!.path.split('/').last;
-        request.files.add(
-          http.MultipartFile.fromBytes(
+      if (backImage != null) {
+        if (kIsWeb) {
+          final bytes = await (backImage as XFile).readAsBytes();
+          request.files.add(http.MultipartFile.fromBytes(
             'docBackPic',
-            backImageBytes,
-            filename: backFileName,
-          ),
-        );
+            bytes,
+            filename: 'back.jpg',
+          ));
+        } else {
+          final bytes = await backImage.readAsBytes();
+          final fileName = backImage.path.split('/').last;
+          request.files.add(http.MultipartFile.fromBytes(
+            'docBackPic',
+            bytes,
+            filename: fileName,
+          ));
+        }
       }
 
-      if (selfieImage.existsSync()) {
-        final selfieImageBytes = await selfieImage.readAsBytes();
-        final selfieFileName = selfieImage.path.split('/').last;
-        request.files.add(
-          http.MultipartFile.fromBytes(
+      if (selfieImage != null) {
+        if (kIsWeb) {
+          final bytes = await (selfieImage as XFile).readAsBytes();
+          request.files.add(http.MultipartFile.fromBytes(
             'selfie_image',
-            selfieImageBytes,
-            filename: selfieFileName,
-          ),
-        );
+            bytes,
+            filename: 'selfie.jpg',
+          ));
+        } else {
+          final bytes = await selfieImage.readAsBytes();
+          final fileName = selfieImage.path.split('/').last;
+          request.files.add(http.MultipartFile.fromBytes(
+            'selfie_image',
+            bytes,
+            filename: fileName,
+          ));
+        }
       }
 
       // Send request
@@ -289,7 +312,7 @@ class KYCService {
 
   // Verify selfie
   static Future<Map<String, dynamic>> verifySelfie({
-    required File selfieImage,
+    required dynamic selfieImage,
     String? documentType,
     String? documentId,
   }) async {
@@ -327,16 +350,23 @@ class KYCService {
       }
 
       // Add selfie image
-      if (selfieImage.existsSync()) {
-        final selfieImageBytes = await selfieImage.readAsBytes();
-        final selfieFileName = selfieImage.path.split('/').last;
-        request.files.add(
-          http.MultipartFile.fromBytes(
+      if (selfieImage != null) {
+        if (kIsWeb) {
+          final bytes = await (selfieImage as XFile).readAsBytes();
+          request.files.add(http.MultipartFile.fromBytes(
             'selfie',
-            selfieImageBytes,
-            filename: selfieFileName,
-          ),
-        );
+            bytes,
+            filename: 'selfie.jpg',
+          ));
+        } else {
+          final bytes = await selfieImage.readAsBytes();
+          final fileName = selfieImage.path.split('/').last;
+          request.files.add(http.MultipartFile.fromBytes(
+            'selfie',
+            bytes,
+            filename: fileName,
+          ));
+        }
       }
 
       // Send request

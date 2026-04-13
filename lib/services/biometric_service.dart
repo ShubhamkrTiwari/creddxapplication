@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:device_info_plus/device_info_plus.dart';
-import 'dart:io';
+import 'package:flutter/foundation.dart';
 
 class BiometricService {
   static const String _biometricEnabledKey = 'biometric_enabled';
@@ -28,10 +28,14 @@ class BiometricService {
   // Get device ID
   static Future<String> getDeviceId() async {
     try {
-      if (Platform.isAndroid) {
+      if (kIsWeb) {
+        final webInfo = await DeviceInfoPlugin().webBrowserInfo;
+        return webInfo.userAgent ?? 'unknown_web';
+      }
+      if (defaultTargetPlatform == TargetPlatform.android) {
         AndroidDeviceInfo androidInfo = await DeviceInfoPlugin().androidInfo;
         return androidInfo.id;
-      } else if (Platform.isIOS) {
+      } else if (defaultTargetPlatform == TargetPlatform.iOS) {
         IosDeviceInfo iosInfo = await DeviceInfoPlugin().iosInfo;
         return iosInfo.identifierForVendor ?? 'unknown_ios';
       }

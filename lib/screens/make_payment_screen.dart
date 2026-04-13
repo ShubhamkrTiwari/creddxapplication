@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:io';
 import '../services/p2p_service.dart';
 import 'p2p_chat_detail_screen.dart';
 
@@ -39,7 +38,7 @@ class MakePaymentScreen extends StatefulWidget {
 class _MakePaymentScreenState extends State<MakePaymentScreen> {
   Duration _remainingTime = const Duration(minutes: 15);
   Timer? _timer;
-  File? _paymentScreenshot;
+  XFile? _paymentScreenshot;
   bool _isUploading = false;
 
   @override
@@ -87,21 +86,8 @@ class _MakePaymentScreenState extends State<MakePaymentScreen> {
       );
 
       if (image != null) {
-        final File imageFile = File(image.path);
-        
-        // Check file size (5MB limit)
-        final int fileSize = await imageFile.length();
-        if (fileSize > 5 * 1024 * 1024) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Image size must be less than 5MB'), backgroundColor: Colors.red),
-            );
-          }
-          return;
-        }
-
         setState(() {
-          _paymentScreenshot = imageFile;
+          _paymentScreenshot = image;
         });
       }
     } catch (e) {
@@ -342,8 +328,8 @@ class _MakePaymentScreenState extends State<MakePaymentScreen> {
                     children: [
                       ClipRRect(
                         borderRadius: BorderRadius.circular(10),
-                        child: Image.file(
-                          _paymentScreenshot!,
+                        child: Image.network(
+                          _paymentScreenshot!.path,
                           width: double.infinity,
                           height: double.infinity,
                           fit: BoxFit.cover,

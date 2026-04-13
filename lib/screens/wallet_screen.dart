@@ -31,6 +31,7 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
   List<Map<String, dynamic>> _cryptoHoldings = [];
   List<Map<String, dynamic>> _transferHistory = [];
   List<Map<String, dynamic>> _transactionHistory = [];
+  List<Map<String, dynamic>> _conversionHistory = [];
 
   @override
   void initState() {
@@ -38,7 +39,36 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
     WidgetsBinding.instance.addObserver(this);
     _tabController = TabController(length: 2, vsync: this);
     _fetchWalletData();
+    _fetchSpotBalance(); // Fetch spot balance via HTTP
     _connectWebSocketBalanceUpdates();
+  }
+
+  Future<void> _fetchSpotBalance() async {
+    debugPrint('=== Fetching Spot Balance via HTTP ===');
+    try {
+      final result = await SpotService.getBalance();
+      debugPrint('SpotService.getBalance result: $result');
+      
+      if (result['success'] == true && result['data'] != null) {
+        final data = result['data'];
+        final usdtAvailable = double.tryParse(data['usdt_available']?.toString() ?? '0') ?? 0.0;
+        final btcFree = double.tryParse(data['free']?.toString() ?? '0') ?? 0.0;
+        
+        debugPrint('Spot HTTP - USDT: $usdtAvailable, BTC: $btcFree');
+        
+        if (mounted) {
+          setState(() {
+            _walletBalances['spot'] = {
+              'total': usdtAvailable.toStringAsFixed(2),
+              'available': usdtAvailable.toStringAsFixed(2),
+              'locked': '0.00',
+            };
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching spot balance: $e');
+    }
   }
 
   @override
@@ -70,28 +100,38 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
     // Connect to WebSocket for real-time balance updates
     _balanceUpdateSubscription = SpotService.getBalanceUpdatesStream().listen(
       (balanceData) {
-        debugPrint('Balance update received via WebSocket: $balanceData');
+        debugPrint('=== WebSocket Balance Update Received ===');
+        debugPrint('Raw data: $balanceData');
+        
         if (mounted && _isScreenVisible) {
           // Update state immediately with new balance data only if screen is visible
           if (balanceData is Map<String, dynamic>) {
+            // WebSocket wraps data in 'data' key
+            final payload = balanceData['data'] ?? balanceData;
+            debugPrint('Extracted payload: $payload');
+            
             setState(() {
               // Handle different wallet types from WebSocket
-              String walletType = balanceData['wallet_type']?.toString() ?? 'spot';
-              String coin = balanceData['coin']?.toString()?.toUpperCase() ?? 'USDT';
-              double available = double.tryParse(balanceData['available']?.toString() ?? '0') ?? 0.0;
-              double locked = double.tryParse(balanceData['locked']?.toString() ?? '0') ?? 0.0;
-              double total = double.tryParse(balanceData['total']?.toString() ?? (available + locked).toString()) ?? (available + locked);
+              String walletType = payload['wallet_type']?.toString() ?? 'spot';
+              String coin = payload['coin']?.toString()?.toUpperCase() ?? 'USDT';
+              double available = double.tryParse(payload['available']?.toString() ?? '0') ?? 0.0;
+              double locked = double.tryParse(payload['locked']?.toString() ?? '0') ?? 0.0;
+              double total = double.tryParse(payload['total']?.toString() ?? (available + locked).toString()) ?? (available + locked);
+              
+              debugPrint('Parsed - walletType: $walletType, coin: $coin, available: $available, locked: $locked, total: $total');
               
               // Update specific wallet balance
               if (walletType == 'spot') {
                 // For spot wallet, use specific fields from spot service
-                final usdtAvailable = double.tryParse(balanceData['usdt_available']?.toString() ?? available.toString()) ?? available;
-                final btcFree = double.tryParse(balanceData['free']?.toString() ?? '0') ?? 0.0;
+                final usdtAvailable = double.tryParse(payload['usdt_available']?.toString() ?? available.toString()) ?? available;
+                final btcFree = double.tryParse(payload['free']?.toString() ?? '0') ?? 0.0;
+                
+                debugPrint('Spot wallet - usdtAvailable: $usdtAvailable, btcFree: $btcFree');
                 
                 _walletBalances['spot'] = {
                   'total': usdtAvailable.toStringAsFixed(2),
                   'available': usdtAvailable.toStringAsFixed(2),
-                  'locked': '0.00',
+                  'locked': locked.toStringAsFixed(2),
                 };
                 
                 // Update crypto holdings for spot
@@ -188,6 +228,7 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
       // Also fetch history
       final historyResult = await WalletService.getWalletTransferHistory();
       final transactionResult = await WalletService.getCompleteTransactionHistory(limit: 20);
+      final conversionResult = await WalletService.getConversionHistory(limit: 20);
       
       double totalEquityUSDT = 0.0;
       Map<String, dynamic> walletBreakdowns = {};
@@ -448,6 +489,37 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
         }
       }
 
+      // Process conversion history
+      if (conversionResult['success'] == true && conversionResult['data'] != null) {
+        final data = conversionResult['data'];
+        List<Map<String, dynamic>> conversions = [];
+        if (data is Map && data['conversions'] != null) {
+          conversions = (data['conversions'] as List).map((item) {
+            final conversion = Map<String, dynamic>.from(item);
+            // Mark as conversion type for UI display
+            conversion['transactionType'] = 'conversion';
+            conversion['isConversion'] = true;
+            return conversion;
+          }).toList();
+        } else if (data is List) {
+          conversions = data.map((item) {
+            final conversion = Map<String, dynamic>.from(item);
+            conversion['transactionType'] = 'conversion';
+            conversion['isConversion'] = true;
+            return conversion;
+          }).toList();
+        }
+        _conversionHistory = conversions;
+        // Merge conversion history with transaction history
+        _transactionHistory = [..._transactionHistory, ..._conversionHistory];
+        // Sort by date (newest first)
+        _transactionHistory.sort((a, b) {
+          final aDate = DateTime.tryParse(a['createdAt']?.toString() ?? '') ?? DateTime.now();
+          final bDate = DateTime.tryParse(b['createdAt']?.toString() ?? '') ?? DateTime.now();
+          return bDate.compareTo(aDate);
+        });
+      }
+
       if (mounted) {
         setState(() {
           _totalBalance = totalEquityUSDT;
@@ -484,6 +556,7 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
     _balanceRefreshTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
       if (mounted && _isScreenVisible) {
         _fetchWalletData();
+        _fetchSpotBalance(); // Also refresh spot balance via HTTP
       }
     });
   }
@@ -730,6 +803,14 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
             final total = double.tryParse(balance['total']?.toString() ?? '0') ?? 0.0;
             final locked = double.tryParse(balance['locked']?.toString() ?? '0') ?? 0.0;
             final available = double.tryParse(balance['available']?.toString() ?? '0') ?? 0.0;
+            
+            // Debug logging for spot wallet
+            if (walletCode == 'spot') {
+              debugPrint('=== Spot Wallet Debug ===');
+              debugPrint('_walletBalances: $_walletBalances');
+              debugPrint('balance: $balance');
+              debugPrint('total: $total, available: $available, locked: $locked');
+            }
             
             return Container(
               padding: const EdgeInsets.all(8),
@@ -1189,15 +1270,16 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
     final String coin = transaction['coin']?.toString() ?? 'USDT';
     final double amount = double.tryParse(transaction['amount']?.toString() ?? '0') ?? 0.0;
     final String status = transaction['status']?.toString() ?? 'Completed';
-    final DateTime date = transaction['createdAt'] != null 
+    final DateTime date = transaction['createdAt'] != null
         ? DateTime.tryParse(transaction['createdAt'].toString()) ?? DateTime.now()
         : DateTime.now();
     final String dateStr = DateFormat('dd MMM, HH:mm').format(date);
     final String walletType = transaction['walletType']?.toString() ?? '';
-    
+    final bool isConversion = transaction['isConversion'] == true || type.toLowerCase() == 'conversion';
+
     Color statusColor = const Color(0xFF84BD00);
     IconData typeIcon = Icons.swap_horiz;
-    
+
     switch (type.toLowerCase()) {
       case 'deposit':
       case 'credit':
@@ -1210,8 +1292,11 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
       case 'transfer':
         typeIcon = Icons.swap_horiz;
         break;
+      case 'conversion':
+        typeIcon = Icons.currency_exchange;
+        break;
     }
-    
+
     switch (status.toLowerCase()) {
       case 'pending':
         statusColor = Colors.orange;
@@ -1225,7 +1310,79 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
         statusColor = const Color(0xFF84BD00);
         break;
     }
-    
+
+    // Handle conversion transaction display
+    if (isConversion) {
+      final fromCurrency = transaction['fromCurrency']?.toString() ?? transaction['from_currency']?.toString() ?? 'INR';
+      final toCurrency = transaction['toCurrency']?.toString() ?? transaction['to_currency']?.toString() ?? 'USDT';
+      final fromAmount = double.tryParse(transaction['fromAmount']?.toString() ?? transaction['from_amount']?.toString() ?? '0') ?? 0.0;
+      final toAmount = double.tryParse(transaction['toAmount']?.toString() ?? transaction['to_amount']?.toString() ?? transaction['converted_amount']?.toString() ?? '0') ?? 0.0;
+      final rate = double.tryParse(transaction['rate']?.toString() ?? transaction['conversion_rate']?.toString() ?? '0') ?? 0.0;
+
+      return Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E1E20),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: const Color(0xFF26A17B).withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.currency_exchange, color: Color(0xFF26A17B), size: 16),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$fromCurrency → $toCurrency',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    dateStr,
+                    style: const TextStyle(color: Colors.white54, fontSize: 10),
+                  ),
+                  if (rate > 0)
+                    Text(
+                      'Rate: 1 $fromCurrency = ${rate.toStringAsFixed(4)} $toCurrency',
+                      style: const TextStyle(color: Colors.white38, fontSize: 9),
+                    ),
+                ],
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '${fromAmount.toStringAsFixed(2)} $fromCurrency',
+                  style: const TextStyle(color: Colors.white70, fontSize: 11, decoration: TextDecoration.lineThrough),
+                ),
+                Text(
+                  '${toAmount.toStringAsFixed(4)} $toCurrency',
+                  style: const TextStyle(color: Color(0xFF26A17B), fontWeight: FontWeight.bold, fontSize: 12),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  status[0].toUpperCase() + status.substring(1),
+                  style: TextStyle(color: statusColor, fontSize: 9, fontWeight: FontWeight.w500),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.all(10),

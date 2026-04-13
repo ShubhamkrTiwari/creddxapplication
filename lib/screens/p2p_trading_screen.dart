@@ -10,6 +10,7 @@ import 'p2p_trading_orders_screen.dart';
 import 'p2p_buy_screen.dart';
 import 'p2p_sell_screen.dart';
 import 'create_advertisement_screen.dart';
+import 'p2p_user_profile_screen.dart';
 
 class P2PTradingScreen extends StatefulWidget {
   const P2PTradingScreen({super.key});
@@ -177,7 +178,7 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
       child: GestureDetector(
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 12),
+          padding: const EdgeInsets.symmetric(vertical: 8),
           decoration: BoxDecoration(
             color: isSelected ? (label == 'Buy' ? const Color(0xFF84BD00) : Colors.redAccent) : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
@@ -277,6 +278,12 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
                      advertiser['name'] ?? 
                      advertiser['firstName'] ??
                      'Trader';
+    final userId = ad['userId'] ?? 
+                   ad['user_id'] ?? 
+                   ad['advertiserId'] ?? 
+                   ad['advertiser']?['_id'] ??
+                   advertiser['_id'] ??
+                   ad['_id'] ?? '';
     
     // Handle different field names for completion rate/trade count from advertiser object
     final completionRate = advertiser['tradeCompletionPercentage'] ?? 
@@ -338,35 +345,59 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // User info row
-          Row(
-            children: [
-              CircleAvatar(
-                radius: 16, 
-                backgroundColor: const Color(0xFF5C4B2A), 
-                child: Text(
-                  userName.isNotEmpty ? userName[0].toUpperCase() : 'T', 
-                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)
-                )
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(userName, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 1),
-                    Row(
-                      children: [
-                        Text('$completionRate completion', style: const TextStyle(color: Color(0xFF84BD00), fontSize: 11)),
-                        const SizedBox(width: 6),
-                        Text('($tradeCount orders)', style: const TextStyle(color: Colors.white54, fontSize: 11)),
-                      ],
+          // User info row - clickable to view profile
+          GestureDetector(
+            onTap: () {
+              debugPrint('=== Ad Clicked ===');
+              debugPrint('userId extracted: $userId');
+              debugPrint('userName: $userName');
+              debugPrint('Full ad data: $ad');
+              if (userId.isNotEmpty) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => P2PUserProfileScreen(
+                      userId: userId,
+                      userName: userName,
                     ),
-                  ],
+                  ),
+                );
+              } else {
+                debugPrint('ERROR: userId is empty!');
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('User ID not available')),
+                );
+              }
+            },
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 16, 
+                  backgroundColor: const Color(0xFF5C4B2A), 
+                  child: Text(
+                    userName.isNotEmpty ? userName[0].toUpperCase() : 'T', 
+                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)
+                  )
                 ),
-              ),
-            ],
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(userName, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 1),
+                      Row(
+                        children: [
+                          Text('$completionRate completion', style: const TextStyle(color: Color(0xFF84BD00), fontSize: 11)),
+                          const SizedBox(width: 6),
+                          Text('($tradeCount orders)', style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 10),
           

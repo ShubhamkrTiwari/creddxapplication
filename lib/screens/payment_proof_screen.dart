@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
@@ -27,7 +27,7 @@ class PaymentProofScreen extends StatefulWidget {
 class _PaymentProofScreenState extends State<PaymentProofScreen> {
   final TextEditingController _transactionIdController = TextEditingController();
   final ImagePicker _picker = ImagePicker();
-  File? _selectedImage;
+  XFile? _selectedImage;
   bool _isLoading = false;
   Map<String, dynamic>? _bankDetails;
 
@@ -70,7 +70,7 @@ class _PaymentProofScreenState extends State<PaymentProofScreen> {
     );
     if (image != null) {
       setState(() {
-        _selectedImage = File(image.path);
+        _selectedImage = image;
       });
     }
   }
@@ -103,10 +103,19 @@ class _PaymentProofScreenState extends State<PaymentProofScreen> {
       request.fields['senderAccountName'] = accountName;
       
       if (_selectedImage != null) {
-        request.files.add(await http.MultipartFile.fromPath(
-          'screenshot',
-          _selectedImage!.path,
-        ));
+        if (kIsWeb) {
+          final bytes = await _selectedImage!.readAsBytes();
+          request.files.add(http.MultipartFile.fromBytes(
+            'screenshot',
+            bytes,
+            filename: _selectedImage!.name,
+          ));
+        } else {
+          request.files.add(await http.MultipartFile.fromPath(
+            'screenshot',
+            _selectedImage!.path,
+          ));
+        }
       }
 
       final streamedResponse = await request.send();
@@ -204,12 +213,6 @@ class _PaymentProofScreenState extends State<PaymentProofScreen> {
                     color: const Color(0xFF3C3C3E),
                     style: BorderStyle.solid,
                   ),
-                  image: _selectedImage != null
-                      ? DecorationImage(
-                          image: FileImage(_selectedImage!),
-                          fit: BoxFit.cover,
-                        )
-                      : null,
                 ),
                 child: _selectedImage == null
                     ? Column(
@@ -239,7 +242,13 @@ class _PaymentProofScreenState extends State<PaymentProofScreen> {
                           ),
                         ],
                       )
-                    : null,
+                    : ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.network(
+                          _selectedImage!.path,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
               ),
             ),
             const SizedBox(height: 24),

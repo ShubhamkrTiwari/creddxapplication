@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/kyc_service.dart';
@@ -13,8 +13,8 @@ class KYCTestScreen extends StatefulWidget {
 class _KYCTestScreenState extends State<KYCTestScreen> {
   final _docIdController = TextEditingController(text: '6969cb81e94cf19f6333b083');
   final _idNumberController = TextEditingController(text: '390059292656');
-  File? _frontImage;
-  File? _backImage;
+  XFile? _frontImage;
+  XFile? _backImage;
   bool _isLoading = false;
   String _result = '';
 
@@ -32,9 +32,9 @@ class _KYCTestScreenState extends State<KYCTestScreen> {
     if (pickedFile != null) {
       setState(() {
         if (imageType == 'front') {
-          _frontImage = File(pickedFile.path);
+          _frontImage = pickedFile;
         } else {
-          _backImage = File(pickedFile.path);
+          _backImage = pickedFile;
         }
       });
     }
@@ -155,7 +155,7 @@ class _KYCTestScreenState extends State<KYCTestScreen> {
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: _frontImage != null
-                          ? Image.file(_frontImage!, fit: BoxFit.cover)
+                          ? Image.network(_frontImage!.path, fit: BoxFit.cover)
                           : const Center(
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
@@ -179,7 +179,7 @@ class _KYCTestScreenState extends State<KYCTestScreen> {
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: _backImage != null
-                          ? Image.file(_backImage!, fit: BoxFit.cover)
+                          ? Image.network(_backImage!.path, fit: BoxFit.cover)
                           : const Center(
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,

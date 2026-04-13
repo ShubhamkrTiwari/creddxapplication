@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'dart:async';
-import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -225,9 +224,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           'type': 'subscribe',
           'channel': 'balance',
         });
-      } on SocketException catch (e) {
-        debugPrint('SocketException: ${e.message}');
-        _handleSocketException(e);
       } on TimeoutException catch (e) {
         debugPrint('TimeoutException: ${e.message}');
         _handleTimeoutException(e);
@@ -301,33 +297,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     _fetchBalanceViaHttp();
   }
   
-  void _handleSocketException(SocketException e) {
-    debugPrint('SocketException details: ${e.osError?.message}');
-    String userMessage = 'Network connection failed';
-    String? errorMessage = e.osError?.message;
-    
-    if (errorMessage != null && errorMessage.contains('Connection refused')) {
-      userMessage = 'Server is not responding';
-    } else if (errorMessage != null && errorMessage.contains('Network is unreachable')) {
-      userMessage = 'No internet connection';
-    } else if (errorMessage != null && errorMessage.contains('Host is down')) {
-      userMessage = 'Server is temporarily unavailable';
-    } else if (errorMessage != null && errorMessage.contains('Connection timed out')) {
-      userMessage = 'Connection timed out';
-    }
-    
-    if (mounted) {
-      setState(() {
-        _isLoadingWallet = false;
-        _walletBalances = {};
-        _walletError = userMessage;
-      });
-    }
-    
-    // Try HTTP fallback
-    _fetchBalanceViaHttp();
-  }
-  
   void _handleTimeoutException(TimeoutException e) {
     debugPrint('Connection timeout: ${e.message}');
     if (mounted) {
@@ -366,10 +335,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   // Check network connectivity before attempting connection
   Future<bool> _checkNetworkConnectivity() async {
     try {
-      final result = await InternetAddress.lookup('google.com');
-      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
-    } on SocketException catch (_) {
-      return false;
+      if (kIsWeb) return true; // Assume connectivity on web
+      // For mobile, we might want to use a package like connectivity_plus 
+      // but for now, we'll just return true to avoid dart:io dependency
+      return true;
     } catch (e) {
       debugPrint('Network check error: $e');
       return false;
@@ -1743,10 +1712,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     return Row(
       children: [
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Trusted Device', style: TextStyle(color: Colors.white38, fontSize: 11)),
+          child: Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Trusted device', style: TextStyle(color: Colors.white38, fontSize: 11)),
               const SizedBox(height: 4),
               Text(trusted, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
               const SizedBox(height: 12),
@@ -1755,6 +1726,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               Text(date, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
             ],
           ),
+        ),
         ),
         Expanded(
           child: Column(
@@ -1800,15 +1772,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           
 
           
-          // Trusted Devices Subsection
-          const Text(
-            'Trusted Devices',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+
           const SizedBox(height: 12),
           
           // Trusted Devices Content

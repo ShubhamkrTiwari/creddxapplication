@@ -918,6 +918,60 @@ class WalletService {
     }
   }
 
+  // Fetch INR/USDT conversion history
+  // type: 1 = INR to USDT, 2 = USDT to INR, null = all conversions
+  static Future<Map<String, dynamic>> getConversionHistory({
+    int? type,
+    int? page = 1,
+    int? limit = 50,
+    String? startDate,
+    String? endDate,
+  }) async {
+    try {
+      final queryParams = <String, String>{
+        if (type != null) 'type': type.toString(),
+        if (page != null) 'page': page.toString(),
+        if (limit != null) 'limit': limit.toString(),
+        if (startDate != null) 'startDate': startDate,
+        if (endDate != null) 'endDate': endDate,
+      };
+
+      final uri = Uri.parse('$baseUrl/v1/wallet/inr/conversion-history')
+          .replace(queryParameters: queryParams);
+
+      debugPrint('Fetching conversion history from: $uri');
+      final response = await http.get(
+        uri,
+        headers: await _getHeaders(),
+      );
+
+      debugPrint('Conversion History API Response Status: ${response.statusCode}');
+      debugPrint('Conversion History API Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        debugPrint('Parsed Conversion History Data: $data');
+        final resultData = data['data'] ?? data;
+        return {
+          'success': true,
+          'data': resultData,
+        };
+      } else {
+        debugPrint('Conversion History API failed with status: ${response.statusCode}');
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching conversion history: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
   static Future<Map<String, dynamic>?> submitInrWithdrawal({
     required double amount,
     required String paymentMode,
