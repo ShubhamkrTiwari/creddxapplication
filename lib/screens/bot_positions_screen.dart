@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
+import 'bot_balance_history_screen.dart';
 import 'dart:math' as math;
 
 class BotPositionsScreen extends StatefulWidget {
@@ -95,28 +96,28 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
           'Open Positions',
           style: TextStyle(
             color: Colors.white,
-            fontSize: 20,
+            fontSize: 18,
             fontWeight: FontWeight.bold,
           ),
         ),
       ),
-      body: Column(
-        children: [
-          _buildStrategyHeader(),
-          _buildTimeframeSelector(),
-          _buildTradingChart(),
-          _buildPositionDetails(),
-          const SizedBox(height: 20),
-          Expanded(
-            child: _isLoading 
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            _buildStrategyHeader(),
+            _buildTimeframeSelector(),
+            _buildTradingChart(),
+            _buildPositionDetails(),
+            const SizedBox(height: 20),
+            _isLoading
               ? const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)))
               : _errorMessage != null
                 ? _buildErrorWidget()
                 : _positions.isEmpty
                   ? _buildEmptyWidget()
                   : _buildPositionsList(),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -138,19 +139,29 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
             'Strategy: ${_positionData!['strategy'] ?? 'Unknown'}',
             style: const TextStyle(
               color: Color(0xFF84BD00),
-              fontSize: 18,
+              fontSize: 16,
               fontWeight: FontWeight.bold,
             ),
           ),
           ElevatedButton(
             onPressed: () {
-              // TODO: Navigate to balance growth screen
+              final strategy = _positionData?['strategy']?.toString() ?? 'Omega';
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => BotBalanceHistoryScreen(
+                    strategy: strategy,
+                  ),
+                ),
+              );
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF84BD00),
               foregroundColor: Colors.black,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
-            child: const Text('View Balance Growth'),
+            child: const Text('Balance Growth'),
           ),
         ],
       ),
@@ -361,6 +372,8 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
     return ListView.builder(
       itemCount: _positions.length,
       padding: const EdgeInsets.all(16),
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
       itemBuilder: (context, index) {
         final position = _positions[index];
         return _buildPositionCard(position);

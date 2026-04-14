@@ -808,6 +808,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   _buildProfileInfoRow('Sign-Up Time', _userService.signUpTime ?? '12/11/2025 | 12:30:45'),
                   const SizedBox(height: 12),
                   _buildProfileInfoRow('Last Log-In', _userService.lastLogin ?? '11/12/2025 | 11:02:12'),
+                  const SizedBox(height: 12),
+                  _buildProfileInfoRow('IP Address', _userService.ipAddress ?? 'Not available'),
                   const SizedBox(height: 24),
                   _buildKYCTile(),
                   const SizedBox(height: 24),

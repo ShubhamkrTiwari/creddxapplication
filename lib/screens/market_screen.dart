@@ -627,9 +627,11 @@ class _MarketScreenState extends State<MarketScreen> with TickerProviderStateMix
                   userName: userName,
                   price: price.toString(),
                   available: ad['amount'].toString(),
-                  paymentMethods: ad['paymentMode'] is List 
-                    ? List<String>.from(ad['paymentMode']) 
+                  paymentMethods: ad['paymentMode'] is List
+                    ? List<String>.from(ad['paymentMode'])
                     : [ad['paymentMode'] ?? 'Bank Transfer'],
+                  minLimit: minAmount,
+                  maxLimit: maxAmount,
                 )
               )
             );

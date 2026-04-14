@@ -306,7 +306,9 @@ class _FuturesScreenState extends State<FuturesScreen> with TickerProviderStateM
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFF3B30).withOpacity(0.15),
+                  color: _priceChange >= 0
+                      ? const Color(0xFF00C087).withOpacity(0.15)
+                      : const Color(0xFFFF3B30).withOpacity(0.15),
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(

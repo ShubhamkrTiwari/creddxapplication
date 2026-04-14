@@ -452,16 +452,26 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
               const SizedBox(width: 8),
               ElevatedButton(
                 onPressed: () {
+                  final extractedAdId = ad['_id'] ?? ad['id'] ?? ad['advertisementId'] ?? '';
+                  debugPrint('DEBUG: Full ad data: $ad');
+                  debugPrint('DEBUG: Extracted adId: $extractedAdId');
+                  debugPrint('DEBUG: ad._id: ${ad['_id']}, ad.id: ${ad['id']}, ad.advertisementId: ${ad['advertisementId']}');
+                  if (extractedAdId.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Error: Ad ID is missing'), backgroundColor: Colors.red));
+                    return;
+                  }
                   Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (context) => P2PPlaceOrderScreen(
-                        adId: ad['_id'] ?? ad['id'] ?? ad['advertisementId'] ?? '',
+                        adId: extractedAdId,
                         orderType: _isBuySelected ? 'buy' : 'sell',
                         userName: userName,
                         price: price.toString(),
                         available: available.toString(),
                         paymentMethods: paymentModes.map<String>((e) => e.toString()).toList(),
+                        minLimit: (minLimit is num) ? minLimit.toDouble() : double.tryParse(minLimit.toString()) ?? 100.0,
+                        maxLimit: (maxLimit is num) ? maxLimit.toDouble() : double.tryParse(maxLimit.toString()) ?? 4800.0,
                       ),
                     ),
                   );

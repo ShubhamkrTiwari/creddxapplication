@@ -11,6 +11,8 @@ class P2PPlaceOrderScreen extends StatefulWidget {
   final String price;
   final String available;
   final List<String> paymentMethods;
+  final double minLimit;
+  final double maxLimit;
 
   const P2PPlaceOrderScreen({
     super.key,
@@ -20,6 +22,8 @@ class P2PPlaceOrderScreen extends StatefulWidget {
     required this.price,
     required this.available,
     required this.paymentMethods,
+    required this.minLimit,
+    required this.maxLimit,
   });
 
   @override
@@ -56,10 +60,10 @@ class _P2PPlaceOrderScreenState extends State<P2PPlaceOrderScreen> {
     final inrValue = amount * price;
     final available = double.tryParse(widget.available) ?? 0.0;
     
-    if (inrValue < 150) {
-      setState(() => _errorMessage = 'Amount must be at least 150 INR');
-    } else if (inrValue > 398) {
-      setState(() => _errorMessage = 'Amount must be at most 398 INR');
+    if (inrValue < widget.minLimit) {
+      setState(() => _errorMessage = 'Amount must be at least ${widget.minLimit.toStringAsFixed(0)} INR');
+    } else if (inrValue > widget.maxLimit) {
+      setState(() => _errorMessage = 'Amount must be at most ${widget.maxLimit.toStringAsFixed(0)} INR');
     } else if (amount > available) {
       setState(() => _errorMessage = 'Amount exceeds available ${widget.available} USDT');
     } else {
@@ -79,12 +83,24 @@ class _P2PPlaceOrderScreenState extends State<P2PPlaceOrderScreen> {
       return;
     }
 
+    if (widget.adId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Error: Invalid Ad ID'), backgroundColor: Colors.red));
+      return;
+    }
+
+    if (_errorMessage != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_errorMessage!), backgroundColor: Colors.red));
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     try {
       // Convert order type to direction (1=Buy, 2=Sell)
       int direction = widget.orderType == 'buy' ? 1 : 2;
-      
+
+      debugPrint('DEBUG: Placing order - adId: ${widget.adId}, quantity: ${_amountController.text}, direction: $direction, payMethod: $_selectedPaymentMethod');
+
       final result = await P2PService.placeOrder(
         adId: widget.adId,
         quantity: double.tryParse(_amountController.text) ?? 0.0,
@@ -200,7 +216,7 @@ class _P2PPlaceOrderScreenState extends State<P2PPlaceOrderScreen> {
           children: [
             Text('Price: ${widget.price} INR', style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 12)),
             const Text(' | ', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 12)),
-            Text('Limit: 89 - 110 INR', style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 12)),
+            Text('Limit: ${widget.minLimit.toStringAsFixed(0)} - ${widget.maxLimit.toStringAsFixed(0)} INR', style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 12)),
             const Text(' | ', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 12)),
             Text('Available: ${widget.available}', style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 12)),
           ],

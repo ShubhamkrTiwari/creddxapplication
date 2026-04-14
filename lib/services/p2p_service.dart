@@ -594,12 +594,17 @@ class P2PService {
       debugPrint('Placing P2P order with data: ${json.encode(orderData)}');
       final response = await http.post(Uri.parse('$_baseUrl/p2p/v1/p2p/order/create'),
           headers: await _getHeaders(), body: json.encode(orderData));
-      
+
+      debugPrint('Place order response status: ${response.statusCode}');
+      debugPrint('Place order response body: ${response.body}');
+
       if (response.statusCode == 200 || response.statusCode == 201) {
         return json.decode(response.body);
       } else {
         final errorData = response.body.isNotEmpty ? json.decode(response.body) : {};
-        throw Exception(errorData['message'] ?? errorData['error'] ?? 'Failed to place order');
+        final errorMessage = errorData['message'] ?? errorData['error'] ?? 'Failed to place order (HTTP ${response.statusCode})';
+        debugPrint('Place order error: $errorMessage');
+        throw Exception(errorMessage);
       }
     } catch (e) {
       ErrorHandler.logError(e.toString(), 'placeOrder');
