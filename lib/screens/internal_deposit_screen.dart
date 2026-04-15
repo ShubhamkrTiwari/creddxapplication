@@ -14,7 +14,7 @@ class _InternalDepositScreenState extends State<InternalDepositScreen> with Sing
   final _amountController = TextEditingController();
   final _noteController = TextEditingController();
   String _selectedCoin = 'USDT';
-  List<String> _coinOptions = ['USDT', 'BTC', 'ETH', 'BNB'];
+  List<String> _coinOptions = ['USDT'];
   bool _isLoading = false;
   bool _isHistoryLoading = false;
   double _availableBalance = 0.0;
@@ -69,9 +69,8 @@ class _InternalDepositScreenState extends State<InternalDepositScreen> with Sing
   Future<void> _fetchTransferHistory() async {
     setState(() => _isHistoryLoading = true);
     try {
-      // Use existing wallet transactions API with internal transfer type
-      final result = await WalletService.getWalletTransactions(
-        transactionType: 'internal_transfer',
+      // Use internal transfer history API
+      final result = await WalletService.getInternalTransferHistory(
         limit: 20,
       );
 
@@ -79,10 +78,21 @@ class _InternalDepositScreenState extends State<InternalDepositScreen> with Sing
         final data = result['data'];
         List<Map<String, dynamic>> transactions = [];
 
-        if (data['transactions'] != null && data['transactions'] is List) {
-          transactions = List<Map<String, dynamic>>.from(data['transactions']);
-        } else if (data is List) {
+        // Handle various API response formats
+        if (data is List) {
+          // Direct list of transactions
           transactions = List<Map<String, dynamic>>.from(data);
+        } else if (data is Map) {
+          // Check common nested fields
+          if (data['transactions'] != null && data['transactions'] is List) {
+            transactions = List<Map<String, dynamic>>.from(data['transactions']);
+          } else if (data['data'] != null && data['data'] is List) {
+            transactions = List<Map<String, dynamic>>.from(data['data']);
+          } else if (data['docs'] != null && data['docs'] is List) {
+            transactions = List<Map<String, dynamic>>.from(data['docs']);
+          } else if (data['results'] != null && data['results'] is List) {
+            transactions = List<Map<String, dynamic>>.from(data['results']);
+          }
         }
 
         setState(() {
@@ -123,10 +133,8 @@ class _InternalDepositScreenState extends State<InternalDepositScreen> with Sing
     try {
       // Call wallet service for internal transfer
       final result = await WalletService.internalTransfer(
-        toUserId: _recipientUidController.text.trim(),
-        coin: _selectedCoin,
+        receiverUid: _recipientUidController.text.trim(),
         amount: amount,
-        note: _noteController.text.trim(),
       ) as Map<String, dynamic>;
 
       if (result['success'] == true) {
@@ -414,30 +422,6 @@ class _InternalDepositScreenState extends State<InternalDepositScreen> with Sing
 
             const SizedBox(height: 20),
 
-            // Note (Optional)
-            const Text(
-              'Note (Optional)',
-              style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w500),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              decoration: BoxDecoration(
-                color: const Color(0xFF1C1C1E),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFF2A2A2C)),
-              ),
-              child: TextField(
-                controller: _noteController,
-                style: const TextStyle(color: Colors.white),
-                maxLines: 2,
-                decoration: InputDecoration(
-                  hintText: 'Add a note for this transfer...',
-                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 14),
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.all(16),
-                ),
-              ),
-            ),
 
             const SizedBox(height: 32),
 
@@ -506,13 +490,14 @@ class _InternalDepositScreenState extends State<InternalDepositScreen> with Sing
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Header row
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Row(
               children: [
                 const Text(
-                  'Recent Transfers',
+                  'Transfer History',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 16,
@@ -557,196 +542,267 @@ class _InternalDepositScreenState extends State<InternalDepositScreen> with Sing
               ),
           ],
         ),
-        const SizedBox(height: 16),
-        if (_transferHistory.isEmpty && !_isHistoryLoading)
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1C1C1E),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Center(
-              child: Column(
-                children: [
-                  Icon(
-                    Icons.history,
-                    color: Colors.white.withOpacity(0.3),
-                    size: 40,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'No transfer history yet',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.5),
-                      fontSize: 14,
+        const SizedBox(height: 12),
+        // Table with horizontal scroll
+        Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFF1C1C1E),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Table Header
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                  decoration: const BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(color: Color(0xFF2A2A2C), width: 1),
                     ),
                   ),
-                ],
-              ),
+                  child: Row(
+                    children: [
+                      _tableHeader('Date', width: 100),
+                      _tableHeader('From/To', width: 110),
+                      _tableHeader('Type', width: 50),
+                      _tableHeader('Amt', width: 40),
+                      _tableHeader('Sts', width: 60),
+                    ],
+                  ),
+                ),
+                // Table Body
+                if (_transferHistory.isEmpty && !_isHistoryLoading)
+                  Container(
+                    width: 360,
+                    padding: const EdgeInsets.all(24),
+                    child: Center(
+                      child: Column(
+                        children: [
+                          Icon(
+                            Icons.history,
+                            color: Colors.white.withOpacity(0.3),
+                            size: 32,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'No transfer history yet',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.5),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  SizedBox(
+                    width: 360,
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: _transferHistory.length,
+                      separatorBuilder: (context, index) => const Divider(
+                        color: Color(0xFF2A2A2C),
+                        height: 1,
+                        indent: 8,
+                        endIndent: 8,
+                      ),
+                      itemBuilder: (context, index) {
+                        final transaction = _transferHistory[index];
+                        return _buildHistoryRow(transaction);
+                      },
+                    ),
+                  ),
+              ],
             ),
-          )
-        else
-          ListView.separated(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: _transferHistory.length,
-            separatorBuilder: (context, index) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final transaction = _transferHistory[index];
-              return _buildHistoryItem(transaction);
-            },
+          ),
+        ),
+        // Pagination
+        if (_transferHistory.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.only(top: 16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _paginationButton(Icons.chevron_left, false),
+                Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF84BD00),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Text(
+                    '1',
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                _paginationButton(Icons.chevron_right, false),
+              ],
+            ),
           ),
       ],
     );
   }
 
-  Widget _buildHistoryItem(Map<String, dynamic> transaction) {
+  Widget _tableHeader(String text, {required double width}) {
+    return SizedBox(
+      width: width,
+      child: Text(
+        text,
+        style: TextStyle(
+          color: Colors.white.withOpacity(0.6),
+          fontSize: 10,
+          fontWeight: FontWeight.w500,
+        ),
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
+  Widget _paginationButton(IconData icon, bool isActive) {
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Icon(
+        icon,
+        color: Colors.white.withOpacity(0.5),
+        size: 20,
+      ),
+    );
+  }
+
+  Widget _buildHistoryRow(Map<String, dynamic> transaction) {
     final coin = transaction['coin']?.toString() ?? 'USDT';
     final amount = double.tryParse(transaction['amount']?.toString() ?? '0') ?? 0.0;
-    final toUserId = transaction['toUserId']?.toString() ?? transaction['recipientId']?.toString() ?? 'Unknown';
+    final receiverUid = transaction['receiverUid']?.toString() ?? transaction['toUserId']?.toString() ?? transaction['recipientId']?.toString() ?? 'Unknown';
     final status = transaction['status']?.toString() ?? 'completed';
     final timestamp = transaction['createdAt']?.toString() ?? transaction['timestamp']?.toString() ?? '';
-    final note = transaction['note']?.toString();
+    final type = transaction['type']?.toString() ?? 'sent';
+    final senderUid = transaction['senderUid']?.toString() ?? 'UID';
+
+    // Determine if sent or received
+    final isReceived = type.toLowerCase() == 'received';
 
     // Format timestamp
-    String timeAgo = '';
+    String formattedDate = '';
     if (timestamp.isNotEmpty) {
       try {
         final date = DateTime.parse(timestamp);
-        final now = DateTime.now();
-        final diff = now.difference(date);
-        if (diff.inDays > 0) {
-          timeAgo = '${diff.inDays}d ago';
-        } else if (diff.inHours > 0) {
-          timeAgo = '${diff.inHours}h ago';
-        } else if (diff.inMinutes > 0) {
-          timeAgo = '${diff.inMinutes}m ago';
-        } else {
-          timeAgo = 'Just now';
-        }
+        formattedDate = '${_monthName(date.month)} ${date.day}, ${date.year}, ${_formatTime(date)}';
       } catch (e) {
-        timeAgo = timestamp;
+        formattedDate = timestamp;
       }
     }
 
-    Color statusColor;
-    IconData statusIcon;
-    switch (status.toLowerCase()) {
-      case 'completed':
-      case 'success':
-        statusColor = const Color(0xFF84BD00);
-        statusIcon = Icons.check_circle;
-        break;
-      case 'pending':
-        statusColor = Colors.orange;
-        statusIcon = Icons.pending;
-        break;
-      case 'failed':
-      case 'cancelled':
-        statusColor = Colors.red;
-        statusIcon = Icons.error;
-        break;
-      default:
-        statusColor = const Color(0xFF84BD00);
-        statusIcon = Icons.check_circle;
-    }
-
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1C1C1E),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF2A2A2C)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+      child: Row(
         children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: statusColor.withOpacity(0.2),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  statusIcon,
-                  color: statusColor,
-                  size: 16,
-                ),
+          // Date (100px)
+          SizedBox(
+            width: 100,
+            child: Text(
+              formattedDate,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.8),
+                fontSize: 10,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Sent $coin',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'To: $toUserId',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.5),
-                        fontSize: 12,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '-${amount.toStringAsFixed(2)} $coin',
-                    style: const TextStyle(
-                      color: Colors.redAccent,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    timeAgo,
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.4),
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
-              ),
-            ],
+            ),
           ),
-          if (note != null && note.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          // From/To (110px)
+          SizedBox(
+            width: 110,
+            child: Text(
+              isReceived ? '$receiverUid \u2192 UID' : 'UID \u2192 $receiverUid',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.8),
+                fontSize: 10,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          // Type (50px)
+          SizedBox(
+            width: 50,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.05),
-                borderRadius: BorderRadius.circular(6),
+                border: Border(
+                  bottom: BorderSide(
+                    color: isReceived ? Colors.blue : const Color(0xFF84BD00),
+                    width: 1,
+                  ),
+                ),
               ),
               child: Text(
-                note,
+                isReceived ? 'Rcv' : 'Sent',
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.6),
-                  fontSize: 11,
-                  fontStyle: FontStyle.italic,
+                  color: isReceived ? Colors.blue : const Color(0xFF84BD00),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
                 ),
-                maxLines: 2,
+              ),
+            ),
+          ),
+          // Amount (40px)
+          SizedBox(
+            width: 40,
+            child: Text(
+              isReceived ? '+${amount.toStringAsFixed(0)}' : '-${amount.toStringAsFixed(0)}',
+              style: TextStyle(
+                color: isReceived ? Colors.green : Colors.red,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          // Status (60px)
+          SizedBox(
+            width: 60,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFF84BD00).withOpacity(0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                status.isNotEmpty ? status[0].toUpperCase() + status.substring(1) : 'Done',
+                style: const TextStyle(
+                  color: Color(0xFF84BD00),
+                  fontSize: 9,
+                  fontWeight: FontWeight.w500,
+                ),
+                textAlign: TextAlign.center,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-          ],
+          ),
         ],
       ),
     );
+  }
+
+  String _monthName(int month) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return months[month - 1];
+  }
+
+  String _formatTime(DateTime date) {
+    final hour = date.hour > 12 ? date.hour - 12 : (date.hour == 0 ? 12 : date.hour);
+    final minute = date.minute.toString().padLeft(2, '0');
+    final period = date.hour >= 12 ? 'PM' : 'AM';
+    return '$hour:$minute $period';
   }
 
   Widget _buildCoinIcon(String coin) {
