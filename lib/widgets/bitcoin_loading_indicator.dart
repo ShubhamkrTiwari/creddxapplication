@@ -44,86 +44,17 @@ class _BitcoinLoadingIndicatorState extends State<BitcoinLoadingIndicator>
 
   @override
   Widget build(BuildContext context) {
-    final innerSize = widget.size * 0.9;
-    final ringSize = widget.size * 0.36;
-    final iconSize = widget.size * 0.55;
-    final dotSize = widget.size * 0.125;
-    final orbitRadius = widget.size * 0.425;
-
     return AnimatedBuilder(
-      animation: Listenable.merge([_rotationController, _pulseController]),
+      animation: _rotationController,
       builder: (context, child) {
         final rotation = _rotationController.value * 2 * pi;
-        final scale = 0.8 + (_pulseController.value * 0.2);
 
-        return Transform.scale(
-          scale: scale,
-          child: Transform.rotate(
-            angle: rotation,
-            child: Container(
-              width: widget.size,
-              height: widget.size,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    widget.color,
-                    widget.color.withOpacity(0.7),
-                  ],
-                ),
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: widget.color.withOpacity(0.5 + (_pulseController.value * 0.3)),
-                    blurRadius: widget.size * 0.375 + (_pulseController.value * widget.size * 0.25),
-                    spreadRadius: 2,
-                  ),
-                ],
-              ),
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  // Outer ring
-                  Container(
-                    width: innerSize,
-                    height: innerSize,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0D0D0D),
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: widget.color.withOpacity(0.3),
-                        width: 2,
-                      ),
-                    ),
-                  ),
-                  // Inner coin design
-                  Icon(
-                    Icons.currency_bitcoin,
-                    color: widget.color,
-                    size: iconSize,
-                  ),
-                  // Rotating dots
-                  ...List.generate(4, (index) {
-                    double angle = (index * pi / 2) + rotation;
-                    return Transform.translate(
-                      offset: Offset(
-                        orbitRadius * cos(angle),
-                        orbitRadius * sin(angle),
-                      ),
-                      child: Container(
-                        width: dotSize,
-                        height: dotSize,
-                        decoration: BoxDecoration(
-                          color: widget.color,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    );
-                  }),
-                ],
-              ),
-            ),
+        return Transform.rotate(
+          angle: rotation,
+          child: Image.asset(
+            'assets/images/x.png',
+            width: widget.size,
+            height: widget.size,
           ),
         );
       },

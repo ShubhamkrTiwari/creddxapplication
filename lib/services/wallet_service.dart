@@ -611,6 +611,57 @@ class WalletService {
     }
   }
 
+  // Internal transfer history API
+  static Future<Map<String, dynamic>> getInternalTransferHistory({
+    int? page,
+    int? limit,
+    String? startDate,
+    String? endDate,
+  }) async {
+    try {
+      final queryParams = <String, String>{
+        if (page != null) 'page': page.toString(),
+        if (limit != null) 'limit': limit.toString(),
+        if (startDate != null) 'startDate': startDate,
+        if (endDate != null) 'endDate': endDate,
+      };
+
+      final uri = Uri.parse('$baseUrl/wallet/v1/wallet/internal-transfer-history')
+          .replace(queryParameters: queryParams);
+
+      debugPrint('Fetching internal transfer history from: $uri');
+      final response = await http.get(
+        uri,
+        headers: await _getHeaders(),
+      );
+
+      debugPrint('Internal Transfer History API Response Status: ${response.statusCode}');
+      debugPrint('Internal Transfer History API Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        debugPrint('Parsed Internal Transfer History Data: $data');
+        final resultData = data['data'] ?? data;
+        return {
+          'success': true,
+          'data': resultData,
+        };
+      } else {
+        debugPrint('Internal Transfer History API failed with status: ${response.statusCode}');
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching internal transfer history: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
   // Wallet transfer API - Updated to match API specification
   static Future<Map<String, dynamic>> transferBetweenWallets({
     required String coinId,
@@ -1016,6 +1067,8 @@ class WalletService {
       return {'success': false, 'error': e.toString()};
     }
   }
+
+  static Future<Object?> internalTransfer({required String toUserId, required String coin, required double amount, required String note}) async {}
 }
 
 class Coin {
@@ -1049,6 +1102,65 @@ class Coin {
       icon: icon,
       networks: networks,
     );
+  }
+
+  // Internal transfer - send crypto to another CreddX user
+  static Future<Map<String, dynamic>> internalTransfer({
+    required String toUserId,
+    required String coin,
+    required double amount,
+    String? note,
+  }) async {
+    try {
+      final requestBody = {
+        'toUserId': toUserId,
+        'coin': coin,
+        'amount': amount,
+        if (note != null && note.isNotEmpty) 'note': note,
+      };
+
+      debugPrint('Internal Transfer Request: $requestBody');
+      debugPrint('Internal Transfer API URL: ${WalletService.baseUrl}/wallet/v1/wallet/internal-transfer');
+
+      final response = await http.post(
+        Uri.parse('${WalletService.baseUrl}/wallet/v1/wallet/internal-transfer'),
+        headers: await WalletService._getHeaders(),
+        body: json.encode(requestBody),
+      );
+
+      debugPrint('Internal Transfer API Response Status: ${response.statusCode}');
+      debugPrint('Internal Transfer API Response Body: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = json.decode(response.body);
+
+        // Log notification
+        await NotificationService.addNotification(
+          title: 'Internal Transfer',
+          message: 'Sent $amount $coin to user $toUserId.',
+          type: NotificationType.transaction,
+        );
+
+        return {
+          'success': true,
+          'data': data['data'] ?? data,
+          'message': data['message'] ?? 'Transfer successful',
+        };
+      } else {
+        final error = json.decode(response.body);
+        return {
+          'success': false,
+          'error': error['message'] ?? error['error'] ?? 'Transfer failed',
+          'details': error,
+        };
+      }
+    } catch (e) {
+      debugPrint('Error in internalTransfer: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
   }
 }
 

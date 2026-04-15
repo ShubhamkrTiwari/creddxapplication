@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:math' show pi, cos, sin, min, max, Random;
 import 'coming_soon_screen.dart';
 import 'deposit_screen.dart';
+import 'internal_deposit_screen.dart';
 import 'notification_screen.dart';
 import 'p2p_trading_screen.dart';
 import 'internal_transfer_screen.dart';
@@ -596,8 +597,8 @@ class _HomeScreenState extends State<HomeScreen> {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const InrDepositScreen()));
     } else if (action == 'Withdraw') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const WithdrawScreen()));
-    } else if (action == 'Send') {
-      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const ComingSoonScreen()));
+    } else if (action == 'Internal Deposit') {
+      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const InternalDepositScreen()));
     } else if (action == 'Receive') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const ComingSoonScreen()));
     } else if (action == 'P2P') {
@@ -929,7 +930,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildActionGrid() {
     final actions = [
-      {'label': 'Send', 'icon': 'sendicon.png', 'iconData': Icons.arrow_circle_up},
+      {'label': 'Internal Deposit', 'icon': 'sendicon.png', 'iconData': Icons.arrow_circle_up},
       {'label': 'Receive', 'icon': 'receiveicon.png', 'iconData': Icons.request_page},
       {'label': 'Deposit', 'icon': 'depositeicon.png', 'iconData': Icons.account_balance_wallet},
       {'label': 'INR Deposit', 'icon': 'inrdeposit.png', 'iconData': Icons.currency_rupee},
