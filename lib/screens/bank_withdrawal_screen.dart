@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../services/auth_service.dart';
 import '../services/wallet_service.dart';
 import '../services/notification_service.dart';
+import 'otp_verification_screen.dart';
 
 class BankWithdrawalScreen extends StatefulWidget {
   final Map<String, dynamic>? bankDetails;
@@ -61,34 +62,48 @@ class _BankWithdrawalScreenState extends State<BankWithdrawalScreen> {
     try {
       final token = await AuthService.getToken();
       
-      final result = await WalletService.submitInrWithdrawal(
-        amount: double.tryParse(_amountController.text) ?? 0.0,
-        paymentMode: 'bank',
-        accountHolderName: _accountHolderController.text,
-        bankName: _bankNameController.text,
-        accountNumber: _accountNumberController.text,
-        ifscCode: _ifscCodeController.text,
-        token: token,
-      );
+      // Step 1: Send OTP first
+      final otpResult = await WalletService.sendOtp(purpose: 'inr_withdraw');
       
-      if (mounted) {
-        if (result != null && result['success'] == true) {
-          await NotificationService.addNotification(
-            title: 'Withdrawal Request Submitted',
-            message: 'Your bank withdrawal of ₹${_amountController.text} has been submitted successfully.',
-            type: NotificationType.transaction,
-          );
-          _showSuccess('Bank withdrawal request submitted successfully');
-          Navigator.of(context).popUntil((route) => route.isFirst);
-        } else {
-          final errorMessage = result?['error'] ?? 'Withdrawal failed';
-          await NotificationService.addNotification(
-            title: 'Withdrawal Failed',
-            message: 'Your bank withdrawal of ₹${_amountController.text} failed: $errorMessage',
-            type: NotificationType.transaction,
-          );
-          _showError(errorMessage);
+      if (otpResult['success'] == true) {
+        if (!mounted) return;
+        
+        // Step 2: Navigate to OTP Verification Screen
+        final bool? verified = await Navigator.push<bool>(
+          context,
+          MaterialPageRoute(
+            builder: (context) => OtpVerificationScreen(
+              onVerify: (otp) async {
+                final result = await WalletService.submitInrWithdrawal(
+                  amount: double.tryParse(_amountController.text) ?? 0.0,
+                  paymentMode: 'bank',
+                  accountHolderName: _accountHolderController.text,
+                  bankName: _bankNameController.text,
+                  accountNumber: _accountNumberController.text,
+                  ifscCode: _ifscCodeController.text,
+                  token: token,
+                  otp: otp,
+                );
+                return result ?? {'success': false, 'message': 'Unknown error occurred'};
+              },
+              onResend: () => WalletService.sendOtp(purpose: 'inr_withdraw'),
+            ),
+          ),
+        );
+
+        if (verified == true) {
+          if (mounted) {
+            await NotificationService.addNotification(
+              title: 'Withdrawal Request Submitted',
+              message: 'Your bank withdrawal of ₹${_amountController.text} has been submitted successfully.',
+              type: NotificationType.transaction,
+            );
+            _showSuccess('Bank withdrawal request submitted successfully');
+            Navigator.of(context).popUntil((route) => route.isFirst);
+          }
         }
+      } else {
+        _showError(otpResult['error'] ?? 'Failed to send OTP');
       }
     } catch (e) {
       if (mounted) {

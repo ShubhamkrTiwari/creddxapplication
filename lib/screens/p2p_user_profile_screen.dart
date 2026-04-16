@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import '../services/p2p_service.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
+import 'feedback_screen.dart';
+import 'blocked_users_screen.dart';
+import 'saved_payment_methods_screen.dart';
 
 class P2PUserProfileScreen extends StatefulWidget {
   final String userId;
@@ -21,6 +24,7 @@ class _P2PUserProfileScreenState extends State<P2PUserProfileScreen> {
   bool _isLoading = true;
   Map<String, dynamic>? _userDetails;
   Map<String, dynamic>? _trades30d;
+  Map<String, dynamic>? _walletBalance;
   String? _error;
 
   @override
@@ -32,23 +36,27 @@ class _P2PUserProfileScreenState extends State<P2PUserProfileScreen> {
   Future<void> _fetchUserDetails() async {
     debugPrint('=== Fetching P2P User Details ===');
     debugPrint('UserId: ${widget.userId}');
-    
+
     try {
       final results = await Future.wait([
         P2PService.getP2PUserDetails(userId: widget.userId),
         P2PService.getUser30dTrades(userId: widget.userId),
+        P2PService.getWalletBalance(),
       ]);
-      
+
       final details = results[0];
       final trades30d = results[1];
-      
+      final walletBalance = results[2];
+
       debugPrint('User Details: $details');
       debugPrint('30d Trades: $trades30d');
-      
+      debugPrint('Wallet Balance: $walletBalance');
+
       if (mounted) {
         setState(() {
           _userDetails = details;
           _trades30d = trades30d;
+          _walletBalance = walletBalance;
           _isLoading = false;
         });
       }
@@ -111,58 +119,46 @@ class _P2PUserProfileScreenState extends State<P2PUserProfileScreen> {
   }
 
   Widget _buildProfileContent() {
-    // Debug logging
     debugPrint('=== Building Profile Content ===');
     debugPrint('_userDetails: $_userDetails');
-    
+
     if (_userDetails == null || _userDetails!.isEmpty) {
       return _buildNoDataView();
     }
 
     final user = _userDetails?['user'] ?? _userDetails;
     final stats = _userDetails?['stats'] ?? _userDetails?['userStats'] ?? {};
-    final buyAds = _userDetails?['buyAds'] ?? 
-                    _userDetails?['advertisements']?['buy'] ?? 
-                    _userDetails?['buyAdvertisements'] ?? 
-                    _userDetails?['data']?['buyAds'] ?? [];
-    final sellAds = _userDetails?['sellAds'] ?? 
-                     _userDetails?['advertisements']?['sell'] ?? 
-                     _userDetails?['sellAdvertisements'] ?? 
-                     _userDetails?['data']?['sellAds'] ?? [];
 
     debugPrint('Parsed user: $user');
     debugPrint('Parsed stats: $stats');
-    debugPrint('Parsed buyAds: $buyAds');
-    debugPrint('Parsed sellAds: $sellAds');
 
-    final displayName = user?['userName'] ?? user?['name'] ?? user?['firstName'] ?? 
+    final displayName = user?['userName'] ?? user?['name'] ?? user?['firstName'] ??
                         user?['username'] ?? widget.userName;
-    final joinedDate = user?['createdAt'] ?? user?['joinDate'] ?? user?['joinedAt'] ?? 'Jan 2026';
-    final emailVerified = user?['emailVerified'] ?? user?['isEmailVerified'] ?? 
-                          user?['email_verified'] ?? false;
-    final smsVerified = user?['smsVerified'] ?? user?['isSmsVerified'] ?? 
-                        user?['phoneVerified'] ?? user?['phone_verified'] ?? false;
+    final email = user?['email'] ?? '';
+    final joinedDate = user?['createdAt'] ?? user?['joinDate'] ?? user?['joinedAt'];
+    final daysRegistered = _calculateDaysRegistered(joinedDate);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildProfileHeader(displayName, joinedDate, emailVerified, smsVerified, stats),
-          const SizedBox(height: 16),
-          _buildStatsGrid(stats),
+          _buildDashboardCard(displayName, email, daysRegistered, stats),
           const SizedBox(height: 24),
-          if (buyAds.isNotEmpty) ...[
-            _buildAdsSection('Online Buy Ads', buyAds, true),
-            const SizedBox(height: 24),
-          ],
-          if (sellAds.isNotEmpty)
-            _buildAdsSection('Online Sell Ads', sellAds, false),
-          if (buyAds.isEmpty && sellAds.isEmpty)
-            _buildNoAdsView(),
+          _buildMenuSections(),
         ],
       ),
     );
+  }
+
+  int _calculateDaysRegistered(dynamic joinedDate) {
+    if (joinedDate == null) return 0;
+    try {
+      final date = DateTime.parse(joinedDate.toString());
+      return DateTime.now().difference(date).inDays;
+    } catch (e) {
+      return 0;
+    }
   }
 
   Widget _buildNoDataView() {
@@ -236,144 +232,292 @@ class _P2PUserProfileScreenState extends State<P2PUserProfileScreen> {
     );
   }
 
-  Widget _buildProfileHeader(String name, String joinedDate, bool emailVerified, bool smsVerified, Map stats) {
-    final positiveFeedback = stats['positiveFeedback'] ?? stats['positivePercentage'] ?? 0;
-    final totalFeedback = stats['totalFeedback'] ?? stats['totalReviews'] ?? 0;
+  Widget _buildDashboardCard(String name, String email, int daysRegistered, Map stats) {
+    final trades30dData = _trades30d ?? {};
+    final allTrades = stats['allTrades'] ?? stats['totalTrades'] ?? 0;
+    final trades30d = trades30dData['trades30d'] ?? trades30dData['thirtyDayTrades'] ?? stats['trades30d'] ?? 0;
+    final completionRate30d = trades30dData['completionRate30d'] ?? trades30dData['thirtyDayCompletionRate'] ?? stats['completionRate30d'] ?? 0;
+    final firstTradeDate = stats['firstTradeDate'] ?? 'N/A';
+    final buyTrades = trades30dData['buyTrades'] ?? stats['buyTrades'] ?? 0;
+    final sellTrades = trades30dData['sellTrades'] ?? stats['sellTrades'] ?? 0;
     final positiveCount = stats['positiveCount'] ?? stats['positive'] ?? 0;
     final negativeCount = stats['negativeCount'] ?? stats['negative'] ?? 0;
+    final paymentMethodsCount = stats['paymentMethods'] ?? stats['paymentMethodCount'] ?? 0;
+
+    // Get wallet balance for estimated value
+    final walletData = _walletBalance ?? {};
+    final balanceData = walletData['data'] ?? walletData['balance'] ?? walletData;
+    final p2pValueInr = balanceData['inrValue'] ?? balanceData['estimatedValueInr'] ?? balanceData['totalInr'] ?? '****';
+    final p2pValueUsdt = balanceData['usdtValue'] ?? balanceData['estimatedValueUsdt'] ?? balanceData['totalUsdt'] ?? balanceData['usdt'] ?? '****';
 
     return Container(
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF1C1C1E),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(20),
+        gradient: LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [
+            const Color(0xFF1A1A1A),
+            const Color(0xFF84BD00).withOpacity(0.3),
+            const Color(0xFF84BD00).withOpacity(0.5),
+          ],
+          stops: const [0.3, 0.7, 1.0],
+        ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Top row with avatar, name, block button, and feedback card
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Left side - Avatar and name
-              Expanded(
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 24,
-                      backgroundColor: const Color(0xFF84BD00),
-                      child: Text(
-                        name.isNotEmpty ? name[0].toUpperCase() : 'U',
-                        style: const TextStyle(color: Colors.black, fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  name,
-                                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: Colors.red,
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: const Text(
-                                  'Block',
-                                  style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Joined on $joinedDate',
-                            style: const TextStyle(color: Colors.white54, fontSize: 12),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              if (emailVerified) ...[
-                                const Icon(Icons.check, color: Color(0xFF84BD00), size: 14),
-                                const SizedBox(width: 4),
-                                const Text('Email', style: TextStyle(color: Colors.white54, fontSize: 11)),
-                                const SizedBox(width: 12),
-                              ],
-                              if (smsVerified) ...[
-                                const Icon(Icons.check, color: Color(0xFF84BD00), size: 14),
-                                const SizedBox(width: 4),
-                                const Text('SMS', style: TextStyle(color: Colors.white54, fontSize: 11)),
-                              ],
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              // Right side - Feedback card
-              Container(
-                padding: const EdgeInsets.all(12),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Stack(
+          children: [
+            // Shield icon on right
+            Positioned(
+              right: -20,
+              top: 0,
+              bottom: 0,
+              child: Container(
+                width: 180,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF2C2C2E),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFF3A3A3C)),
+                  gradient: RadialGradient(
+                    center: Alignment.centerRight,
+                    radius: 0.8,
+                    colors: [
+                      const Color(0xFF84BD00).withOpacity(0.4),
+                      Colors.transparent,
+                    ],
+                  ),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    const Text(
-                      'Positive Feedback',
-                      style: TextStyle(color: Colors.white54, fontSize: 11),
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          '$positiveFeedback%',
-                          style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '($totalFeedback)',
-                          style: const TextStyle(color: Colors.white54, fontSize: 11),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Positive $positiveCount',
-                          style: const TextStyle(color: Color(0xFF84BD00), fontSize: 10),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Negative $negativeCount',
-                          style: const TextStyle(color: Colors.red, fontSize: 10),
-                        ),
-                      ],
-                    ),
-                  ],
+                child: Center(
+                  child: Icon(
+                    Icons.verified_user,
+                    size: 80,
+                    color: Colors.white.withOpacity(0.2),
+                  ),
                 ),
               ),
-            ],
-          ),
-        ],
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // User info row
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 28,
+                        backgroundColor: const Color(0xFF84BD00),
+                        child: Text(
+                          name.isNotEmpty ? name[0].toUpperCase() : 'U',
+                          style: const TextStyle(color: Colors.black, fontSize: 22, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    name,
+                                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                const Icon(Icons.verified, color: Color(0xFF84BD00), size: 16),
+                              ],
+                            ),
+                            if (email.isNotEmpty)
+                              Text(
+                                email,
+                                style: const TextStyle(color: Colors.white54, fontSize: 12),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  // P2P Estimated Value
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'P2P Estimated Value (INR)',
+                          style: TextStyle(color: Colors.white54, fontSize: 11),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Text(
+                              '$p2pValueInr INR = $p2pValueUsdt USDT',
+                              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                            ),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 12),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  // Stats Grid
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildStatItem('All Trades', '$allTrades Time(s)'),
+                      ),
+                      Expanded(
+                        child: _buildStatItemRight('Buy', '$buyTrades'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildStatItem('30d Trade(s)', '$trades30d'),
+                      ),
+                      Expanded(
+                        child: _buildStatItemRight('Sell', '$sellTrades'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildStatItem('30d Completion Rate', '$completionRate30d%'),
+                      ),
+                      Expanded(
+                        child: _buildStatItemRight('Positive', '$positiveCount'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildStatItem('First Trade', firstTradeDate.toString()),
+                      ),
+                      Expanded(
+                        child: _buildStatItemRight('Negative', '$negativeCount'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildStatItem('Registered', '$daysRegistered day(s)'),
+                      ),
+                      Expanded(
+                        child: _buildStatItemRight('Payment method', '$paymentMethodsCount day(s)'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatItem(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white54, fontSize: 11),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatItemRight(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white54, fontSize: 11),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMenuSections() {
+    return Column(
+      children: [
+        _buildMenuItem(
+          icon: Icons.thumb_up_outlined,
+          title: 'Received Feedback',
+          onTap: () {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const FeedbackScreen()));
+          },
+        ),
+        _buildMenuItem(
+          icon: Icons.block,
+          title: 'Blocked User',
+          onTap: () {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const BlockedUsersScreen()));
+          },
+        ),
+        _buildMenuItem(
+          icon: Icons.payment,
+          title: 'Your Payment Method',
+          onTap: () {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const SavedPaymentMethodsScreen()));
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMenuItem({required IconData icon, required String title, required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1C1C1E),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: Colors.white54, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: Colors.white54, size: 20),
+          ],
+        ),
       ),
     );
   }

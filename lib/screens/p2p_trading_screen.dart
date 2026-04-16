@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import '../services/p2p_service.dart';
+import '../services/user_service.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 import 'p2p_chat_list_screen.dart';
 import 'p2p_place_order_screen.dart';
 import 'order_history_screen.dart';
-import 'user_profile_screen.dart';
 import 'merchant_application_screen.dart';
 import 'p2p_trading_orders_screen.dart';
 import 'p2p_buy_screen.dart';
@@ -453,6 +453,7 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
               ElevatedButton(
                 onPressed: () {
                   final extractedAdId = ad['_id'] ?? ad['id'] ?? ad['advertisementId'] ?? '';
+                  final payTime = ad['payTime'] ?? ad['paymentTime'] ?? 15;
                   debugPrint('DEBUG: Full ad data: $ad');
                   debugPrint('DEBUG: Extracted adId: $extractedAdId');
                   debugPrint('DEBUG: ad._id: ${ad['_id']}, ad.id: ${ad['id']}, ad.advertisementId: ${ad['advertisementId']}');
@@ -472,6 +473,8 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
                         paymentMethods: paymentModes.map<String>((e) => e.toString()).toList(),
                         minLimit: (minLimit is num) ? minLimit.toDouble() : double.tryParse(minLimit.toString()) ?? 100.0,
                         maxLimit: (maxLimit is num) ? maxLimit.toDouble() : double.tryParse(maxLimit.toString()) ?? 4800.0,
+                        payTime: payTime is int ? payTime : int.tryParse(payTime.toString()) ?? 15,
+                        advertiserId: userId.toString(),
                       ),
                     ),
                   );
@@ -622,7 +625,7 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
       unselectedItemColor: Colors.white54,
       type: BottomNavigationBarType.fixed,
       currentIndex: 0,
-      onTap: (index) {
+      onTap: (index) async {
         switch (index) {
           case 1:
             Navigator.push(context, MaterialPageRoute(builder: (context) => const OrderHistoryScreen()));
@@ -631,7 +634,13 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> {
             Navigator.push(context, MaterialPageRoute(builder: (context) => const MerchantApplicationScreen()));
             break;
           case 3:
-            Navigator.push(context, MaterialPageRoute(builder: (context) => const UserProfileScreen()));
+            final userService = UserService();
+            await userService.initUserData();
+            final userId = userService.userId ?? '';
+            final userName = userService.userName ?? 'User';
+            if (userId.isNotEmpty && mounted) {
+              Navigator.push(context, MaterialPageRoute(builder: (context) => P2PUserProfileScreen(userId: userId, userName: userName)));
+            }
             break;
         }
       },

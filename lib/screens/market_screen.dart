@@ -618,8 +618,11 @@ class _MarketScreenState extends State<MarketScreen> with TickerProviderStateMix
         color: Colors.transparent,
         child: InkWell(
           onTap: () {
+            final advertiser = ad['advertiser'] ?? {};
+            final advertiserId = ad['userId'] ?? ad['advertiserId'] ?? advertiser['_id'] ?? '';
+            final payTime = ad['payTime'] ?? ad['paymentTime'] ?? 15;
             Navigator.push(
-              context, 
+              context,
               MaterialPageRoute(
                 builder: (context) => P2PPlaceOrderScreen(
                   adId: ad['_id'] ?? '',
@@ -632,6 +635,8 @@ class _MarketScreenState extends State<MarketScreen> with TickerProviderStateMix
                     : [ad['paymentMode'] ?? 'Bank Transfer'],
                   minLimit: minAmount,
                   maxLimit: maxAmount,
+                  payTime: payTime is int ? payTime : int.tryParse(payTime.toString()) ?? 15,
+                  advertiserId: advertiserId.toString(),
                 )
               )
             );

@@ -676,6 +676,7 @@ class WalletService {
         'from': from, // Source wallet type: 1=Spot, 2=P2P, 3=Bot, 4=Main
         'to': to, // Destination wallet type: 1=Spot, 2=P2P, 3=Bot, 4=Main
         'amount': amount,
+        if (otp != null && otp.isNotEmpty) 'otp': otp,
       };
       
       debugPrint('Transfer Request: $requestBody');
@@ -1032,6 +1033,7 @@ class WalletService {
     String? ifscCode,
     String? upiId,
     String? token,
+    String? otp,
   }) async {
     try {
       final withdrawType = paymentMode == 'bank' ? 'BANK' : paymentMode == 'upi' ? 'UPI' : paymentMode.toUpperCase();
@@ -1043,6 +1045,7 @@ class WalletService {
         if (accountNumber != null) 'accountNumber': accountNumber,
         if (ifscCode != null) 'ifscCode': ifscCode,
         if (upiId != null) 'upiId': upiId,
+        if (otp != null && otp.isNotEmpty) 'otp': otp,
       };
       
       debugPrint('Submitting INR withdrawal: $requestBody');
@@ -1068,15 +1071,46 @@ class WalletService {
     }
   }
 
+  // Send OTP for various purposes (internal_send, inr_withdraw, inr_deposit)
+  static Future<Map<String, dynamic>> sendOtp({required String purpose}) async {
+    try {
+      final requestBody = {'purpose': purpose};
+      debugPrint('Sending OTP for purpose: $purpose');
+      
+      final response = await http.post(
+        Uri.parse('$baseUrl/v1/otp/send'),
+        headers: await _getHeaders(),
+        body: json.encode(requestBody),
+      );
+      
+      debugPrint('Send OTP Response: ${response.statusCode} - ${response.body}');
+      
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return {'success': true, 'data': json.decode(response.body)};
+      } else {
+        final error = json.decode(response.body);
+        return {
+          'success': false, 
+          'error': error['message'] ?? error['error'] ?? 'Failed to send OTP'
+        };
+      }
+    } catch (e) {
+      debugPrint('Error in sendOtp: $e');
+      return {'success': false, 'error': 'Network error: $e'};
+    }
+  }
+
   // Internal transfer - send crypto to another CreddX user
   static Future<Map<String, dynamic>> internalTransfer({
     required String receiverUid,
     required double amount,
+    String? otp,
   }) async {
     try {
       final requestBody = {
         'receiverUid': receiverUid,
         'amount': amount,
+        if (otp != null) 'otp': otp,
       };
 
       debugPrint('Internal Transfer Request: $requestBody');

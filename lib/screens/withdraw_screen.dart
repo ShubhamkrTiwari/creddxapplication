@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'qr_scanner_screen.dart';
+import 'otp_verification_screen.dart';
 import '../services/wallet_service.dart';
+import '../services/auth_service.dart';
 import '../services/notification_service.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 import '../utils/coin_icon_mapper.dart';
@@ -231,16 +233,42 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
       );
       return;
     }
-    
-    final result = await WalletService.withdrawCrypto(
-      coin: _selectedCoin,
-      network: _selectedNetwork,
-      address: _addressController.text,
-      amount: amount,
-      otp: null,
+
+    // Send OTP first
+    setState(() => _isLoading = true);
+    final otpResult = await WalletService.sendOtp(purpose: 'crypto_withdraw');
+    setState(() => _isLoading = false);
+
+    if (otpResult['success'] != true) {
+      _showError(otpResult['error'] ?? 'Failed to send verification code');
+      return;
+    }
+
+    if (!mounted) return;
+
+    // Navigate to OTP Screen
+    final String? email = await AuthService.getUserEmail();
+    final verified = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => OtpVerificationScreen(
+          email: email,
+          onVerify: (otp) => WalletService.withdrawCrypto(
+            coin: _selectedCoin,
+            network: _selectedNetwork,
+            address: _addressController.text,
+            amount: amount,
+            otp: otp,
+          ).then((res) => {
+            'success': res != null && res['success'] == true,
+            'message': res != null ? (res['error'] ?? res['message']) : 'Withdrawal failed'
+          }),
+          onResend: () => WalletService.sendOtp(purpose: 'crypto_withdraw'),
+        ),
+      ),
     );
     
-    if (result != null) {
+    if (verified == true) {
       // Log successful withdrawal notification
       await NotificationService.addNotification(
         title: 'Withdrawal Initiated',
@@ -255,21 +283,13 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
         ),
       );
       Navigator.of(context).pop();
-    } else {
-      // Log failed withdrawal notification
-      await NotificationService.addNotification(
-        title: 'Withdrawal Failed',
-        message: 'Failed to withdraw $amount $_selectedCoin. Please check your balance and try again.',
-        type: NotificationType.transaction,
-      );
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Withdrawal failed'),
-          backgroundColor: Colors.red,
-        ),
-      );
     }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
+    );
   }
   
   @override

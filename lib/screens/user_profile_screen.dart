@@ -10,7 +10,7 @@ import '../services/wallet_service.dart';
 import 'login_screen.dart';
 import 'update_profile_screen.dart';
 import 'referral_hub_screen.dart';
-import 'kyc_document_screen.dart';
+import 'kyc_digilocker_instruction_screen.dart';
 import 'withdraw_screen.dart';
 import 'deposit_screen.dart';
 import 'inr_deposit_screen.dart';
@@ -846,7 +846,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         if (_userService.isKYCNotStarted() || _userService.isKYCRejected()) {
           final result = await Navigator.push(
             context, 
-            MaterialPageRoute(builder: (context) => const KYCDocumentScreen())
+            MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen())
           );
           // KYC flow will handle status updates automatically
           if (result != null) {

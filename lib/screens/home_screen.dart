@@ -597,7 +597,7 @@ class _HomeScreenState extends State<HomeScreen> {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const InrDepositScreen()));
     } else if (action == 'Withdraw') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const WithdrawScreen()));
-    } else if (action == 'Internal Deposit') {
+    } else if (action == 'Internal Deposit' || action == 'Inter send') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const InternalDepositScreen()));
     } else if (action == 'Receive') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const ComingSoonScreen()));
@@ -930,7 +930,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildActionGrid() {
     final actions = [
-      {'label': 'Internal Deposit', 'icon': 'sendicon.png', 'iconData': Icons.arrow_circle_up},
+      {'label': 'Inter send', 'icon': 'sendicon.png', 'iconData': Icons.arrow_circle_up},
       {'label': 'Receive', 'icon': 'receiveicon.png', 'iconData': Icons.request_page},
       {'label': 'Deposit', 'icon': 'depositeicon.png', 'iconData': Icons.account_balance_wallet},
       {'label': 'INR Deposit', 'icon': 'inrdeposit.png', 'iconData': Icons.currency_rupee},

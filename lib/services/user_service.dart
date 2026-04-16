@@ -1,5 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:image_picker/image_picker.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'kyc_service.dart';
@@ -360,6 +362,232 @@ class UserService {
         };
       }
     } catch (e) {
+      return {'success': false, 'error': 'Network error: $e'};
+    }
+  }
+
+  Future<Map<String, dynamic>> verifySelfieFromDigiLocker({
+    required dynamic selfieImage,
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getString('user_id') ?? '';
+      final token = prefs.getString('auth_token') ?? '';
+
+      if (userId.isEmpty || token.isEmpty) {
+        return {'success': false, 'error': 'User not authenticated'};
+      }
+
+      // Create multipart request for DigiLocker selfie verification
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse('http://65.0.196.122:8085/v1/kyc/digilocker/selfie-verify'),
+      );
+
+      // Add headers`
+      request.headers.addAll({
+        'Accept': 'application/json',
+        'Authorization': 'Bearer $token',
+      });
+
+      // Add form fields
+      request.fields['user_id'] = userId;
+      request.fields['source'] = 'digilocker';
+
+      // Add selfie image
+      if (selfieImage != null) {
+        if (kIsWeb) {
+          final bytes = await (selfieImage as XFile).readAsBytes();
+          request.files.add(http.MultipartFile.fromBytes(
+            'selfie',
+            bytes,
+            filename: 'selfie.jpg',
+          ));
+        } else {
+          final bytes = await selfieImage.readAsBytes();
+          final fileName = selfieImage.path.split('/').last;
+          request.files.add(http.MultipartFile.fromBytes(
+            'selfie',
+            bytes,
+            filename: fileName,
+          ));
+        }
+      }
+
+      // Send request
+      final streamedResponse = await request.send().timeout(const Duration(seconds: 60));
+      final response = await http.Response.fromStream(streamedResponse);
+
+      print('DigiLocker Selfie Verify Response: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final responseData = json.decode(response.body);
+        if (responseData['success'] == true) {
+          await updateKYCStatus('Pending');
+          return {
+            'success': true,
+            'message': 'Selfie verified successfully',
+            'data': responseData['data']
+          };
+        } else {
+          return {
+            'success': false,
+            'error': responseData['error'] ?? 'Failed to verify selfie'
+          };
+        }
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}'
+        };
+      }
+    } catch (e) {
+      print('DigiLocker Selfie Verify Error: $e');
+      return {'success': false, 'error': 'Network error: $e'};
+    }
+  }
+
+  // Initiate DigiLocker connection
+  Future<Map<String, dynamic>> initiateDigiLockerConnection() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getString('user_id') ?? '';
+      final token = prefs.getString('auth_token') ?? '';
+
+      if (userId.isEmpty || token.isEmpty) {
+        return {'success': false, 'error': 'User not authenticated'};
+      }
+
+      final response = await http.post(
+        Uri.parse('http://65.0.196.122:8085/v1/kyc/digilocker/initiate'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: json.encode({
+          'user_id': userId,
+        }),
+      ).timeout(const Duration(seconds: 30));
+
+      print('DigiLocker Initiate Response: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final responseData = json.decode(response.body);
+        if (responseData['success'] == true) {
+          return {
+            'success': true,
+            'data': responseData['data'],
+            'message': responseData['message'] ?? 'DigiLocker initiated'
+          };
+        } else {
+          return {
+            'success': false,
+            'error': responseData['error'] ?? 'Failed to initiate DigiLocker'
+          };
+        }
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}'
+        };
+      }
+    } catch (e) {
+      print('DigiLocker Initiate Error: $e');
+      return {'success': false, 'error': 'Network error: $e'};
+    }
+  }
+
+  // Check DigiLocker status
+  Future<Map<String, dynamic>> checkDigiLockerStatus(String requestId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getString('user_id') ?? '';
+      final token = prefs.getString('auth_token') ?? '';
+
+      if (userId.isEmpty || token.isEmpty) {
+        return {'success': false, 'error': 'User not authenticated'};
+      }
+
+      final response = await http.get(
+        Uri.parse('http://65.0.196.122:8085/v1/kyc/digilocker/status?request_id=$requestId&user_id=$userId'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 30));
+
+      print('DigiLocker Status Response: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final responseData = json.decode(response.body);
+        if (responseData['success'] == true) {
+          return {
+            'success': true,
+            'data': responseData['data'],
+            'message': responseData['message'] ?? 'Status retrieved'
+          };
+        } else {
+          return {
+            'success': false,
+            'error': responseData['error'] ?? 'Failed to get DigiLocker status'
+          };
+        }
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}'
+        };
+      }
+    } catch (e) {
+      print('DigiLocker Status Error: $e');
+      return {'success': false, 'error': 'Network error: $e'};
+    }
+  }
+
+  // Check KYC status via POST (General endpoint)
+  Future<Map<String, dynamic>> checkKYCStatusPost() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getString('user_id') ?? '';
+      final token = prefs.getString('auth_token') ?? '';
+
+      if (userId.isEmpty || token.isEmpty) {
+        return {'success': false, 'error': 'User not authenticated'};
+      }
+
+      // Note: Using the server IP for consistent behavior in the app.
+      // If testing locally, ensure the server is accessible.
+      final response = await http.post(
+        Uri.parse('http://65.0.196.122:8085/v1/kyc/status'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: json.encode({
+          'user_id': userId,
+        }),
+      ).timeout(const Duration(seconds: 30));
+
+      print('KYC Status POST Response: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final responseData = json.decode(response.body);
+        return {
+          'success': responseData['success'] ?? true,
+          'data': responseData['data'],
+          'message': responseData['message'] ?? 'Status retrieved'
+        };
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}'
+        };
+      }
+    } catch (e) {
+      print('KYC Status POST Error: $e');
       return {'success': false, 'error': 'Network error: $e'};
     }
   }

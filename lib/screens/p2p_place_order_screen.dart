@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../services/p2p_service.dart';
 import 'p2p_chat_detail_screen.dart';
+import 'p2p_order_payment_method_screen.dart';
 
 class P2PPlaceOrderScreen extends StatefulWidget {
   final String adId;
@@ -13,6 +14,8 @@ class P2PPlaceOrderScreen extends StatefulWidget {
   final List<String> paymentMethods;
   final double minLimit;
   final double maxLimit;
+  final int payTime;
+  final String advertiserId;
 
   const P2PPlaceOrderScreen({
     super.key,
@@ -24,6 +27,8 @@ class P2PPlaceOrderScreen extends StatefulWidget {
     required this.paymentMethods,
     required this.minLimit,
     required this.maxLimit,
+    this.payTime = 15,
+    this.advertiserId = '',
   });
 
   @override
@@ -93,56 +98,30 @@ class _P2PPlaceOrderScreenState extends State<P2PPlaceOrderScreen> {
       return;
     }
 
-    setState(() => _isLoading = true);
+    final quantity = double.tryParse(_amountController.text) ?? 0.0;
+    final price = double.tryParse(widget.price) ?? 0.0;
+    final totalAmount = (quantity * price).toStringAsFixed(2);
 
-    try {
-      // Convert order type to direction (1=Buy, 2=Sell)
-      int direction = widget.orderType == 'buy' ? 1 : 2;
-
-      debugPrint('DEBUG: Placing order - adId: ${widget.adId}, quantity: ${_amountController.text}, direction: $direction, payMethod: $_selectedPaymentMethod');
-
-      final result = await P2PService.placeOrder(
-        adId: widget.adId,
-        quantity: double.tryParse(_amountController.text) ?? 0.0,
-        direction: direction,
-        payMethod: _selectedPaymentMethod,
-      );
-
-      if (mounted) {
-        setState(() => _isLoading = false);
-        if (result != null) {
-          final orderId = result['data']?['_id'] ?? result['_id'] ?? '';
-          final advertiserId = result['data']?['advertiserId'] ?? result['advertiserId'] ?? '';
-
-          if (widget.orderType == 'buy') {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => P2PPaymentScreen(
-                  orderId: orderId,
-                  advertiserId: advertiserId,
-                  userName: widget.userName,
-                  amount: _amountController.text,
-                  paymentMethod: _selectedPaymentMethod,
-                ),
-              ),
-            );
-          } else {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sell order placed successfully!'), backgroundColor: Color(0xFF84BD00)));
-            Navigator.pop(context);
-          }
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to place order'), backgroundColor: Colors.red));
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
-      }
-    }
+    // Navigate to Payment Method Selection Screen with timer and chat
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => P2POrderPaymentMethodScreen(
+          adId: widget.adId,
+          orderType: widget.orderType,
+          userName: widget.userName,
+          price: widget.price,
+          available: widget.available,
+          paymentMethods: widget.paymentMethods,
+          minLimit: widget.minLimit,
+          maxLimit: widget.maxLimit,
+          payTime: widget.payTime,
+          advertiserId: widget.advertiserId.isNotEmpty ? widget.advertiserId : widget.userName,
+          quantity: _amountController.text,
+          amount: totalAmount,
+        ),
+      ),
+    );
   }
 
   @override

@@ -23,13 +23,16 @@ class KYCService {
         };
       }
 
-      final response = await http.get(
-        Uri.parse('$_baseUrl/user/v1/kyc/status/$userId'),
+      final response = await http.post(
+        Uri.parse('$_baseUrl/v1/kyc/status'),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
           'Authorization': 'Bearer ${prefs.getString('auth_token') ?? ''}',
         },
+        body: json.encode({
+          'user_id': userId,
+        }),
       ).timeout(const Duration(seconds: 30));
 
       print('KYC Status Response: ${response.body}');

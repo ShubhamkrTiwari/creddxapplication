@@ -52,9 +52,18 @@ class _KYCPendingScreenState extends State<KYCPendingScreen> {
           onPressed: () => Navigator.pop(context),
           icon: const Icon(Icons.arrow_back, color: Colors.white, size: 24),
         ),
-        title: const Text(
-          'KYC Verification',
-          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            const Text(
+              'KYC Verification',
+              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const Text(
+              'Review (3/3)',
+              style: TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ],
         ),
         centerTitle: true,
       ),

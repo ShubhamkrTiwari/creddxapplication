@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/wallet_service.dart';
 import 'package:intl/intl.dart';
+import 'otp_verification_screen.dart';
 
 class InternalTransferScreen extends StatefulWidget {
   const InternalTransferScreen({super.key});
@@ -272,114 +273,66 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
     setState(() => _isLoading = true);
     
     try {
-      // Convert wallet names to numbers as per API spec
-      int fromWalletNumber = _getWalletTypeNumber(_fromWallet);
-      int toWalletNumber = _getWalletTypeNumber(_toWallet);
+      // Step 1: Send OTP
+      final otpResult = await WalletService.sendOtp(purpose: 'internal_send');
       
-      // Get proper coin ID from coin symbol
-      String coinId = _getCoinId(_selectedCoin);
-      
-      // Validate coin ID is not empty
-      if (coinId.isEmpty) {
-        if (mounted) {
-          setState(() => _isLoading = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Unable to find coin ID for $_selectedCoin. Please refresh and try again.'),
-              backgroundColor: Colors.red,
-              action: SnackBarAction(
-                label: 'Refresh',
-                textColor: Colors.white,
-                onPressed: () {
-                  _fetchCoins();
-                  _fetchBalances();
-                },
-              ),
-            ),
-          );
-        }
-        return;
-      }
-      
-      debugPrint('=== TRANSFER REQUEST ===');
-      debugPrint('Coin ID: $coinId');
-      debugPrint('From Wallet: $fromWalletNumber ($_fromWallet)');
-      debugPrint('To Wallet: $toWalletNumber ($_toWallet)');
-      debugPrint('Amount: $amount');
-      debugPrint('=======================');
-      
-      final result = await WalletService.transferBetweenWallets(
-        coinId: coinId,
-        from: fromWalletNumber,
-        to: toWalletNumber,
-        amount: amount,
-      );
-
-      if (mounted) {
-        setState(() => _isLoading = false);
+      if (otpResult['success'] == true) {
+        if (!mounted) return;
         
-        if (result['success'] == true) {
-          // Show success message with details
-          String message = result['message'] ?? 'Transfer Successful';
-          if (result['data'] != null) {
-            final data = result['data'];
-            if (data['transactionId'] != null) {
-              message += '\nTransaction ID: ${data['transactionId']}';
-            }
-            if (data['newBalance'] != null) {
-              message += '\nNew Balance: ${data['newBalance']} $_selectedCoin';
-            }
-          }
-          
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(message),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 4),
-            ),
-          );
-          
-          _amountController.clear();
-          await _fetchBalances(); // Refresh balances
-          await _fetchTransferHistory(); // Refresh transfer history
-        } else {
-          // Show detailed error message
-          String errorMessage = result['error'] ?? 'Transfer failed';
-          if (result['details'] != null) {
-            final details = result['details'];
-            if (details['field'] != null) {
-              errorMessage += '\nField: ${details['field']}';
-            }
-            if (details['code'] != null) {
-              errorMessage += '\nCode: ${details['code']}';
-            }
-          }
-          
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(errorMessage),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 4),
-              action: SnackBarAction(
-                label: 'Retry',
-                textColor: Colors.white,
-                onPressed: () => _handleTransfer(),
+        // Step 2: Navigate to OTP Verification Screen
+        int fromWalletNumber = _getWalletTypeNumber(_fromWallet);
+        int toWalletNumber = _getWalletTypeNumber(_toWallet);
+        String coinId = _getCoinId(_selectedCoin);
+        
+        final bool? verified = await Navigator.push<bool>(
+          context,
+          MaterialPageRoute(
+            builder: (context) => OtpVerificationScreen(
+              onVerify: (otp) => WalletService.transferBetweenWallets(
+                coinId: coinId,
+                from: fromWalletNumber,
+                to: toWalletNumber,
+                amount: amount,
+                otp: otp,
               ),
+              onResend: () => WalletService.sendOtp(purpose: 'internal_send'),
             ),
-          );
+          ),
+        );
+
+        if (verified == true) {
+          if (mounted) {
+            _amountController.clear();
+            await _fetchBalances(); // Refresh balances
+            await _fetchTransferHistory(); // Refresh transfer history
+            
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Transfer Successful'),
+                backgroundColor: Colors.green,
+                duration: Duration(seconds: 4),
+              ),
+            );
+          }
         }
+      } else {
+        _showError(otpResult['error'] ?? 'Failed to send OTP');
       }
     } catch (e) {
       if (mounted) {
+        _showError('Error: $e');
+      }
+    } finally {
+      if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Unexpected error: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
       }
     }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
+    );
   }
 
   @override

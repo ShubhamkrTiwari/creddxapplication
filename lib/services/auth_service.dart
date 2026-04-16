@@ -202,12 +202,16 @@ class AuthService {
 
       if (token == null || userId == null) return;
 
-      final response = await http.get(
-        Uri.parse('$_baseUrl/user/v1/kyc/status/$userId'),
+      final response = await http.post(
+        Uri.parse('$_baseUrl/v1/kyc/status'),
         headers: {
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
           'Authorization': 'Bearer $token',
         },
+        body: json.encode({
+          'user_id': userId,
+        }),
       ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
@@ -571,5 +575,13 @@ class AuthService {
   static Future<String?> getToken() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_tokenKey);
+  }
+
+  static Future<String?> getUserEmail() async {
+    final userData = await getUserData();
+    if (userData != null) {
+      return userData['email']?.toString();
+    }
+    return null;
   }
 }

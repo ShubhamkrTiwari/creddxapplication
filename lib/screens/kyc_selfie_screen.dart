@@ -9,6 +9,7 @@ class KYCSelfieScreen extends StatefulWidget {
   final XFile? backImage;
   final String? documentType;
   final String? documentId;
+  final bool fromDigiLocker;
   
   const KYCSelfieScreen({
     super.key,
@@ -16,6 +17,7 @@ class KYCSelfieScreen extends StatefulWidget {
     this.backImage,
     this.documentType,
     this.documentId,
+    this.fromDigiLocker = true,
   });
 
   @override
@@ -237,28 +239,53 @@ class _KYCSelfieScreenState extends State<KYCSelfieScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // Verify selfie using separate API
-      final result = await _userService.verifySelfie(
-        selfieImage: _selfieImage!,
-        documentType: widget.documentType,
-        documentId: widget.documentId,
-      );
+      if (widget.fromDigiLocker) {
+        // For DigiLocker flow, verify selfie with DigiLocker flag
+        final result = await _userService.verifySelfieFromDigiLocker(
+          selfieImage: _selfieImage!,
+        );
 
-      if (mounted) {
-        setState(() => _isLoading = false);
-        
-        if (result['success'] == true) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const KYCPendingScreen()),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(result['error'] ?? 'Failed to submit KYC'),
-              backgroundColor: Colors.red,
-            ),
-          );
+        if (mounted) {
+          setState(() => _isLoading = false);
+          
+          if (result['success'] == true) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const KYCPendingScreen()),
+            );
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(result['error'] ?? 'Failed to verify selfie'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        }
+      } else {
+        // Legacy flow with document images
+        final result = await _userService.verifySelfie(
+          selfieImage: _selfieImage!,
+          documentType: widget.documentType,
+          documentId: widget.documentId,
+        );
+
+        if (mounted) {
+          setState(() => _isLoading = false);
+          
+          if (result['success'] == true) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const KYCPendingScreen()),
+            );
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(result['error'] ?? 'Failed to submit KYC'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
         }
       }
     } catch (e) {

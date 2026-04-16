@@ -6,12 +6,14 @@ import 'package:http/http.dart' as http;
 import 'package:syncfusion_flutter_charts/charts.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/futures_screen.dart';
-import 'screens/spot_screen.dart';
+import 'screens/wallet_screen.dart';
 import 'screens/bot_main_screen.dart';
 import 'screens/bot_trading_screen.dart';
 import 'screens/home_screen.dart';
-import 'screens/wallet_screen.dart';
+import 'screens/spot_screen.dart';
+import 'screens/p2p_user_profile_screen.dart';
 import '../services/wallet_service.dart';
+import '../services/user_service.dart';
 
 class MainNavigation extends StatefulWidget {
   final int initialIndex;
@@ -23,19 +25,47 @@ class MainNavigation extends StatefulWidget {
 
 class _MainNavigationState extends State<MainNavigation> {
   late int _selectedIndex;
-  
-  final List<Widget> _screens = [
-    const HomeScreen(),
-    const FuturesScreen(),
-    const BotMainScreen(),
-    const SpotScreen(),
-    const WalletScreen(),
-  ];
+  late final UserService _userService;
+
+  late final List<Widget> _screens;
 
   @override
   void initState() {
     super.initState();
     _selectedIndex = widget.initialIndex;
+    _userService = UserService();
+    _screens = [
+      const HomeScreen(),
+      const FuturesScreen(),
+      const BotMainScreen(),
+      const SpotScreen(),
+      const WalletScreen(),
+    ];
+  }
+
+  Widget _buildP2PProfileScreen() {
+    return FutureBuilder<void>(
+      future: _userService.initUserData(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)));
+        }
+
+        final userId = _userService.userId ?? '';
+        final userName = _userService.userName ?? 'User';
+
+        if (userId.isEmpty) {
+          return const Center(
+            child: Text(
+              'Please login to view profile',
+              style: TextStyle(color: Colors.white),
+            ),
+          );
+        }
+
+        return P2PUserProfileScreen(userId: userId, userName: userName);
+      },
+    );
   }
 
   void _onItemTapped(int index) {
@@ -59,7 +89,7 @@ class _MainNavigationState extends State<MainNavigation> {
     return Container(
       padding: const EdgeInsets.only(top: 2, bottom: 20),
       decoration: const BoxDecoration(
-        color: Color(0xFF0D0D0D), 
+        color: Color(0xFF0D0D0D),
         border: Border(top: BorderSide(color: Colors.white10, width: 0.5))
       ),
       child: Row(

@@ -685,10 +685,40 @@ class P2PService {
 
   static Future<bool> updateOrderStatus(String orderId, String status) async {
     try {
-      final response = await http.patch(Uri.parse('$_baseUrl/p2p/v1/p2p/order/status'), headers: await _getHeaders(), 
+      final response = await http.patch(Uri.parse('$_baseUrl/p2p/v1/p2p/order/status'), headers: await _getHeaders(),
         body: json.encode({'orderId': orderId, 'status': status}));
       return response.statusCode == 200;
     } catch (e) { return false; }
+  }
+
+  static Future<Map<String, dynamic>> makePayment({
+    required String orderId,
+    required String paymentMethod,
+    String? utrNumber,
+    String? screenshot,
+  }) async {
+    try {
+      final body = {
+        'orderId': orderId,
+        'paymentMethod': paymentMethod,
+        if (utrNumber != null) 'utrNumber': utrNumber,
+        if (screenshot != null) 'screenshot': screenshot,
+      };
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/order/make-payment'),
+        headers: await _getHeaders(),
+        body: json.encode(body),
+      );
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return {'success': true, 'data': json.decode(response.body)};
+      } else {
+        final errorData = response.body.isNotEmpty ? json.decode(response.body) : {};
+        return {'success': false, 'error': errorData['message'] ?? errorData['error'] ?? 'Payment failed'};
+      }
+    } catch (e) {
+      debugPrint('Make payment error: $e');
+      return {'success': false, 'error': e.toString()};
+    }
   }
 
   // --- Chats ---
@@ -738,6 +768,17 @@ class P2PService {
       if (response.statusCode == 200) return json.decode(response.body);
     } catch (e) { return null; }
     return null;
+  }
+
+  static Future<List<dynamic>> getChatMessagesByOrderId(String orderId) async {
+    try {
+      final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/p2p/chat/messages?orderId=$orderId'), headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data is List ? data : (data['data'] ?? data['messages'] ?? []);
+      }
+    } catch (e) { debugPrint('Chat messages error: $e'); }
+    return [];
   }
 
   static Future<String?> uploadChatImage(dynamic imageFile) async {
