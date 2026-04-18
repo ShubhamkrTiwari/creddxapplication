@@ -7,7 +7,7 @@ import 'p2p_place_order_screen.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
+import '../services/socket_service.dart';
 import '../utils/coin_icon_mapper.dart';
 
 class MarketScreen extends StatefulWidget {
@@ -26,6 +26,7 @@ class _MarketScreenState extends State<MarketScreen> with TickerProviderStateMix
   final TextEditingController _searchController = TextEditingController();
   final String _spotBaseUrl = 'http://13.202.34.205:9000';
   Timer? _priceUpdateTimer;
+  StreamSubscription? _tradeSubscription;
   final NumberFormat _priceFormat = NumberFormat.currency(symbol: "₹", decimalDigits: 2);
 
   @override
@@ -33,13 +34,51 @@ class _MarketScreenState extends State<MarketScreen> with TickerProviderStateMix
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     _fetchInitialData();
-    _startPriceUpdates();
-    _connectToTradingView();
+    _initWebSocket();
+  }
+
+  void _initWebSocket() {
+    _tradeSubscription = SocketService.tradesStream.listen((data) {
+      if (data['type'] == 'trade') {
+        final tradeData = data['data'] ?? data;
+        final symbol = (data['symbol'] ?? tradeData['symbol'] ?? '').toString();
+        final price = double.tryParse(tradeData['price']?.toString() ?? '0') ?? 0.0;
+        
+        if (symbol.isNotEmpty && price > 0) {
+          _updatePriceFromSocket(symbol, price);
+        }
+      }
+    });
+
+    // Subscribe to major pairs for real-time updates
+    final majorPairs = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'ADAUSDT', 'XRPUSDT', 'DOTUSDT', 'AVAXUSDT'];
+    for (var pair in majorPairs) {
+      SocketService.subscribe(pair);
+    }
+  }
+
+  void _updatePriceFromSocket(String symbol, double price) {
+    if (mounted) {
+      setState(() {
+        final cleanSymbol = symbol.replaceAll('USDT', '');
+        final existingIndex = _marketData.indexWhere((m) {
+          final s = m['symbol'].toString();
+          return s == symbol || s == cleanSymbol;
+        });
+        
+        if (existingIndex >= 0) {
+          _marketData[existingIndex] = {
+            ..._marketData[existingIndex],
+            'price': price.toStringAsFixed(2),
+          };
+        }
+      });
+    }
   }
 
   @override
   void dispose() {
-    _priceUpdateTimer?.cancel();
+    _tradeSubscription?.cancel();
     _tabController.dispose();
     _searchController.dispose();
     super.dispose();
@@ -153,12 +192,6 @@ class _MarketScreenState extends State<MarketScreen> with TickerProviderStateMix
     }
   }
 
-  void _startPriceUpdates() {
-    _priceUpdateTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
-      _fetchTradingViewData(); // Refresh data every 5 seconds
-    });
-  }
-
   Future<void> _fetchInitialData() async {
     setState(() => _isLoading = true);
     await Future.wait([
@@ -166,27 +199,6 @@ class _MarketScreenState extends State<MarketScreen> with TickerProviderStateMix
       _fetchP2PAds(),
     ]);
     if (mounted) setState(() => _isLoading = false);
-  }
-
-  Future<void> _fetchSpotData() async {
-    try {
-      final response = await http.get(Uri.parse('$_spotBaseUrl/ticker/24hr'));
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['success'] == true) {
-          final List<dynamic> rawList = data['data'] is List ? data['data'] : data['data'].values.toList();
-          _marketData = rawList.map<Map<String, dynamic>>((item) => {
-            'symbol': item['symbol'],
-            'price': item['last_price']?.toString() ?? '0.00',
-            'change': double.tryParse(item['price_change_percent']?.toString() ?? '0') ?? 0.0,
-            'volume': item['volume']?.toString() ?? '0',
-            'isFavorite': false,
-          }).toList();
-        }
-      }
-    } catch (e) {
-      debugPrint('Spot fetch error: $e');
-    }
   }
 
   Future<void> _fetchP2PAds() async {
@@ -427,7 +439,7 @@ class _MarketScreenState extends State<MarketScreen> with TickerProviderStateMix
     }
     
     return RefreshIndicator(
-      onRefresh: _fetchSpotData,
+      onRefresh: _fetchTradingViewData,
       child: ListView.builder(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         itemCount: filteredData.length,

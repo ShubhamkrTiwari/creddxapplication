@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/socket_service.dart';
 import '../services/spot_service.dart';
 import '../services/wallet_service.dart';
 import 'login_screen.dart';
@@ -35,15 +36,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   List<dynamic> _trustedDevices = [];
   bool _isLoadingDevices = true;
   
-  // WebSocket for wallet balance
-  WebSocketChannel? _walletWsChannel;
+  // WebSocket subscription for wallet balance
+  StreamSubscription<Map<String, dynamic>>? _balanceSubscription;
   Map<String, dynamic> _walletBalances = {};
   bool _isLoadingWallet = true;
-  String? _walletError;
-  Timer? _loadingTimeout;
-  int _retryCount = 0;
-  static const int _maxRetries = 3;
-  static const Duration _retryDelay = Duration(seconds: 5);
   
   // Asset prices - will be updated dynamically
   Map<String, double> _assetPrices = {'ETH': 2450.00, 'USDT': 1.00, 'USDC': 1.00, 'BTC': 45000.00};
@@ -64,7 +60,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     super.initState();
     _loadUserData();
     _loadTrustedDevices();
-    _connectWalletWebSocket();
+    _subscribeToBalance();
     _loadAllWalletData();
     _loadAssetPrices();
     _loadConversionRate();
@@ -86,263 +82,47 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   
   @override
   void dispose() {
-    _walletWsChannel?.sink.close();
-    _loadingTimeout?.cancel();
+    _balanceSubscription?.cancel();
     super.dispose();
   }
-  
-  // Fallback: Fetch balance via REST API
-  Future<void> _fetchBalanceViaHttp() async {
-    try {
-      debugPrint('=== Fetching balance via HTTP fallback ===');
-      final token = await AuthService.getToken();
-      final userId = await _getUserId();
-      
-      debugPrint('Using token: ${token != null ? "present" : "null"}');
-      debugPrint('Using userId: $userId');
-      
-      final response = await http.get(
-        Uri.parse('$_httpBaseUrl/balance/$userId'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          if (token != null) 'Authorization': 'Bearer $token',
-        },
-      ).timeout(const Duration(seconds: 10));
-      
-      debugPrint('HTTP Balance Response Status: ${response.statusCode}');
-      debugPrint('HTTP Balance Response Body: ${response.body}');
-      
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        debugPrint('Parsed HTTP data: $data');
-        if (data['success'] == true && data['data'] != null) {
-          debugPrint('HTTP success, setting wallet balances');
-          setState(() {
-            _walletBalances = data['data'];
-            _isLoadingWallet = false;
-          });
-          debugPrint('Updated _walletBalances from HTTP: $_walletBalances');
-          return;
-        }
-      }
-      
-      // If HTTP fails, show 0 balances
-      debugPrint('HTTP request failed, setting empty balances');
-      setState(() {
-        _walletBalances = {};
-        _isLoadingWallet = false;
-      });
-    } catch (e) {
-      debugPrint('HTTP balance fetch error: $e');
-      setState(() {
-        _walletBalances = {};
-        _isLoadingWallet = false;
-      });
-    }
-  }
-  
-  Future<String> _getUserId() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      String? userId = prefs.getString('user_id');
-      if (userId != null) return userId;
-      int? userIdInt = prefs.getInt('user_id');
-      if (userIdInt != null) return userIdInt.toString();
-      return '1';
-    } catch (e) {
-      return '1';
-    }
-  }
-  
-  void _connectWalletWebSocket() async {
-    try {
-      // Close existing connection if any
-      if (_walletWsChannel != null) {
-        await _walletWsChannel!.sink.close();
-        _walletWsChannel = null;
-      }
-      
-      // Check network connectivity first
-      final hasNetwork = await _checkNetworkConnectivity();
-      if (!hasNetwork) {
-        if (mounted) {
-          setState(() {
-            _walletError = 'No internet connection';
-            _isLoadingWallet = false;
-          });
-        }
-        return;
-      }
-      
-      final token = await AuthService.getToken();
-      if (token == null) {
-        setState(() {
-          _walletError = 'Authentication required';
-          _isLoadingWallet = false;
-        });
-        return;
-      }
-      
-      // Add timeout to stop loading if WebSocket doesn't respond
-      _loadingTimeout = Timer(const Duration(seconds: 10), () {
-        if (mounted && _isLoadingWallet) {
-          debugPrint('WebSocket timeout, trying HTTP fallback...');
-          _fetchBalanceViaHttp();
-        }
-      });
-      
-      try {
-        _walletWsChannel = WebSocketChannel.connect(
-          Uri.parse('ws://13.202.34.205:9001/ws'),
-          protocols: ['websocket'],
-        );
-        
-        _walletWsChannel!.stream.listen(
-          _handleWalletWebSocketMessage,
-          onError: (error) {
-            debugPrint('Wallet WebSocket error: $error');
-            _handleWebSocketError(error);
-          },
-          onDone: () {
-            debugPrint('Wallet WebSocket disconnected');
-            _handleWebSocketDone();
-          },
-          cancelOnError: true,
-        );
-        
-        // Reset retry count on successful connection
-        _retryCount = 0;
-        
-        // Authenticate and subscribe to balance updates
-        _sendWalletWsMessage({
-          'type': 'auth',
-          'token': token,
-        });
-        
-        _sendWalletWsMessage({
-          'type': 'subscribe',
-          'channel': 'balance',
-        });
-      } on TimeoutException catch (e) {
-        debugPrint('TimeoutException: ${e.message}');
-        _handleTimeoutException(e);
-      } catch (e) {
-        debugPrint('WebSocket connection error: $e');
-        _handleWebSocketError(e);
-      }
-    } catch (e) {
-      debugPrint('Unexpected error in WebSocket connection: $e');
-      _handleWebSocketError(e);
-    }
-  }
-  
-  void _handleWalletWebSocketMessage(dynamic message) {
-    try {
-      final data = json.decode(message);
-      debugPrint('=== WebSocket Message Received ===');
-      debugPrint('Full message data: $data');
-      debugPrint('Data type: ${data.runtimeType}');
 
-      // Handle various response formats - only cancel timeout when we get actual data
-      if (data['type'] == 'balance_update' ||
-          data['channel'] == 'balance' ||
-          data['balances'] != null ||
-          data['spot'] != null ||
-          data['main'] != null ||
-          data['p2p'] != null ||
-          data['bot'] != null ||
-          data['data'] != null ||
-          data['spotBalance'] != null ||
-          data['mainBalance'] != null ||
-          data['p2pBalance'] != null ||
-          data['botBalance'] != null ||
-          data['demoBalance'] != null) {
-        debugPrint('=== Balance Data Detected ===');
-        debugPrint('Setting wallet balances to: ${data['data'] ?? data}');
-        // Cancel timeout only when we get actual balance data
-        _loadingTimeout?.cancel();
-        setState(() {
-          _walletBalances = data['data'] ?? data;
-          _isLoadingWallet = false;
-        });
-        debugPrint('Updated _walletBalances: $_walletBalances');
-      } else if (data['type'] == 'auth_ok' || data['success'] == true) {
-        debugPrint('WebSocket authenticated, requesting balances...');
-        _sendWalletWsMessage({'type': 'get_balances'});
-      } else {
-        debugPrint('Unhandled message type: ${data['type']}');
-      }
-    } catch (e) {
-      debugPrint('Error parsing WebSocket message: $e');
-    }
-  }
-  
-  void _sendWalletWsMessage(Map<String, dynamic> message) {
-    if (_walletWsChannel != null) {
-      _walletWsChannel!.sink.add(json.encode(message));
-    }
-  }
-  
-  void _handleWebSocketError(dynamic error) {
-    if (mounted) {
-      setState(() {
-        _isLoadingWallet = false;
-        _walletBalances = {};
-        _walletError = 'Connection error: ${error.toString()}';
-      });
-    }
-    
-    // Try HTTP fallback
-    _fetchBalanceViaHttp();
-  }
-  
-  void _handleTimeoutException(TimeoutException e) {
-    debugPrint('Connection timeout: ${e.message}');
-    if (mounted) {
-      setState(() {
-        _isLoadingWallet = false;
-        _walletBalances = {};
-        _walletError = 'Connection timeout';
-      });
-    }
-    
-    // Try HTTP fallback
-    _fetchBalanceViaHttp();
-  }
-  
-  void _handleWebSocketDone() {
-    if (mounted && _retryCount < _maxRetries) {
-      _retryCount++;
-      debugPrint('Attempting to reconnect... ($_retryCount/$_maxRetries)');
-      
-      Future.delayed(_retryDelay * _retryCount, () {
+  void _subscribeToBalance() {
+    _balanceSubscription = SocketService.balanceStream.listen((data) {
+      if (data['type'] == 'balance_update' && data['assets'] != null) {
+        debugPrint('UserProfileScreen: Balance update received via SocketService');
+        final assets = data['assets'] as List;
+        
+        // Map 'asset' to 'coin' to match UserProfileScreen expectations
+        final mappedAssets = assets.map((a) => {
+          'coin': a['asset'],
+          'available': a['available'],
+          'locked': a['locked'],
+        }).toList();
+
         if (mounted) {
-          _connectWalletWebSocket();
+          setState(() {
+            // Update spot wallet specifically if that's what the update represents
+            // or merge it into the existing _walletBalances.
+            // For simplicity and to maintain compatibility with existing UI logic:
+            _walletBalances['spot'] = {'balances': mappedAssets};
+            _walletBalances['spotBalance'] = mappedAssets; // Alternative format
+            
+            // Also update top-level for 'Coin View'
+            for (var asset in assets) {
+              final symbol = asset['asset']?.toString().toLowerCase();
+              if (symbol != null) {
+                _walletBalances[symbol] = asset['available'];
+                _walletBalances['${symbol}_available'] = asset['available'];
+                _walletBalances['${symbol}_total'] = (double.tryParse(asset['available']?.toString() ?? '0') ?? 0.0) + 
+                                                     (double.tryParse(asset['locked']?.toString() ?? '0') ?? 0.0);
+              }
+            }
+            
+            _isLoadingWallet = false;
+          });
         }
-      });
-    } else if (_retryCount >= _maxRetries) {
-      debugPrint('Max retries reached, falling back to HTTP');
-      if (mounted) {
-        setState(() {
-          _walletError = 'Connection unstable, using HTTP fallback';
-        });
       }
-      _fetchBalanceViaHttp();
-    }
-  }
-  
-  // Check network connectivity before attempting connection
-  Future<bool> _checkNetworkConnectivity() async {
-    try {
-      if (kIsWeb) return true; // Assume connectivity on web
-      // For mobile, we might want to use a package like connectivity_plus 
-      // but for now, we'll just return true to avoid dart:io dependency
-      return true;
-    } catch (e) {
-      debugPrint('Network check error: $e');
-      return false;
-    }
+    });
   }
   
   // Load INR to USDT conversion rate from API
@@ -595,9 +375,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       _loadAllWalletData(),
       _loadAssetPrices(),
     ]);
-    
-    // Also reconnect WebSocket for real-time updates
-    _connectWalletWebSocket();
   }
 
   // Load comprehensive wallet data from API
@@ -849,7 +626,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen())
           );
           // KYC flow will handle status updates automatically
-          if (result != null) {
+          if (mounted) {
+            _loadUserData();
             setState(() {});
           }
         }

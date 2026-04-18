@@ -5,6 +5,7 @@ import 'onboarding_screen.dart';
 import '../main_navigation.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
+import '../services/socket_service.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -71,6 +72,10 @@ class _SplashScreenState extends State<SplashScreen>
     ]);
     
     final bool isLoggedIn = results[0] as bool;
+
+    if (isLoggedIn) {
+      unawaited(SocketService.connect());
+    }
 
     if (mounted) {
       try {

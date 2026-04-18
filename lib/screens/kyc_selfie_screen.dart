@@ -87,7 +87,11 @@ class _KYCSelfieScreenState extends State<KYCSelfieScreen> {
         backgroundColor: const Color(0xFF0D0D0D),
         elevation: 0,
         leading: IconButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            if (Navigator.canPop(context)) {
+              Navigator.pop(context);
+            }
+          },
           icon: const Icon(Icons.arrow_back, color: Colors.white, size: 24),
         ),
         title: Column(
@@ -166,10 +170,10 @@ class _KYCSelfieScreenState extends State<KYCSelfieScreen> {
                           ),
                         ),
                   )
-                : const Column(
+                : Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.cloud_upload_outlined, color: Color(0xFF84BD00), size: 48),
+                      const Icon(Icons.cloud_upload_outlined, color: Color(0xFF84BD00), size: 48),
                       const SizedBox(height: 12),
                       const Text(
                         'UPLOAD HERE',
@@ -193,7 +197,11 @@ class _KYCSelfieScreenState extends State<KYCSelfieScreen> {
       children: [
         Expanded(
           child: ElevatedButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () {
+              if (Navigator.canPop(context)) {
+                Navigator.pop(context);
+              }
+            },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF1C1C1E),
               foregroundColor: Colors.white,
@@ -249,7 +257,7 @@ class _KYCSelfieScreenState extends State<KYCSelfieScreen> {
           setState(() => _isLoading = false);
           
           if (result['success'] == true) {
-            Navigator.push(
+            Navigator.pushReplacement(
               context,
               MaterialPageRoute(builder: (context) => const KYCPendingScreen()),
             );
@@ -274,7 +282,7 @@ class _KYCSelfieScreenState extends State<KYCSelfieScreen> {
           setState(() => _isLoading = false);
           
           if (result['success'] == true) {
-            Navigator.push(
+            Navigator.pushReplacement(
               context,
               MaterialPageRoute(builder: (context) => const KYCPendingScreen()),
             );

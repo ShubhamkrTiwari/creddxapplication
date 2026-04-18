@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../utils/error_handler.dart';
 
 class P2PService {
-  static const String _baseUrl = 'http://65.0.196.122:8085';
+  static const String _baseUrl = 'https://api11.hathmetech.com/api';
 
   static get _selectedCrypto => null;
 

@@ -153,7 +153,7 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
                   
                   // Price
                   const Text(
-                    '\$20',
+                    '\$25',
                     style: TextStyle(
                       color: const Color(0xFF84BD00),
                       fontSize: 32,
@@ -175,7 +175,7 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
                   _buildFeature('Trade Pro'),
                   _buildFeature('70-30 Ratio'),
                   _buildFeature('Cap 100\$-2000\$'),
-                  _buildFeature('1 Month'),
+                  _buildFeature('1 Year'),
                   _buildFeature('Profit Master'),
                   
                   const SizedBox(height: 32),
@@ -208,7 +208,7 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
                           : Text(
                               _isSubscribed 
                                   ? 'Already Subscribed'
-                                  : 'Get a Free Plan',
+                                  : 'Get Annual Plan',
                               style: TextStyle(
                                 color: _isSubscribed ? Colors.white : Colors.black,
                                 fontSize: 16,
@@ -246,11 +246,11 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  _buildDetailRow('Plan', 'Free Plan'),
+                  _buildDetailRow('Plan', 'Annual Plan'),
                   _buildDetailRow('Status', 'Active'),
                   _buildDetailRow('Days Remaining', '$_daysLeft days'),
-                  _buildDetailRow('Price', '\$20'),
-                  _buildDetailRow('Duration', '30 Days'),
+                  _buildDetailRow('Price', '\$25'),
+                  _buildDetailRow('Duration', '365 Days'),
                 ],
               ),
             ),
@@ -323,23 +323,23 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
     setState(() => _isSubscribing = true);
     
     try {
-      debugPrint('=== SUBSCRIBING TO FREE PLAN ===');
+      debugPrint('=== SUBSCRIBING TO ANNUAL PLAN ===');
       
       final response = await BotService.subscribeToPlan(
-        plan: 'Free Plan',
-        price: 20.0, // Set price to 20 USD as required by API
+        plan: 'Annual Plan',
+        price: 25.0, // Set price to 25 USD as required by API
       );
       
       if (response['success'] == true) {
         setState(() {
           _isSubscribed = true;
-          _daysLeft = 30; // 30 days for free plan
+          _daysLeft = 365; // 365 days for annual plan
         });
         
         // Set the global package state to true
         BotTradeDetailScreen.hasPackage = true;
         
-        _showSuccessDialog('Subscription successful!', response['message'] ?? 'You are now subscribed to Free Plan');
+        _showSuccessDialog('Subscription successful!', response['message'] ?? 'You are now subscribed to Annual Plan');
       } else {
         _showErrorDialog('Subscription failed', response['error'] ?? 'Something went wrong');
       }

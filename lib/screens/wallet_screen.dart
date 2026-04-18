@@ -8,6 +8,8 @@ import 'internal_transfer_screen.dart';
 import 'wallet_history_screen.dart';
 import '../services/wallet_service.dart';
 import '../services/spot_service.dart';
+import '../services/socket_service.dart';
+import '../services/auth_service.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 
 class WalletScreen extends StatefulWidget {
@@ -25,7 +27,7 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
   
   bool _isLoading = true;
   bool _isScreenVisible = true;
-  String _walletAddress = '0x2340....3420';
+  String _walletAddress = 'Fetching...';
   double _totalBalance = 0.0;
   Map<String, dynamic> _walletBalances = {};
   List<Map<String, dynamic>> _cryptoHoldings = [];
@@ -39,36 +41,7 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
     WidgetsBinding.instance.addObserver(this);
     _tabController = TabController(length: 2, vsync: this);
     _fetchWalletData();
-    _fetchSpotBalance(); // Fetch spot balance via HTTP
     _connectWebSocketBalanceUpdates();
-  }
-
-  Future<void> _fetchSpotBalance() async {
-    debugPrint('=== Fetching Spot Balance via HTTP ===');
-    try {
-      final result = await SpotService.getBalance();
-      debugPrint('SpotService.getBalance result: $result');
-      
-      if (result['success'] == true && result['data'] != null) {
-        final data = result['data'];
-        final usdtAvailable = double.tryParse(data['usdt_available']?.toString() ?? '0') ?? 0.0;
-        final btcFree = double.tryParse(data['free']?.toString() ?? '0') ?? 0.0;
-        
-        debugPrint('Spot HTTP - USDT: $usdtAvailable, BTC: $btcFree');
-        
-        if (mounted) {
-          setState(() {
-            _walletBalances['spot'] = {
-              'total': usdtAvailable.toStringAsFixed(2),
-              'available': usdtAvailable.toStringAsFixed(2),
-              'locked': '0.00',
-            };
-          });
-        }
-      }
-    } catch (e) {
-      debugPrint('Error fetching spot balance: $e');
-    }
   }
 
   @override
@@ -80,15 +53,13 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
         if (mounted) {
           _isScreenVisible = true;
           _fetchWalletData();
-          _startPeriodicBalanceRefresh();
         }
         break;
       case AppLifecycleState.paused:
       case AppLifecycleState.inactive:
       case AppLifecycleState.detached:
-        // Screen is not visible, stop refresh
+        // Screen is not visible
         _isScreenVisible = false;
-        _stopPeriodicBalanceRefresh();
         break;
       case AppLifecycleState.hidden:
         // TODO: Handle this case.
@@ -97,110 +68,49 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
   }
 
   void _connectWebSocketBalanceUpdates() {
-    // Connect to WebSocket for real-time balance updates
-    _balanceUpdateSubscription = SpotService.getBalanceUpdatesStream().listen(
+    // Connect to global SocketService
+    SocketService.connect();
+    
+    _balanceUpdateSubscription = SocketService.balanceStream.listen(
       (balanceData) {
         debugPrint('=== WebSocket Balance Update Received ===');
         debugPrint('Raw data: $balanceData');
         
         if (mounted && _isScreenVisible) {
-          // Update state immediately with new balance data only if screen is visible
-          if (balanceData is Map<String, dynamic>) {
-            // WebSocket wraps data in 'data' key
-            final payload = balanceData['data'] ?? balanceData;
-            debugPrint('Extracted payload: $payload');
+          final payload = balanceData['data'] ?? balanceData;
+          
+          setState(() {
+            String walletType = payload['wallet_type']?.toString() ?? 'spot';
+            double available = double.tryParse(payload['available']?.toString() ?? '0') ?? 0.0;
+            double locked = double.tryParse(payload['locked']?.toString() ?? '0') ?? 0.0;
+            double total = double.tryParse(payload['total']?.toString() ?? (available + locked).toString()) ?? (available + locked);
+
+            if (walletType == 'spot' || payload['usdt_available'] != null) {
+              final usdtAvailable = double.tryParse(payload['usdt_available']?.toString() ?? available.toString()) ?? available;
+              
+              _walletBalances['spot'] = {
+                'total': usdtAvailable.toStringAsFixed(2),
+                'available': usdtAvailable.toStringAsFixed(2),
+                'locked': locked.toStringAsFixed(2),
+              };
+            } else if (_walletBalances.containsKey(walletType)) {
+              _walletBalances[walletType] = {
+                'total': total.toStringAsFixed(2),
+                'available': available.toStringAsFixed(2),
+                'locked': locked.toStringAsFixed(2),
+              };
+            }
             
-            setState(() {
-              // Handle different wallet types from WebSocket
-              String walletType = payload['wallet_type']?.toString() ?? 'spot';
-              String coin = payload['coin']?.toString()?.toUpperCase() ?? 'USDT';
-              double available = double.tryParse(payload['available']?.toString() ?? '0') ?? 0.0;
-              double locked = double.tryParse(payload['locked']?.toString() ?? '0') ?? 0.0;
-              double total = double.tryParse(payload['total']?.toString() ?? (available + locked).toString()) ?? (available + locked);
-              
-              debugPrint('Parsed - walletType: $walletType, coin: $coin, available: $available, locked: $locked, total: $total');
-              
-              // Update specific wallet balance
-              if (walletType == 'spot') {
-                // For spot wallet, use specific fields from spot service
-                final usdtAvailable = double.tryParse(payload['usdt_available']?.toString() ?? available.toString()) ?? available;
-                final btcFree = double.tryParse(payload['free']?.toString() ?? '0') ?? 0.0;
-                
-                debugPrint('Spot wallet - usdtAvailable: $usdtAvailable, btcFree: $btcFree');
-                
-                _walletBalances['spot'] = {
-                  'total': usdtAvailable.toStringAsFixed(2),
-                  'available': usdtAvailable.toStringAsFixed(2),
-                  'locked': locked.toStringAsFixed(2),
-                };
-                
-                // Update crypto holdings for spot
-                final usdtIndex = _cryptoHoldings.indexWhere((crypto) => crypto['symbol'] == 'USDT');
-                if (usdtIndex >= 0) {
-                  final currentMain = double.tryParse(_walletBalances['main']?['total']?.toString() ?? '0') ?? 0.0;
-                  final currentP2p = double.tryParse(_walletBalances['p2p']?['total']?.toString() ?? '0') ?? 0.0;
-                  final currentBot = double.tryParse(_walletBalances['bot']?['total']?.toString() ?? '0') ?? 0.0;
-                  final newTotal = currentMain + usdtAvailable + currentP2p + currentBot;
-                  
-                  _cryptoHoldings[usdtIndex]['available'] = newTotal.toString();
-                  _cryptoHoldings[usdtIndex]['amount'] = newTotal.toString();
-                  _cryptoHoldings[usdtIndex]['usdValue'] = newTotal;
-                }
-                
-                final btcIndex = _cryptoHoldings.indexWhere((crypto) => crypto['symbol'] == 'BTC');
-                if (btcIndex >= 0 && btcFree > 0) {
-                  final btcValue = btcFree * 92076.6;
-                  _cryptoHoldings[btcIndex]['available'] = btcFree.toString();
-                  _cryptoHoldings[btcIndex]['amount'] = btcFree.toString();
-                  _cryptoHoldings[btcIndex]['usdValue'] = btcValue;
-                }
-              } else {
-                // For other wallets (main, p2p, bot)
-                _walletBalances[walletType] = {
-                  'total': total.toStringAsFixed(2),
-                  'available': available.toStringAsFixed(2),
-                  'locked': locked.toStringAsFixed(2),
-                };
-                
-                // Update total USDT in assets
-                final usdtIndex = _cryptoHoldings.indexWhere((crypto) => crypto['symbol'] == 'USDT');
-                if (usdtIndex >= 0) {
-                  final currentMain = double.tryParse(_walletBalances['main']?['total']?.toString() ?? '0') ?? 0.0;
-                  final currentSpot = double.tryParse(_walletBalances['spot']?['total']?.toString() ?? '0') ?? 0.0;
-                  final currentP2p = double.tryParse(_walletBalances['p2p']?['total']?.toString() ?? '0') ?? 0.0;
-                  final currentBot = double.tryParse(_walletBalances['bot']?['total']?.toString() ?? '0') ?? 0.0;
-                  final newTotal = currentMain + currentSpot + currentP2p + currentBot;
-                  
-                  _cryptoHoldings[usdtIndex]['available'] = newTotal.toString();
-                  _cryptoHoldings[usdtIndex]['amount'] = newTotal.toString();
-                  _cryptoHoldings[usdtIndex]['usdValue'] = newTotal;
-                }
+            // Recalculate total balance
+            double newTotalEquity = 0.0;
+            _walletBalances.forEach((key, value) {
+              if (key != 'demo_bot') {
+                newTotalEquity += double.tryParse(value['total']?.toString() ?? '0') ?? 0.0;
               }
-              
-              // Recalculate total balance
-              final currentMain = double.tryParse(_walletBalances['main']?['total']?.toString() ?? '0') ?? 0.0;
-              final currentSpot = double.tryParse(_walletBalances['spot']?['total']?.toString() ?? '0') ?? 0.0;
-              final currentP2p = double.tryParse(_walletBalances['p2p']?['total']?.toString() ?? '0') ?? 0.0;
-              final currentBot = double.tryParse(_walletBalances['bot']?['total']?.toString() ?? '0') ?? 0.0;
-              final btcValue = (double.tryParse(balanceData['free']?.toString() ?? '0') ?? 0.0) * 92076.6;
-              _totalBalance = currentMain + currentSpot + currentP2p + currentBot + btcValue;
-              
-              debugPrint('Wallet balance updated via WebSocket - $walletType: $available, Total: $total');
             });
-          } else {
-            // Fallback to full data refresh if WebSocket data format is unexpected
-            _fetchWalletData();
-          }
+            _totalBalance = newTotalEquity;
+          });
         }
-      },
-      onError: (error) {
-        debugPrint('WebSocket balance update error: $error');
-        // Try to reconnect after error
-        Future.delayed(const Duration(seconds: 5), () {
-          if (mounted) {
-            _connectWebSocketBalanceUpdates();
-          }
-        });
       },
     );
   }
@@ -221,74 +131,129 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
     setState(() => _isLoading = true);
     
     try {
-      // Use WalletService getAllWalletBalances API (port 8085)
-      final balanceResult = await WalletService.getAllWalletBalances();
-      debugPrint('WalletService getAllWalletBalances Result: $balanceResult');
-      
-      // Also fetch history
+      // Fetch user data for real wallet address
+      final userData = await AuthService.getUserData();
+      if (userData != null && mounted) {
+        setState(() {
+          _walletAddress = userData['walletAddress'] ?? userData['address'] ?? userData['_id'] ?? 'No Address';
+        });
+      }
+
+      // Fetch history from WalletService
       final historyResult = await WalletService.getWalletTransferHistory();
       final transactionResult = await WalletService.getCompleteTransactionHistory(limit: 20);
       final conversionResult = await WalletService.getConversionHistory(limit: 20);
-      
+
       double totalEquityUSDT = 0.0;
       Map<String, dynamic> walletBreakdowns = {};
       Map<String, Map<String, dynamic>> allAssets = {};
-      
-      // Parse WalletService response for all wallet balances
+
+      // Step 1: First fetch SPOT balance from SpotService API (GET /balance/:user_id)
+      debugPrint('Fetching spot balance from SpotService API...');
+      final spotResult = await SpotService.getBalance();
+      debugPrint('SpotService Result: $spotResult');
+
+      // Set default balances for all wallets
+      double mainBalance = 0.0;
+      double spotAvailable = 0.0;
+      double spotLocked = 0.0;
+      double p2pBalance = 0.0;
+      double botBalance = 0.0;
+
+      if (spotResult['success'] == true && spotResult['data'] != null) {
+        final spotData = spotResult['data'];
+        debugPrint('SpotService data: $spotData');
+
+        // Parse spot balance from API response
+        spotAvailable = double.tryParse(spotData['usdt_available']?.toString() ?? '0.0') ?? 0.0;
+        spotLocked = double.tryParse(spotData['usdt_locked']?.toString() ?? '0.0') ?? 0.0;
+
+        // Parse assets array if available (for additional coins like BTC)
+        final assets = spotData['assets'] as List<dynamic>?;
+        if (assets != null) {
+          for (final asset in assets) {
+            final assetName = asset['asset']?.toString() ?? '';
+            if (assetName == 'BTC') {
+              final btcFree = double.tryParse(asset['free']?.toString() ?? '0.0') ?? 0.0;
+              if (btcFree > 0) {
+                allAssets['BTC'] = {
+                  'symbol': 'BTC',
+                  'name': 'Bitcoin',
+                  'amount': btcFree.toString(),
+                  'available': btcFree.toString(),
+                  'locked': '0',
+                  'usdValue': 0.0, // Will be updated with price
+                  'icon': '₿',
+                  'color': const Color(0xFFF7931A),
+                  'iconUrl': _getCoinIconUrl('BTC'),
+                };
+              }
+            }
+          }
+        }
+
+        debugPrint('Parsed Spot Balance - Available: $spotAvailable, Locked: $spotLocked');
+      }
+
+      // Step 2: Fetch wallet balances from WalletService (main, p2p, bot, spot)
+      final balanceResult = await WalletService.getAllWalletBalances();
+      debugPrint('WalletService getAllWalletBalances Result: $balanceResult');
+
       if (balanceResult['success'] == true && balanceResult['data'] != null) {
         final data = balanceResult['data'];
         debugPrint('Processing WalletService data: $data');
-        
-        // Handle flat format: {spotBalance: X, mainBalance: {USDT: Y}, p2pBalance: Z, botBalance: W}
-        // Extract balances from flat format
+
+        // Handle flat format: {mainBalance: {USDT: Y}, p2pBalance: Z, botBalance: W, spotBalance: X}
         final walletTypeMap = {
-          'spot': 'spotBalance',
-          'main': 'mainBalance', 
+          'main': 'mainBalance',
           'p2p': 'p2pBalance',
           'bot': 'botBalance',
           'demo_bot': 'demoBalance',
         };
-        
+
         for (String type in walletTypeMap.keys) {
           final fieldName = walletTypeMap[type]!;
           final walletData = data[fieldName];
-          
+
           if (walletData != null) {
-            double available = 0.0;
             double total = 0.0;
-            
+
             if (walletData is Map) {
               // Format: {INR: X, USDT: Y}
               if (walletData['USDT'] != null) {
                 total = double.tryParse(walletData['USDT'].toString()) ?? 0.0;
-                available = total; // For main wallet, assume all is available
               }
             } else if (walletData is num) {
-              // Format: spotBalance: 0 (direct number)
+              // Format: p2pBalance: 0 (direct number)
               total = walletData.toDouble();
-              available = total;
             }
-            
-            if (total > 0 || type == 'spot' || type == 'main') {
-              walletBreakdowns[type] = {
-                'total': total.toStringAsFixed(2),
-                'available': available.toStringAsFixed(2),
-                'locked': '0.00',
-              };
-              
-              // Add to total equity (exclude demo_bot)
-              if (type != 'demo_bot') {
-                totalEquityUSDT += total;
-              }
-              
-              debugPrint('$type USDT - Available: $available, Total: $total');
+
+            // Assign to respective wallet
+            switch (type) {
+              case 'main':
+                mainBalance = total;
+                break;
+              case 'p2p':
+                p2pBalance = total;
+                break;
+              case 'bot':
+                botBalance = total;
+                break;
             }
+            debugPrint('$type USDT from WalletService: $total');
           }
         }
-        
-        // Also try nested format as fallback (original format)
-        if (totalEquityUSDT == 0) {
-          final walletTypes = ['spot', 'p2p', 'bot', 'demo_bot', 'main'];
+
+        // Parse spotBalance from API response (new format: spotBalance: 15)
+        if (data['spotBalance'] != null) {
+          final spotTotal = double.tryParse(data['spotBalance'].toString()) ?? 0.0;
+          spotAvailable = spotTotal;
+          debugPrint('Spot balance from WalletService API: $spotTotal');
+        }
+
+        // Also try nested format as fallback
+        if (mainBalance == 0 && p2pBalance == 0 && botBalance == 0) {
+          final walletTypes = ['main', 'p2p', 'bot', 'demo_bot'];
           for (String type in walletTypes) {
             if (data[type] != null) {
               final wallet = data[type];
@@ -301,164 +266,69 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
                     final locked = double.tryParse(b['locked']?.toString() ?? '0') ?? 0.0;
                     final total = double.tryParse(b['total']?.toString() ?? '0') ?? 0.0;
                     final calculatedTotal = total > 0 ? total : (available + locked);
-                    
-                    walletBreakdowns[type] = {
-                      'total': calculatedTotal.toStringAsFixed(2),
-                      'available': available.toStringAsFixed(2),
-                      'locked': locked.toStringAsFixed(2),
-                    };
-                    
-                    if (type != 'demo_bot') {
-                      totalEquityUSDT += calculatedTotal;
+
+                    switch (type) {
+                      case 'main':
+                        mainBalance = calculatedTotal;
+                        break;
+                      case 'p2p':
+                        p2pBalance = calculatedTotal;
+                        break;
+                      case 'bot':
+                        botBalance = calculatedTotal;
+                        break;
                     }
-                    
-                    debugPrint('$type USDT (nested) - Available: $available, Locked: $locked, Total: $calculatedTotal');
+                    debugPrint('$type USDT (nested) - Total: $calculatedTotal');
                   }
                 }
               }
             }
           }
         }
-        
-        // Add USDT to assets list
-        if (totalEquityUSDT > 0) {
-          allAssets['USDT'] = {
-            'symbol': 'USDT',
-            'name': 'Tether',
-            'amount': totalEquityUSDT.toString(),
-            'available': totalEquityUSDT.toString(),
-            'locked': '0',
-            'usdValue': totalEquityUSDT,
-            'icon': '₮',
-            'color': const Color(0xFF26A17B),
-            'iconUrl': _getCoinIconUrl('USDT'),
-          };
-        }
       }
-      
-      // Fallback: If no data from WalletService, try SpotService
-      if (totalEquityUSDT == 0) {
-        debugPrint('No balance from WalletService, trying SpotService...');
-        final spotResult = await SpotService.getBalance();
-        debugPrint('SpotService Result: $spotResult');
-        
-        // Set default balances for all wallets
-        final defaultMainBalance = 5000.0;
-        final defaultSpotBalance = 10000.0;
-        final defaultP2pBalance = 2500.0;
-        final defaultBotBalance = 1500.0;
-        
-        if (spotResult['success'] == true && spotResult['data'] != null) {
-          final spotData = spotResult['data'];
-          debugPrint('SpotService data: $spotData');
-          
-          // Get actual spot balance
-          final usdtAvailable = double.tryParse(spotData['usdt_available']?.toString() ?? defaultSpotBalance.toString()) ?? defaultSpotBalance;
-          final btcFree = double.tryParse(spotData['free']?.toString() ?? '0.1') ?? 0.1;
-          
-          debugPrint('Parsed USDT: $usdtAvailable, BTC: $btcFree');
-          
-          // Update each wallet with proper balance distribution
-          walletBreakdowns['main'] = {
-            'total': defaultMainBalance.toStringAsFixed(2),
-            'available': defaultMainBalance.toStringAsFixed(2),
-            'locked': '0.00',
-          };
-          
-          walletBreakdowns['spot'] = {
-            'total': usdtAvailable.toStringAsFixed(2),
-            'available': usdtAvailable.toStringAsFixed(2),
-            'locked': '0.00',
-          };
-          
-          walletBreakdowns['p2p'] = {
-            'total': defaultP2pBalance.toStringAsFixed(2),
-            'available': defaultP2pBalance.toStringAsFixed(2),
-            'locked': '0.00',
-          };
-          
-          walletBreakdowns['bot'] = {
-            'total': defaultBotBalance.toStringAsFixed(2),
-            'available': defaultBotBalance.toStringAsFixed(2),
-            'locked': '0.00',
-          };
-          
-          // Calculate total equity from all wallets
-          totalEquityUSDT = defaultMainBalance + usdtAvailable + defaultP2pBalance + defaultBotBalance;
-          
-          // Add USDT to assets list (total from all wallets)
-          allAssets['USDT'] = {
-            'symbol': 'USDT',
-            'name': 'Tether',
-            'amount': totalEquityUSDT.toString(),
-            'available': totalEquityUSDT.toString(),
-            'locked': '0',
-            'usdValue': totalEquityUSDT,
-            'icon': '₮',
-            'color': const Color(0xFF26A17B),
-            'iconUrl': _getCoinIconUrl('USDT'),
-          };
-          
-          // Add BTC if available from spot
-          if (btcFree > 0) {
-            final btcValue = btcFree * 92076.6; // Approximate BTC price
-            allAssets['BTC'] = {
-              'symbol': 'BTC',
-              'name': 'Bitcoin',
-              'amount': btcFree.toString(),
-              'available': btcFree.toString(),
-              'locked': '0',
-              'usdValue': btcValue,
-              'icon': '₿',
-              'color': const Color(0xFFF7931A),
-              'iconUrl': _getCoinIconUrl('BTC'),
-            };
-            totalEquityUSDT += btcValue;
-          }
-          
-          debugPrint('Final wallet balances - Main: $defaultMainBalance, Spot: $usdtAvailable, P2P: $defaultP2pBalance, Bot: $defaultBotBalance');
-        } else {
-          // Set default balances for all wallets if API fails
-          debugPrint('SpotService failed, setting default balances for all wallets');
-          walletBreakdowns['main'] = {
-            'total': defaultMainBalance.toStringAsFixed(2),
-            'available': defaultMainBalance.toStringAsFixed(2),
-            'locked': '0.00',
-          };
-          
-          walletBreakdowns['spot'] = {
-            'total': defaultSpotBalance.toStringAsFixed(2),
-            'available': defaultSpotBalance.toStringAsFixed(2),
-            'locked': '0.00',
-          };
-          
-          walletBreakdowns['p2p'] = {
-            'total': defaultP2pBalance.toStringAsFixed(2),
-            'available': defaultP2pBalance.toStringAsFixed(2),
-            'locked': '0.00',
-          };
-          
-          walletBreakdowns['bot'] = {
-            'total': defaultBotBalance.toStringAsFixed(2),
-            'available': defaultBotBalance.toStringAsFixed(2),
-            'locked': '0.00',
-          };
-          
-          totalEquityUSDT = defaultMainBalance + defaultSpotBalance + defaultP2pBalance + defaultBotBalance;
-          
-          allAssets['USDT'] = {
-            'symbol': 'USDT',
-            'name': 'Tether',
-            'amount': totalEquityUSDT.toString(),
-            'available': totalEquityUSDT.toString(),
-            'locked': '0',
-            'usdValue': totalEquityUSDT,
-            'icon': '₮',
-            'color': const Color(0xFF26A17B),
-            'iconUrl': _getCoinIconUrl('USDT'),
-          };
-        }
-      }
+
+      // Build wallet breakdowns with all balances
+      walletBreakdowns['main'] = {
+        'total': mainBalance.toStringAsFixed(2),
+        'available': mainBalance.toStringAsFixed(2),
+        'locked': '0.00',
+      };
+
+      walletBreakdowns['spot'] = {
+        'total': (spotAvailable + spotLocked).toStringAsFixed(2),
+        'available': spotAvailable.toStringAsFixed(2),
+        'locked': spotLocked.toStringAsFixed(2),
+      };
+
+      walletBreakdowns['p2p'] = {
+        'total': p2pBalance.toStringAsFixed(2),
+        'available': p2pBalance.toStringAsFixed(2),
+        'locked': '0.00',
+      };
+
+      walletBreakdowns['bot'] = {
+        'total': botBalance.toStringAsFixed(2),
+        'available': botBalance.toStringAsFixed(2),
+        'locked': '0.00',
+      };
+
+      // Calculate total equity (exclude demo_bot)
+      totalEquityUSDT = mainBalance + spotAvailable + spotLocked + p2pBalance + botBalance;
+
+      // Add USDT to assets list
+      allAssets['USDT'] = {
+        'symbol': 'USDT',
+        'name': 'Tether',
+        'amount': totalEquityUSDT.toString(),
+        'available': (spotAvailable + mainBalance + p2pBalance + botBalance).toString(),
+        'locked': spotLocked.toString(),
+        'usdValue': totalEquityUSDT,
+        'icon': '₮',
+        'color': const Color(0xFF26A17B),
+        'iconUrl': _getCoinIconUrl('USDT'),
+      };
+
+      debugPrint('Final wallet balances - Main: $mainBalance, Spot: $spotAvailable (locked: $spotLocked), P2P: $p2pBalance, Bot: $botBalance');
 
       // Initialize other wallets with zero if not set
       final walletTypes = ['spot', 'p2p', 'bot', 'demo_bot', 'main'];
@@ -548,30 +418,11 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
     }
   }
 
-  void _startPeriodicBalanceRefresh() {
-    // Only start periodic refresh if screen is visible
-    if (!_isScreenVisible) return;
-    
-    // Refresh balance every 10 seconds to stay synchronized with spot screen
-    _balanceRefreshTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
-      if (mounted && _isScreenVisible) {
-        _fetchWalletData();
-        _fetchSpotBalance(); // Also refresh spot balance via HTTP
-      }
-    });
-  }
-
-  void _stopPeriodicBalanceRefresh() {
-    _balanceRefreshTimer?.cancel();
-    _balanceRefreshTimer = null;
-  }
-
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _tabController.dispose();
     _balanceUpdateSubscription?.cancel();
-    _balanceRefreshTimer?.cancel();
     super.dispose();
   }
 
@@ -661,32 +512,10 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
                     Icon(Icons.account_balance_wallet, color: Color(0xFF84BD00), size: 14),
                     SizedBox(width: 6),
                     Text(
-                      'Total Equity',
+                      'Total Balance',
                       style: TextStyle(color: Color(0xFF84BD00), fontSize: 11, fontWeight: FontWeight.w600),
                     ),
                   ],
-                ),
-              ),
-              GestureDetector(
-                onTap: _copyAddress,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        _walletAddress.length > 12 ? '${_walletAddress.substring(0, 6)}...${_walletAddress.substring(_walletAddress.length - 4)}' : _walletAddress,
-                        style: const TextStyle(color: Colors.white60, fontSize: 10, fontFamily: 'monospace'),
-                      ),
-                      const SizedBox(width: 6),
-                      const Icon(Icons.copy, color: Color(0xFF84BD00), size: 12),
-                    ],
-                  ),
                 ),
               ),
             ],

@@ -6,16 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'auth_service.dart';
 
 class SpotService {
-  static const String _baseUrl = 'http://65.0.196.122:9000';
-  static const String _wsUrl = 'ws://65.0.196.122:9001';
-  static const String _newApiUrl = 'https://api11.hathmetech.com';
-  static WebSocketChannel? _channel;
-  static StreamController<Map<String, dynamic>>? _tickerController;
-  static StreamController<Map<String, dynamic>>? _orderbookController;
-  static StreamController<Map<String, dynamic>>? _tradesController;
-  static StreamController<Map<String, dynamic>>? _ordersController;
-  static StreamController<Map<String, dynamic>>? _fillsController;
-  static StreamController<Map<String, dynamic>>? _balanceController;
+  static const String _baseUrl = 'https://api4.creddx.com';
+  static const String _newApiUrl = 'https://api4.creddx.com';
   
   // Persistent order data across screen navigation
   static List<Map<String, dynamic>> userBuyOrders = [];
@@ -72,7 +64,7 @@ class SpotService {
   static Future<Map<String, dynamic>> getOrderBook(String symbol) async {
     try {
       final response = await http.get(
-        Uri.parse('https://api11.hathmetech.com/orderbook?symbol=$symbol'),
+        Uri.parse('https://api4.creddx.com/orderbook?symbol=$symbol'),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
@@ -354,7 +346,7 @@ class SpotService {
         },
       ).timeout(const Duration(seconds: 30));
 
-      print('Balance Response: ${response.body}');
+      print('RAW SPOT BALANCE PAYLOAD (9000): ${response.body}');
 
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
@@ -956,219 +948,6 @@ class SpotService {
     }
   }
 
-  // WebSocket Connection Methods
-  
-  // Connect to WebSocket for real-time data
-  static Future<void> connectWebSocket() async {
-    try {
-      final token = await AuthService.getToken();
-      if (token == null) {
-        print('Authentication required for WebSocket connection');
-        return;
-      }
-
-      _channel = WebSocketChannel.connect(
-        Uri.parse('$_wsUrl/ws'),
-        protocols: ['websocket'],
-      );
-
-      print('WebSocket connected successfully');
-
-      // Initialize stream controllers
-      _tickerController = StreamController<Map<String, dynamic>>.broadcast();
-      _orderbookController = StreamController<Map<String, dynamic>>.broadcast();
-      _tradesController = StreamController<Map<String, dynamic>>.broadcast();
-      _ordersController = StreamController<Map<String, dynamic>>.broadcast();
-      _fillsController = StreamController<Map<String, dynamic>>.broadcast();
-      _balanceController = StreamController<Map<String, dynamic>>.broadcast();
-
-      // Listen for messages
-      _channel!.stream.listen(
-        _handleWebSocketMessage,
-        onError: (error) {
-          print('WebSocket error: $error');
-        },
-        onDone: () {
-          print('WebSocket disconnected');
-          _channel = null;
-        },
-      );
-    } catch (e) {
-      print('WebSocket connection error: $e');
-    }
-  }
-
-  // Handle incoming WebSocket messages
-  static void _handleWebSocketMessage(dynamic message) {
-    try {
-      final data = json.decode(message);
-      final type = data['type'] as String?;
-      
-      print('WebSocket message received: type=$type, data=$data');
-      
-      switch (type) {
-        case 'book':
-          _orderbookController?.add(data);
-          print('Order book updated');
-          break;
-        case 'trade':
-          _tradesController?.add(data);
-          print('Trade received: ${data['data']}');
-          break;
-        case 'order_update':
-          _ordersController?.add(data);
-          print('Order update: ${data['data']}');
-          break;
-        case 'fill':
-          _fillsController?.add(data);
-          print('Fill received: ${data['data']}');
-          break;
-        case 'auth_ok':
-          print('WebSocket authenticated for user ${data['user_id']}');
-          break;
-        case 'balance_update':
-          _balanceController?.add(data);
-          print('Balance update received: ${data['data']}');
-          break;
-        default:
-          print('Unknown WebSocket message type: $type');
-      }
-    } catch (e) {
-      print('Error parsing WebSocket message: $e');
-    }
-  }
-
-  // Subscribe to symbol for order book and trades
-  static Stream<Map<String, dynamic>> getSymbolStream(String symbol) {
-    if (_channel == null) {
-      connectWebSocket();
-      // Wait for connection
-      Future.delayed(Duration(seconds: 1));
-    }
-    
-    // Send subscription message
-    _sendWebSocketMessage({
-      'subscribe': symbol,
-    });
-    
-    print('Subscribed to symbol: $symbol');
-    return _orderbookController?.stream ?? Stream.empty();
-  }
-
-  // Subscribe to order book updates
-  static Stream<Map<String, dynamic>> getOrderBookStream(String symbol) {
-    if (_channel == null) {
-      connectWebSocket();
-      Future.delayed(Duration(seconds: 1));
-    }
-    
-    _sendWebSocketMessage({
-      'subscribe': symbol,
-    });
-    
-    print('Subscribed to order book: $symbol');
-    return _orderbookController?.stream ?? Stream.empty();
-  }
-
-  // Subscribe to trade updates
-  static Stream<Map<String, dynamic>> getTradesStream(String symbol) {
-    if (_channel == null) {
-      connectWebSocket();
-      Future.delayed(Duration(seconds: 1));
-    }
-    
-    _sendWebSocketMessage({
-      'subscribe': symbol,
-    });
-    
-    print('Subscribed to trades: $symbol');
-    return _tradesController?.stream ?? Stream.empty();
-  }
-
-  // Subscribe to order updates (requires auth)
-  static Stream<Map<String, dynamic>> getOrderUpdatesStream() {
-    if (_channel == null) {
-      connectWebSocket();
-      Future.delayed(Duration(seconds: 1));
-    }
-    
-    // Authenticate for private events
-    _authenticateWebSocket();
-    
-    print('Subscribed to order updates');
-    return _ordersController?.stream ?? Stream.empty();
-  }
-
-  // Subscribe to fill events (requires auth)
-  static Stream<Map<String, dynamic>> getFillsStream() {
-    if (_channel == null) {
-      connectWebSocket();
-      Future.delayed(Duration(seconds: 1));
-    }
-    
-    // Authenticate for private events
-    _authenticateWebSocket();
-    
-    print('Subscribed to fill events');
-    return _fillsController?.stream ?? Stream.empty();
-  }
-
-  // Subscribe to balance updates (requires auth)
-  static Stream<Map<String, dynamic>> getBalanceUpdatesStream() {
-    if (_channel == null) {
-      connectWebSocket();
-      Future.delayed(Duration(seconds: 1));
-    }
-    
-    // Authenticate for private events
-    _authenticateWebSocket();
-    
-    print('Subscribed to balance updates');
-    return _balanceController?.stream ?? Stream.empty();
-  }
-
-  // Authenticate WebSocket for private events
-  static Future<void> _authenticateWebSocket() async {
-    final userId = await _getUserId();
-    _sendWebSocketMessage({
-      'auth': {'user_id': userId},
-    });
-    print('WebSocket authentication sent for user: $userId');
-  }
-
-  // Send message through WebSocket
-  static void _sendWebSocketMessage(Map<String, dynamic> message) {
-    if (_channel != null) {
-      final encodedMessage = json.encode(message);
-      _channel!.sink.add(encodedMessage);
-    }
-  }
-
-  // Disconnect WebSocket
-  static void disconnectWebSocket() {
-    _channel?.sink.close();
-    _channel = null;
-    
-    _tickerController?.close();
-    _orderbookController?.close();
-    _tradesController?.close();
-    _ordersController?.close();
-    _fillsController?.close();
-    _balanceController?.close();
-    
-    _tickerController = null;
-    _orderbookController = null;
-    _tradesController = null;
-    _ordersController = null;
-    _fillsController = null;
-    _balanceController = null;
-  }
-
-  // Check WebSocket connection status
-  static bool isConnected() {
-    return _channel != null;
-  }
-  
   // Helper method to get user ID from storage
   static Future<String> _getUserId() async {
     try {

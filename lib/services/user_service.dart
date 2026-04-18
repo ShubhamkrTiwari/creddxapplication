@@ -128,7 +128,7 @@ class UserService {
 
       if (token != null) {
         final response = await http.get(
-          Uri.parse('http://65.0.196.122:8085/user/v1/profile'),
+          Uri.parse('https://api11.hathmetech.com/api/user/v1/profile'),
           headers: {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $token',
@@ -184,7 +184,7 @@ class UserService {
 
       if (token != null && _userId != null) {
         final response = await http.get(
-          Uri.parse('http://65.0.196.122:8085/user/v1/auth/loginactivity/$_userId'),
+          Uri.parse('https://api11.hathmetech.com/api/user/v1/auth/loginactivity/$_userId'),
           headers: {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $token',
@@ -381,7 +381,7 @@ class UserService {
       // Create multipart request for DigiLocker selfie verification
       var request = http.MultipartRequest(
         'POST',
-        Uri.parse('http://65.0.196.122:8085/v1/kyc/digilocker/selfie-verify'),
+        Uri.parse('https://api11.hathmetech.com/api/v1/kyc/digilocker/selfie-verify'),
       );
 
       // Add headers`
@@ -459,7 +459,7 @@ class UserService {
       }
 
       final response = await http.post(
-        Uri.parse('http://65.0.196.122:8085/v1/kyc/digilocker/initiate'),
+        Uri.parse('https://api11.hathmetech.com/api/v1/kyc/digilocker/initiate'),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
@@ -510,7 +510,7 @@ class UserService {
       }
 
       final response = await http.get(
-        Uri.parse('http://65.0.196.122:8085/v1/kyc/digilocker/status?request_id=$requestId&user_id=$userId'),
+        Uri.parse('https://api11.hathmetech.com/api/v1/kyc/digilocker/status?request_id=$requestId&user_id=$userId'),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
@@ -560,7 +560,7 @@ class UserService {
       // Note: Using the server IP for consistent behavior in the app.
       // If testing locally, ensure the server is accessible.
       final response = await http.post(
-        Uri.parse('http://65.0.196.122:8085/v1/kyc/status'),
+        Uri.parse('https://api11.hathmetech.com/api/v1/kyc/status'),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
@@ -613,7 +613,7 @@ class UserService {
       if (avatar != null) requestBody['avatar'] = avatar;
 
       final response = await http.put(
-        Uri.parse('http://65.0.196.122:8085/user/v1/auth/create-profile'),
+        Uri.parse('https://api11.hathmetech.com/api/user/v1/auth/create-profile'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -652,10 +652,10 @@ class UserService {
         return {'success': false, 'error': 'User not authenticated'};
       }
 
-      debugPrint('Fetching referred friends from: http://65.0.196.122:8085/user/v1/auth/referred-friends');
+      debugPrint('Fetching referred friends from: https://api11.hathmetech.com/api/user/v1/auth/referred-friends');
       
       final response = await http.get(
-        Uri.parse('http://65.0.196.122:8085/user/v1/auth/referred-friends'),
+        Uri.parse('https://api11.hathmetech.com/api/user/v1/auth/referred-friends'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -712,10 +712,10 @@ class UserService {
       };
 
       debugPrint('Sending invitation email with verification: $requestBody');
-      debugPrint('API URL: http://65.0.196.122:8085/user/v1/auth/send-invitation');
+      debugPrint('API URL: https://api11.hathmetech.com/api/user/v1/auth/send-invitation');
       
       final response = await http.post(
-        Uri.parse('http://65.0.196.122:8085/user/v1/auth/send-invitation'),
+        Uri.parse('https://api11.hathmetech.com/api/user/v1/auth/send-invitation'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -775,10 +775,10 @@ class UserService {
       };
 
       debugPrint('Sending referral verification email: $requestBody');
-      debugPrint('API URL: http://65.0.196.122:8085/user/v1/auth/send-verification-email');
+      debugPrint('API URL: https://api11.hathmetech.com/api/user/v1/auth/send-verification-email');
       
       final response = await http.post(
-        Uri.parse('http://65.0.196.122:8085/user/v1/auth/send-verification-email'),
+        Uri.parse('https://api11.hathmetech.com/api/user/v1/auth/send-verification-email'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -840,10 +840,10 @@ class UserService {
       };
 
       debugPrint('Verifying and claiming referral: $requestBody');
-      debugPrint('API URL: http://65.0.196.122:8085/user/v1/auth/verify-claim-referral');
+      debugPrint('API URL: https://api11.hathmetech.com/api/user/v1/auth/verify-claim-referral');
       
       final response = await http.post(
-        Uri.parse('http://65.0.196.122:8085/user/v1/auth/verify-claim-referral'),
+        Uri.parse('https://api11.hathmetech.com/api/user/v1/auth/verify-claim-referral'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -931,9 +931,9 @@ class UserService {
         };
       }
 
-      debugPrint('Fetching user assets from: http://65.0.196.122:8085/user/v1/user');
+      debugPrint('Fetching user assets from: https://api11.hathmetech.com/api/user/v1/user');
       final response = await http.get(
-        Uri.parse('http://65.0.196.122:8085/user/v1/user'),
+        Uri.parse('https://api11.hathmetech.com/api/user/v1/user'),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',

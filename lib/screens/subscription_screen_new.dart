@@ -41,11 +41,13 @@ class _SubscriptionScreenNewState extends State<SubscriptionScreenNew> {
               _isSubscribed = true;
               _daysLeft = daysLeft;
             });
+            BotTradeDetailScreen.hasPackage = true;
           } else {
             setState(() {
               _isSubscribed = false;
               _daysLeft = 0;
             });
+            BotTradeDetailScreen.hasPackage = false;
           }
         }
       }
@@ -87,7 +89,11 @@ class _SubscriptionScreenNewState extends State<SubscriptionScreenNew> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            if (Navigator.canPop(context)) {
+              Navigator.pop(context);
+            }
+          },
         ),
         title: const Text(
           'Package Program',
@@ -151,9 +157,9 @@ class _SubscriptionScreenNewState extends State<SubscriptionScreenNew> {
                   
                   // Price
                   const Text(
-                    '\$20',
+                    '\$25',
                     style: TextStyle(
-                      color: const Color(0xFF84BD00),
+                      color: Color(0xFF84BD00),
                       fontSize: 32,
                       fontWeight: FontWeight.bold,
                     ),
@@ -162,7 +168,7 @@ class _SubscriptionScreenNewState extends State<SubscriptionScreenNew> {
                   Text(
                     _isSubscribed ? '$_daysLeft days remaining' : 'Annual Subscription',
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.7),
+                      color: Colors.white.withValues(alpha: 0.7),
                       fontSize: 14,
                     ),
                   ),
@@ -173,7 +179,7 @@ class _SubscriptionScreenNewState extends State<SubscriptionScreenNew> {
                   _buildFeature('Trade Pro'),
                   _buildFeature('70-30 Ratio'),
                   _buildFeature('Cap 100\$-2000\$'),
-                  _buildFeature('1 Month'),
+                  _buildFeature('1 Year'),
                   _buildFeature('Profit Master'),
                   
                   const SizedBox(height: 32),
@@ -206,7 +212,7 @@ class _SubscriptionScreenNewState extends State<SubscriptionScreenNew> {
                           : Text(
                               _isSubscribed 
                                   ? 'Already Subscribed'
-                                  : 'Get a Free Plan',
+                                  : 'Get Annual Plan',
                               style: TextStyle(
                                 color: _isSubscribed ? Colors.white : Colors.black,
                                 fontSize: 16,
@@ -218,44 +224,44 @@ class _SubscriptionScreenNewState extends State<SubscriptionScreenNew> {
                 ],
               ),
             ),
+            // Show subscription details if user is subscribed
+            if (_isSubscribed) ...[
+              const SizedBox(height: 20),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1C1C1E),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: const Color(0xFF84BD00).withValues(alpha: 0.3),
+                    width: 1,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Subscription Details',
+                      style: TextStyle(
+                        color: Color(0xFF84BD00),
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    _buildDetailRow('Plan', 'Annual Plan'),
+                    _buildDetailRow('Status', 'Active'),
+                    _buildDetailRow('Days Remaining', '$_daysLeft days'),
+                    _buildDetailRow('Price', '\$25'),
+                    _buildDetailRow('Duration', '365 Days'),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),
-      // Show subscription details if user is subscribed
-      if (_isSubscribed) ...[
-        const SizedBox(height: 20),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1C1C1E),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: const Color(0xFF84BD00).withOpacity(0.3),
-              width: 1,
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Subscription Details',
-                style: TextStyle(
-                  color: Color(0xFF84BD00),
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 16),
-              _buildDetailRow('Plan', 'Free Plan'),
-              _buildDetailRow('Status', 'Active'),
-              _buildDetailRow('Days Remaining', '$_daysLeft days'),
-              _buildDetailRow('Price', '\$20'),
-              _buildDetailRow('Duration', '30 Days'),
-            ],
-          ),
-        ),
-      ],
     );
   }
 
@@ -282,7 +288,7 @@ class _SubscriptionScreenNewState extends State<SubscriptionScreenNew> {
             child: Text(
               feature,
               style: TextStyle(
-                color: Colors.white.withOpacity(0.9),
+                color: Colors.white.withValues(alpha: 0.9),
                 fontSize: 16,
               ),
             ),
@@ -301,7 +307,7 @@ class _SubscriptionScreenNewState extends State<SubscriptionScreenNew> {
           Text(
             label,
             style: TextStyle(
-              color: Colors.white.withOpacity(0.7),
+              color: Colors.white.withValues(alpha: 0.7),
               fontSize: 14,
             ),
           ),
@@ -322,20 +328,21 @@ class _SubscriptionScreenNewState extends State<SubscriptionScreenNew> {
     setState(() => _isSubscribing = true);
     
     try {
-      debugPrint('=== SUBSCRIBING TO FREE PLAN ===');
+      debugPrint('=== SUBSCRIBING TO ANNUAL PLAN ===');
       
       final response = await BotService.subscribeToPlan(
-        plan: 'Free Plan',
-        price: 20.0, // Set price to 20 USD as required by API
+        plan: 'Annual Plan',
+        price: 25.0, // Set price to 25 USD as required by API
       );
       
       if (response['success'] == true) {
         setState(() {
           _isSubscribed = true;
-          _daysLeft = 30; // 30 days for free plan
+          _daysLeft = 365; // 365 days for annual plan
         });
+        BotTradeDetailScreen.hasPackage = true;
         
-        _showSuccessDialog('Subscription successful!', response['message'] ?? 'You are now subscribed to Free Plan');
+        _showSuccessDialog('Subscription successful!', response['message'] ?? 'You are now subscribed to Annual Plan');
       } else {
         _showErrorDialog('Subscription failed', response['error'] ?? 'Something went wrong');
       }
@@ -362,7 +369,11 @@ class _SubscriptionScreenNewState extends State<SubscriptionScreenNew> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () {
+              if (Navigator.canPop(context)) {
+                Navigator.pop(context);
+              }
+            },
             child: const Text(
               'OK',
               style: TextStyle(color: Color(0xFF84BD00)),
@@ -388,7 +399,11 @@ class _SubscriptionScreenNewState extends State<SubscriptionScreenNew> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () {
+              if (Navigator.canPop(context)) {
+                Navigator.pop(context);
+              }
+            },
             child: const Text(
               'OK',
               style: TextStyle(color: Color(0xFFFF3B30)),

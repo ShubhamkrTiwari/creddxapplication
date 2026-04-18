@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../services/spot_service.dart';
+import '../services/socket_service.dart';
 import '../services/binance_service.dart';
+import '../services/wallet_service.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 import '../utils/coin_icon_mapper.dart';
 import 'chart_screen.dart';
@@ -59,6 +61,11 @@ class _SpotScreenState extends State<SpotScreen> {
   Map<String, dynamic>? _healthStatus;
   bool _isWebSocketConnected = false;
   bool _isLoadingSymbols = false;
+  StreamSubscription? _balanceSubscription;
+  StreamSubscription? _orderbookSubscription;
+  StreamSubscription? _tradesSubscription;
+  StreamSubscription? _ordersSubscription;
+  StreamSubscription? _fillsSubscription;
 
   Timer? _connectionCheckTimer;
   
@@ -76,13 +83,9 @@ class _SpotScreenState extends State<SpotScreen> {
       SpotService.currentSymbol = _selectedSymbol;
     }
     
-    // Initialize with default balance immediately
-    _balance = {
-      'user_id': 1,
-      'usdt_available': 10000.0,
-      'usdt_locked': 0.0,
-      'free': 10000.0,
-    };
+    // Initialize with default balance immediately (will be updated via SocketService)
+    _balance = null;
+    _isLoadingBalance = true;
     
     // Restore persistent user orders
     _buyOrders = List<Map<String, dynamic>>.from(SpotService.userBuyOrders);
@@ -106,19 +109,7 @@ class _SpotScreenState extends State<SpotScreen> {
     
     _loadSpotData();
     _initializeWebSocket();
-    
-    // Start continuous price updates for order book
-    _startPriceUpdateTimer();
-  }
-  
-  // Start timer to update price every 2 seconds
-  void _startPriceUpdateTimer() {
-    _priceUpdateTimer?.cancel();
-    _priceUpdateTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
-      if (mounted) {
-        _updateOrderBookPrice();
-      }
-    });
+    _subscribeToBalance();
   }
   
   // Update price from Binance with animation
@@ -190,172 +181,195 @@ class _SpotScreenState extends State<SpotScreen> {
     }
   }
 
+  void _subscribeToBalance() {
+    _balanceSubscription?.cancel();
+    _balanceSubscription = SocketService.balanceStream.listen((data) {
+      debugPrint('Socket balance update received: $data');
+      if (mounted && data['type'] == 'balance_update') {
+        setState(() {
+          // Handle both formats: data['assets'] or data['data']['assets']
+          final assets = data['assets'] as List? ??
+                        (data['data'] as Map<String, dynamic>?)?['assets'] as List?;
+          debugPrint('Parsed assets from socket: $assets');
+          if (assets != null && assets.isNotEmpty) {
+            // Parse symbol to get base and quote assets (e.g., BTCUSDT -> BTC, USDT)
+            String baseAssetStr;
+            String quoteAssetStr;
+            
+            if (_selectedSymbol.contains('/')) {
+              // Format: BTC/USDT
+              final parts = _selectedSymbol.split('/');
+              baseAssetStr = parts[0];
+              quoteAssetStr = parts[1];
+            } else if (_selectedSymbol.endsWith('USDT')) {
+              // Format: BTCUSDT
+              baseAssetStr = _selectedSymbol.substring(0, _selectedSymbol.length - 4);
+              quoteAssetStr = 'USDT';
+            } else {
+              // Default fallback
+              baseAssetStr = 'BTC';
+              quoteAssetStr = 'USDT';
+            }
+
+            debugPrint('Looking for base: $baseAssetStr, quote: $quoteAssetStr in assets');
+
+            final quoteAsset = assets.firstWhere(
+              (a) => a['asset'] == quoteAssetStr,
+              orElse: () => null,
+            );
+            final baseAsset = assets.firstWhere(
+              (a) => a['asset'] == baseAssetStr,
+              orElse: () => null,
+            );
+
+            _balance = {
+              'usdt_available': double.tryParse(quoteAsset?['available']?.toString() ?? '0.0') ?? 0.0,
+              'usdt_locked': double.tryParse(quoteAsset?['locked']?.toString() ?? '0.0') ?? 0.0,
+              'free': double.tryParse(baseAsset?['available']?.toString() ?? '0.0') ?? 0.0,
+              'btc_locked': double.tryParse(baseAsset?['locked']?.toString() ?? '0.0') ?? 0.0,
+            };
+            _isLoadingBalance = false;
+            debugPrint('Balance updated from socket: $_balance');
+          }
+        });
+      }
+    });
+  }
+
   @override
   void dispose() {
     _connectionCheckTimer?.cancel();
     _priceUpdateTimer?.cancel();
     _priceController.dispose();
     _amountController.dispose();
-    SpotService.disconnectWebSocket();
+    _balanceSubscription?.cancel();
+    _orderbookSubscription?.cancel();
+    _tradesSubscription?.cancel();
+    _ordersSubscription?.cancel();
+    _fillsSubscription?.cancel();
     super.dispose();
   }
 
   // Initialize WebSocket for real-time data
   void _initializeWebSocket() {
     try {
-      // Disconnect existing connection
-      SpotService.disconnectWebSocket();
-      
-      // Connect to WebSocket
-      SpotService.connectWebSocket();
+      // Connect to SocketService (centralized)
+      SocketService.connect();
       
       // Update connection status
       setState(() {
-        _isWebSocketConnected = SpotService.isConnected();
+        _isWebSocketConnected = true; // Assume connected or check SocketService status if available
       });
       
-      // Start periodic connection check
-      _startConnectionCheck();
-      
       // Subscribe to symbol for order book and trades
-      SpotService.getSymbolStream(_selectedSymbol).listen((data) {
-        if (mounted) {
-          if (data['type'] == 'book') {
-            setState(() {
-              final orderBookData = data['data'];
-              print('Order book data received: $orderBookData');
-              
-              // Check if order book data is valid
-              if (orderBookData != null && 
-                  (orderBookData['asks'] != null || orderBookData['bids'] != null)) {
-                // Convert [price, quantity] arrays to maps for existing UI
-                // Limit to top 10 levels for better performance
-                final asks = (orderBookData['asks'] as List? ?? [])
-                    .take(10) // Limit to top 10 ask levels
-                    .map((level) => {'price': level[0], 'amount': level[1]})
-                    .toList();
-                final bids = (orderBookData['bids'] as List? ?? [])
-                    .take(10) // Limit to top 10 bid levels
-                    .map((level) => {'price': level[0], 'amount': level[1]})
-                    .toList();
-                
-                print('Parsed asks: ${asks.length}, bids: ${bids.length}');
-                
-                // Preserve user's orders (marked with isMyOrder)
-                final mySellOrders = _sellOrders.where((o) => o['isMyOrder'] == true).toList();
-                final myBuyOrders = _buyOrders.where((o) => o['isMyOrder'] == true).toList();
-                
-                _sellOrders = [...mySellOrders, ...List<Map<String, dynamic>>.from(asks)];
-                _buyOrders = [...myBuyOrders, ...List<Map<String, dynamic>>.from(bids)];
-                
-                print('Final sellOrders: ${_sellOrders.length}, buyOrders: ${_buyOrders.length}');
-                
-                // Sort to maintain proper order
-                _sellOrders.sort((a, b) => (a['price'] as double).compareTo(b['price'] as double));
-                _buyOrders.sort((a, b) => (b['price'] as double).compareTo(a['price'] as double));
-              } else {
-                print('Invalid or empty order book data received');
-                // Add fallback data if order book is empty
-                if (_sellOrders.isEmpty && _buyOrders.isEmpty) {
-                  _addFallbackOrderBookData();
-                }
-              }
-              
-              // Track previous prices for animation
-              final newBestBid = getBestBid();
-              final newBestAsk = getBestAsk();
-              
-              // Update price direction indicator
-              if (newBestBid != null && _previousBid > 0) {
-                _isPriceUp = newBestBid > _previousBid;
-              }
-              
-              // Store previous prices before updating
-              if (newBestBid != null) _previousBid = newBestBid;
-              if (newBestAsk != null) _previousAsk = newBestAsk;
-              
-              // Update current price to market price (mid price from order book)
-              if (newBestBid != null && newBestAsk != null && newBestBid > 0 && newBestAsk > 0) {
-                final midPrice = (newBestBid + newBestAsk) / 2;
-                if (midPrice > 0) {
-                  _currentPrice = midPrice;
-                }
-              }
-              
-              _isWebSocketConnected = true;
-            });
-          } else if (data['type'] == 'trade') {
-            setState(() {
-              _recentTrades.insert(0, data['data']);
-              // Keep only last 50 trades
-              if (_recentTrades.length > 50) {
-                _recentTrades = _recentTrades.take(50).toList();
-              }
-              _isWebSocketConnected = true;
-            });
-          }
-        }
-      }, onError: (error) {
-        print('WebSocket stream error: $error');
-        if (mounted) {
+      SocketService.subscribe(_selectedSymbol);
+      
+      // Listen to order book updates from SocketService
+      _orderbookSubscription?.cancel();
+      _orderbookSubscription = SocketService.orderbookStream.listen((data) {
+        if (mounted && data['type'] == 'book' && data['symbol'] == _selectedSymbol) {
           setState(() {
-            _isWebSocketConnected = false;
+            final orderBookData = data['data'];
+            
+            if (orderBookData != null && 
+                (orderBookData['asks'] != null || orderBookData['bids'] != null)) {
+              final asks = (orderBookData['asks'] as List? ?? [])
+                  .take(10)
+                  .map((level) => {'price': level[0], 'amount': level[1]})
+                  .toList();
+              final bids = (orderBookData['bids'] as List? ?? [])
+                  .take(10)
+                  .map((level) => {'price': level[0], 'amount': level[1]})
+                  .toList();
+              
+              final mySellOrders = _sellOrders.where((o) => o['isMyOrder'] == true).toList();
+              final myBuyOrders = _buyOrders.where((o) => o['isMyOrder'] == true).toList();
+              
+              _sellOrders = [...mySellOrders, ...List<Map<String, dynamic>>.from(asks)];
+              _buyOrders = [...myBuyOrders, ...List<Map<String, dynamic>>.from(bids)];
+              
+              _sellOrders.sort((a, b) => (a['price'] as double).compareTo(b['price'] as double));
+              _buyOrders.sort((a, b) => (b['price'] as double).compareTo(a['price'] as double));
+            }
+            
+            final newBestBid = getBestBid();
+            final newBestAsk = getBestAsk();
+            
+            if (newBestBid != null && _previousBid > 0) {
+              _isPriceUp = newBestBid > _previousBid;
+            }
+            
+            if (newBestBid != null) _previousBid = newBestBid;
+            if (newBestAsk != null) _previousAsk = newBestAsk;
+            
+            if (newBestBid != null && newBestAsk != null && newBestBid > 0 && newBestAsk > 0) {
+              final midPrice = (newBestBid + newBestAsk) / 2;
+              if (midPrice > 0) {
+                _currentPrice = midPrice;
+              }
+            }
+            
+            _isWebSocketConnected = true;
+          });
+        }
+      });
+
+      // Listen to trade updates
+      _tradesSubscription?.cancel();
+      _tradesSubscription = SocketService.tradesStream.listen((data) {
+        if (mounted && data['type'] == 'trade' && data['symbol'] == _selectedSymbol) {
+          setState(() {
+            _recentTrades.insert(0, data['data']);
+            if (_recentTrades.length > 50) {
+              _recentTrades = _recentTrades.take(50).toList();
+            }
+            _isWebSocketConnected = true;
           });
         }
       });
       
-      // Subscribe to order updates (requires auth)
-      SpotService.getOrderUpdatesStream().listen((data) {
-        if (mounted) {
+      // Subscribe to order updates
+      _ordersSubscription?.cancel();
+      _ordersSubscription = SocketService.ordersStream.listen((data) {
+        if (mounted && data['type'] == 'order_update') {
           setState(() {
             _isWebSocketConnected = true;
           });
-          // Handle order status updates
           final orderData = data['data'];
           final status = orderData['status'];
           
           switch (status) {
             case 'pending':
-              // Add to open orders
               _loadOpenOrders();
               break;
             case 'filled':
-              // Remove from open orders, show success
               _loadOpenOrders();
               _showMessage('Order filled successfully!', isError: false);
               break;
             case 'cancelled':
-              // Remove from open orders
               _loadOpenOrders();
               break;
             case 'rejected':
-              // Show error message
               final reason = orderData['reason'] ?? 'Order rejected';
               _showMessage('Order rejected: $reason', isError: true);
               break;
           }
         }
-      }, onError: (error) {
-        print('WebSocket order updates error: $error');
       });
       
-      // Subscribe to fill events (requires auth)
-      SpotService.getFillsStream().listen((data) {
-        if (mounted) {
+      // Subscribe to fill events
+      _fillsSubscription?.cancel();
+      _fillsSubscription = SocketService.fillsStream.listen((data) {
+        if (mounted && data['type'] == 'fill') {
           setState(() {
             _isWebSocketConnected = true;
           });
-          // Handle fill notifications
           final fillData = data['data'];
-          print('Fill received: $fillData');
-          // Update balance after fill
-          _loadBalance();
+          debugPrint('Fill received: $fillData');
         }
-      }, onError: (error) {
-        print('WebSocket fills error: $error');
       });
     } catch (e) {
-      print('Error initializing WebSocket: $e');
+      debugPrint('Error initializing WebSocket: $e');
       if (mounted) {
         setState(() {
           _isWebSocketConnected = false;
@@ -369,13 +383,13 @@ class _SpotScreenState extends State<SpotScreen> {
     _connectionCheckTimer?.cancel();
     _connectionCheckTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
       if (mounted) {
-        final isConnected = SpotService.isConnected();
-        if (_isWebSocketConnected != isConnected) {
+        // SocketService handles its own connection/reconnection
+        // We can just keep _isWebSocketConnected as true if we trust SocketService
+        if (!_isWebSocketConnected) {
           setState(() {
-            _isWebSocketConnected = isConnected;
+            _isWebSocketConnected = true;
           });
         }
-        // Removed auto-reconnect to prevent flickering
       }
     });
   }
@@ -674,32 +688,55 @@ class _SpotScreenState extends State<SpotScreen> {
         _balanceError = null;
       });
       print('Loading balance...');
-      final result = await SpotService.getBalance();
-      print('Balance API result: $result');
       
-      if (result['success'] && result['data'] != null) {
-        setState(() {
-          _balance = result['data'];
-          _isLoadingBalance = false;
-          print('Balance loaded: $_balance');
-          print('USDT Available: ${_balance?['usdt_available']}');
-          print('USDT Locked: ${_balance?['usdt_locked']}');
-          print('Free: ${_balance?['free']}');
-        });
-      } else {
-        print('Balance API error: ${result['error']}');
-        setState(() {
-          _isLoadingBalance = false;
-          _balanceError = result['error'] ?? 'Failed to load balance';
-          // Keep existing balance or set default
-          _balance ??= {
-            'user_id': 1,
-            'usdt_available': 0.0,
-            'usdt_locked': 0.0,
-            'free': 0.0,
-          };
-        });
+      // Try SpotService first
+      final result = await SpotService.getBalance();
+      print('SpotService Balance API result: $result');
+      
+      // Also fetch from WalletService as fallback for spotBalance
+      final walletResult = await WalletService.getAllWalletBalances();
+      print('WalletService Balance API result: $walletResult');
+      
+      double usdtAvailable = 0.0;
+      double usdtLocked = 0.0;
+      double btcFree = 0.0;
+      bool gotBalance = false;
+      
+      // Try to get balance from SpotService
+      if (result['success'] == true && result['data'] != null) {
+        final spotData = result['data'];
+        usdtAvailable = double.tryParse(spotData['usdt_available']?.toString() ?? '0.0') ?? 0.0;
+        usdtLocked = double.tryParse(spotData['usdt_locked']?.toString() ?? '0.0') ?? 0.0;
+        btcFree = double.tryParse(spotData['free']?.toString() ?? '0.0') ?? 0.0;
+        gotBalance = true;
+        print('Balance from SpotService: USDT=$usdtAvailable, BTC=$btcFree');
       }
+      
+      // If SpotService failed or returned 0, try WalletService spotBalance
+      if ((!gotBalance || usdtAvailable == 0.0) && 
+          walletResult['success'] == true && 
+          walletResult['data'] != null &&
+          walletResult['data']['spotBalance'] != null) {
+        final spotBalance = double.tryParse(walletResult['data']['spotBalance'].toString()) ?? 0.0;
+        if (spotBalance > 0) {
+          usdtAvailable = spotBalance;
+          print('Balance from WalletService spotBalance: $spotBalance');
+        }
+      }
+      
+      setState(() {
+        _balance = {
+          'user_id': 1,
+          'usdt_available': usdtAvailable,
+          'usdt_locked': usdtLocked,
+          'free': btcFree,
+        };
+        _isLoadingBalance = false;
+        print('Final Balance loaded: $_balance');
+        print('USDT Available: ${_balance?['usdt_available']}');
+        print('USDT Locked: ${_balance?['usdt_locked']}');
+        print('Free: ${_balance?['free']}');
+      });
     } catch (e) {
       print('Error loading balance: $e');
       setState(() {
@@ -728,9 +765,6 @@ class _SpotScreenState extends State<SpotScreen> {
     });
 
     try {
-      // Refresh balance before placing order to get latest available amount
-      await _loadBalance();
-      
       // Validate amount - max 5 decimal places for quantity
       final amount = double.tryParse(_amount.toStringAsFixed(5)) ?? 0.0;
       if (amount <= 0) {
@@ -823,7 +857,6 @@ class _SpotScreenState extends State<SpotScreen> {
         }
         
         _loadOpenOrders(); // Refresh open orders
-        _loadBalance(); // Refresh balance
         setState(() {
           _amount = 0.0;
           _sliderValue = 0.0;

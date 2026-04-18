@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'qr_scanner_screen.dart';
 import 'otp_verification_screen.dart';
+import 'dart:async';
+import '../services/socket_service.dart';
 import '../services/wallet_service.dart';
 import '../services/auth_service.dart';
 import '../services/notification_service.dart';
@@ -30,11 +32,31 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   String? _errorMessage;
   List<dynamic> _recentTransactions = [];
   bool _isLoadingTransactions = false;
+  StreamSubscription? _balanceSubscription;
   
   @override
   void initState() {
     super.initState();
     _fetchData();
+    _subscribeToBalanceUpdates();
+  }
+
+  void _subscribeToBalanceUpdates() {
+    _balanceSubscription = SocketService.balanceStream.listen((data) {
+      if (mounted && data['type'] == 'balance_update') {
+        final payload = data['data'] ?? data;
+        
+        // Spot balance updates
+        if (payload['wallet_type'] == 'spot' || payload['usdt_available'] != null) {
+          final usdtAvailable = double.tryParse(payload['usdt_available']?.toString() ?? 
+                               payload['available']?.toString() ?? '0') ?? _availableBalance;
+          
+          setState(() {
+            _availableBalance = usdtAvailable;
+          });
+        }
+      }
+    });
   }
   
   Future<void> _fetchData() async {
@@ -898,6 +920,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
 
   @override
   void dispose() {
+    _balanceSubscription?.cancel();
     _addressController.dispose();
     _amountController.dispose();
     super.dispose();

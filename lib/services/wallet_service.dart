@@ -7,7 +7,7 @@ import 'auth_service.dart';
 import 'notification_service.dart';
 
 class WalletService {
-  static const String baseUrl = 'http://65.0.196.122:8085';
+  static const String baseUrl = 'https://api11.hathmetech.com/api';
   
   static Future<Map<String, String>> _getHeaders() async {
     final token = await AuthService.getToken();
@@ -33,6 +33,7 @@ class WalletService {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         debugPrint('Parsed Balance Data: $data');
+        debugPrint('RAW BALANCE PAYLOAD: ${response.body}');
         if (data['success'] == true) {
           return {
             'success': true,
@@ -673,8 +674,8 @@ class WalletService {
     try {
       final requestBody = {
         '_id': coinId, // Coin ID (API expects _id field)
-        'from': from, // Source wallet type: 1=Spot, 2=P2P, 3=Bot, 4=Main
-        'to': to, // Destination wallet type: 1=Spot, 2=P2P, 3=Bot, 4=Main
+        'from': from, // Source wallet type
+        'to': to, // Destination wallet type
         'amount': amount,
         if (otp != null && otp.isNotEmpty) 'otp': otp,
       };
@@ -689,11 +690,20 @@ class WalletService {
       );
       
       debugPrint('Transfer API Response Status: ${response.statusCode}');
-      debugPrint('Transfer API Response Body: ${response.body}');
+      
+      // Safe JSON decoding
+      dynamic data;
+      try {
+        data = json.decode(response.body);
+      } catch (e) {
+        debugPrint('Failed to decode transfer response: ${response.body}');
+        return {
+          'success': false,
+          'error': 'Server returned an invalid response. Please try again later.',
+        };
+      }
       
       if (response.statusCode == 200 || response.statusCode == 201) {
-        final data = json.decode(response.body);
-        
         // Log wallet transfer notification
         await NotificationService.addNotification(
           title: 'Wallet Transfer',
@@ -707,11 +717,10 @@ class WalletService {
           'message': data['message'] ?? 'Transfer successful',
         };
       } else {
-        final error = json.decode(response.body);
         return {
           'success': false,
-          'error': error['message'] ?? error['error'] ?? 'Transfer failed',
-          'details': error,
+          'error': data['message'] ?? data['error'] ?? 'Transfer failed',
+          'details': data,
         };
       }
     } catch (e) {
@@ -726,18 +735,18 @@ class WalletService {
   // Helper method to convert wallet names to API numbers
   static int _getWalletTypeNumber(String walletType) {
     switch (walletType.toLowerCase()) {
-      case 'spot':
-        return 1;
+      case 'main':
+        return 1; // Main wallet type (Aligned with UI)
       case 'p2p':
         return 2;
       case 'bot':
         return 3;
-      case 'main':
-        return 4; // Main wallet type
+      case 'spot':
+        return 4;
       case 'demo_bot':
-        return 5; // Demo bot wallet type
+        return 5;
       default:
-        return 1; // Default to Spot
+        return 4; // Default to Spot
     }
   }
 
@@ -745,13 +754,13 @@ class WalletService {
   static String _getWalletTypeName(int walletType) {
     switch (walletType) {
       case 1:
-        return 'Spot Wallet';
+        return 'Main Wallet';
       case 2:
         return 'P2P Wallet';
       case 3:
         return 'Bot Wallet';
       case 4:
-        return 'Main Wallet';
+        return 'Spot Wallet';
       case 5:
         return 'Demo Bot Wallet';
       default:
@@ -1077,21 +1086,33 @@ class WalletService {
       final requestBody = {'purpose': purpose};
       debugPrint('Sending OTP for purpose: $purpose');
       
+      // Use /v1/otp/send for auth/otp related endpoints
       final response = await http.post(
         Uri.parse('$baseUrl/v1/otp/send'),
         headers: await _getHeaders(),
         body: json.encode(requestBody),
       );
       
-      debugPrint('Send OTP Response: ${response.statusCode} - ${response.body}');
+      debugPrint('Send OTP Response: ${response.statusCode}');
+      
+      // Safe JSON decoding
+      dynamic data;
+      try {
+        data = json.decode(response.body);
+      } catch (e) {
+        debugPrint('Failed to decode OTP response: ${response.body}');
+        return {
+          'success': false,
+          'error': 'Failed to send OTP. Server returned an invalid response.',
+        };
+      }
       
       if (response.statusCode == 200 || response.statusCode == 201) {
-        return {'success': true, 'data': json.decode(response.body)};
+        return {'success': true, 'data': data};
       } else {
-        final error = json.decode(response.body);
         return {
           'success': false, 
-          'error': error['message'] ?? error['error'] ?? 'Failed to send OTP'
+          'error': data['message'] ?? data['error'] ?? 'Failed to send OTP'
         };
       }
     } catch (e) {
@@ -1123,11 +1144,20 @@ class WalletService {
       );
 
       debugPrint('Internal Transfer API Response Status: ${response.statusCode}');
-      debugPrint('Internal Transfer API Response Body: ${response.body}');
+      
+      // Safe JSON decoding
+      dynamic data;
+      try {
+        data = json.decode(response.body);
+      } catch (e) {
+        debugPrint('Failed to decode internal transfer response: ${response.body}');
+        return {
+          'success': false,
+          'error': 'Transfer failed. Server returned an invalid response.',
+        };
+      }
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        final data = json.decode(response.body);
-
         // Log notification
         await NotificationService.addNotification(
           title: 'Internal Transfer',
@@ -1141,11 +1171,10 @@ class WalletService {
           'message': data['message'] ?? 'Transfer successful',
         };
       } else {
-        final error = json.decode(response.body);
         return {
           'success': false,
-          'error': error['message'] ?? error['error'] ?? 'Transfer failed',
-          'details': error,
+          'error': data['message'] ?? data['error'] ?? 'Transfer failed',
+          'details': data,
         };
       }
     } catch (e) {

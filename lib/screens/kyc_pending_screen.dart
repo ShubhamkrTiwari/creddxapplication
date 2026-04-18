@@ -49,7 +49,11 @@ class _KYCPendingScreenState extends State<KYCPendingScreen> {
         backgroundColor: const Color(0xFF0D0D0D),
         elevation: 0,
         leading: IconButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            if (Navigator.canPop(context)) {
+              Navigator.pop(context);
+            }
+          },
           icon: const Icon(Icons.arrow_back, color: Colors.white, size: 24),
         ),
         title: Column(
@@ -135,9 +139,12 @@ class _KYCPendingScreenState extends State<KYCPendingScreen> {
             ),
             const SizedBox(height: 16),
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () {
+                // Pop back to the profile/home, avoiding the KYC stack
+                Navigator.of(context).popUntil((route) => route.isFirst);
+              },
               child: const Text(
-                'Go Back',
+                'Go Back to Home',
                 style: TextStyle(color: Color(0xFF84BD00), fontSize: 14),
               ),
             ),

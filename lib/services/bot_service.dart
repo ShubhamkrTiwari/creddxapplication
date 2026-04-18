@@ -73,10 +73,10 @@ class BotPosition {
 }
 
 class BotService {
-  static const String baseUrl = 'http://65.0.196.122:8085';
+  static const String baseUrl = 'https://api11.hathmetech.com/api';
   
   // Static cache for total investment (for demo purposes)
-  static double _cachedTotalInvestment = 5000.0; // Start with mock value
+  static double _cachedTotalInvestment = 0.0; // Start with 0.0
   
   static Future<Map<String, String>> _getHeaders() async {
     final token = await AuthService.getToken();
@@ -141,42 +141,13 @@ class BotService {
 
   // Mock positions data for when endpoint doesn't exist
   static Map<String, dynamic> _getMockPositionsData(String strategy, String symbol) {
-    final now = DateTime.now();
-    final List<Map<String, dynamic>> mockPositions = [
-      {
-        'positionId': '${strategy}_${symbol}_1',
-        'symbol': symbol,
-        'positionSide': 'LONG',
-        'updateTime': now.subtract(const Duration(minutes: 15)).toIso8601String(),
-        'userMargin': 150.0,
-        'userUnrealizedProfit': 25.50,
-        'leverage': _extractLeverageFromStrategy(strategy),
-        'liqPrice': 28500.0,
-        'markPrice': 29500.0,
-        'avgPrice': 29250.0,
-      },
-      if (strategy == 'Omega') // Add second position for Omega strategy
-      {
-        'positionId': '${strategy}_${symbol}_2',
-        'symbol': symbol,
-        'positionSide': 'SHORT',
-        'updateTime': now.subtract(const Duration(minutes: 45)).toIso8601String(),
-        'userMargin': 200.0,
-        'userUnrealizedProfit': -12.75,
-        'leverage': _extractLeverageFromStrategy(strategy),
-        'liqPrice': 31000.0,
-        'markPrice': 29500.0,
-        'avgPrice': 29800.0,
-      },
-    ];
-
     return {
       'success': true,
       'data': {
         'strategy': strategy,
         'symbol': symbol,
-        'userInvestment': 350.0,
-        'adjustedPositions': mockPositions,
+        'userInvestment': 0.0,
+        'adjustedPositions': [],
       },
     };
   }
@@ -947,14 +918,14 @@ class BotService {
       final mockData = {
         'success': true,
         'data': {
-          'name': 'John Doe',
-          'email': 'john.doe@example.com',
+          'name': 'User',
+          'email': 'user@example.com',
           'totalInvestment': _cachedTotalInvestment.toStringAsFixed(2),
-          'totalProfit': '1250.50',
-          'activeBots': 3,
-          'subscription': 'Premium',
-          'joinDate': '2024-01-15',
-          'lastLogin': '2025-03-25',
+          'totalProfit': '0.00',
+          'activeBots': 0,
+          'subscription': 'None',
+          'joinDate': DateTime.now().toIso8601String(),
+          'lastLogin': DateTime.now().toIso8601String(),
         },
       };
       debugPrint('Returning Mock Data: $mockData');
@@ -1018,41 +989,15 @@ class BotService {
 
   // Mock balance history data
   static Map<String, dynamic> _getMockBalanceHistory(String strategy, int days) {
-    final List<Map<String, dynamic>> history = [];
-    final baseBalance = 1000.0 + (strategy.hashCode % 500);
-    final now = DateTime.now();
-
-    for (int i = days; i >= 0; i--) {
-      final date = now.subtract(Duration(days: i));
-      // Generate realistic balance growth with some volatility
-      final progress = (days - i) / days;
-      final growth = progress * 0.15; // 15% growth over period
-      final volatility = (math.sin(i * 0.5) * 0.02); // 2% volatility
-      final balance = baseBalance * (1 + growth + volatility);
-
-      history.add({
-        'date': date.toIso8601String().split('T')[0],
-        'timestamp': date.toIso8601String(),
-        'balance': balance.toStringAsFixed(2),
-        'profit': (balance - baseBalance).toStringAsFixed(2),
-        'roi': ((balance - baseBalance) / baseBalance * 100).toStringAsFixed(2),
-        'strategy': strategy,
-      });
-    }
-
-    final currentBalance = double.parse(history.last['balance']!);
-    final totalProfit = currentBalance - baseBalance;
-    final roi = (totalProfit / baseBalance * 100);
-
     return {
       'success': true,
       'data': {
         'strategy': strategy,
-        'initialBalance': baseBalance.toStringAsFixed(2),
-        'currentBalance': currentBalance.toStringAsFixed(2),
-        'totalProfit': totalProfit.toStringAsFixed(2),
-        'roi': roi.toStringAsFixed(2),
-        'history': history,
+        'initialBalance': '0.00',
+        'currentBalance': '0.00',
+        'totalProfit': '0.00',
+        'roi': '0.00',
+        'history': [],
         'periodDays': days,
       },
     };
@@ -1147,12 +1092,12 @@ class BotService {
     return {
       'success': true,
       'data': {
-        'rot': '18.45%',
-        'winRate': '65.23%',
-        'trades': '156',
-        'volume': '1.2M',
-        'drawdown': '12.34%',
-        'followers': '892',
+        'rot': '0.00%',
+        'winRate': '0.00%',
+        'trades': '0',
+        'volume': '0.0',
+        'drawdown': '0.00%',
+        'followers': '0',
       },
     };
   }
@@ -1222,9 +1167,9 @@ class BotService {
         return {
           'success': true,
           'data': {
-            'totalBalance': 1250.50,
-            'availableBalance': 875.25,
-            'investedBalance': 375.25,
+            'totalBalance': 0.0,
+            'availableBalance': 0.0,
+            'investedBalance': 0.0,
             'currency': 'USDT',
           },
         };
@@ -1240,9 +1185,9 @@ class BotService {
       return {
         'success': true,
         'data': {
-          'totalBalance': 1250.50,
-          'availableBalance': 875.25,
-          'investedBalance': 375.25,
+          'totalBalance': 0.0,
+          'availableBalance': 0.0,
+          'investedBalance': 0.0,
           'currency': 'USDT',
         },
       };

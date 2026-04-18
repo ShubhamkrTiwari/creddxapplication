@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
+import '../services/socket_service.dart';
 import '../services/user_service.dart';
 import '../services/wallet_service.dart';
 import '../services/auth_service.dart';
@@ -29,6 +30,7 @@ class _ConversionScreenState extends State<ConversionScreen> {
   double _totalUsdtBalance = 0.00; // Total USDT across all wallets
   bool _isLoading = false;
   bool _isLoadingRate = false;
+  StreamSubscription? _balanceSubscription;
   
   // Base URL for wallet APIs
   static const String _baseUrl = 'http://65.0.196.122:8085';
@@ -44,10 +46,40 @@ class _ConversionScreenState extends State<ConversionScreen> {
     _fromController.addListener(_calculateConversion);
     _fetchBalances();
     _loadConversionRates();
+    _subscribeToBalanceUpdates();
+  }
+  
+  void _subscribeToBalanceUpdates() {
+    _balanceSubscription = SocketService.balanceStream.listen((data) {
+      if (mounted && data['type'] == 'balance_update') {
+        debugPrint('ConversionScreen: Received balance update via Socket');
+        final payload = data['data'] ?? data;
+        
+        setState(() {
+          // If it's a spot balance update or has USDT info
+          if (payload['wallet_type'] == 'spot' || payload['usdt_available'] != null) {
+            _usdtBalance = double.tryParse(payload['usdt_available']?.toString() ?? 
+                           payload['available']?.toString() ?? '0') ?? _usdtBalance;
+            
+            // Re-calculate total USDT balance if spot updated
+            // Note: In a real app, you'd want to keep track of other wallets too
+            // for now we'll just update this one as it's the most frequent
+            _totalUsdtBalance = _usdtBalance; 
+          }
+          
+          // If it's an INR balance update (if supported by socket)
+          if (payload['asset']?.toString().toUpperCase() == 'INR' || payload['inr_available'] != null) {
+             _inrBalance = double.tryParse(payload['inr_available']?.toString() ?? 
+                           payload['available']?.toString() ?? '0') ?? _inrBalance;
+          }
+        });
+      }
+    });
   }
   
   @override
   void dispose() {
+    _balanceSubscription?.cancel();
     _fromController.dispose();
     _toController.dispose();
     super.dispose();
@@ -102,12 +134,12 @@ class _ConversionScreenState extends State<ConversionScreen> {
           
           // If total is 0, fall back to usdtBalance
           if (_totalUsdtBalance == 0.0) {
-            _totalUsdtBalance = _usdtBalance > 0 ? _usdtBalance : 1250.50;
+            _totalUsdtBalance = _usdtBalance;
           }
           
           // Also update individual usdtBalance for compatibility
           if (_usdtBalance == 0.0) {
-            _usdtBalance = 1250.50; // Mock USDT balance
+            _usdtBalance = 0.0;
           }
         });
         
@@ -130,11 +162,11 @@ class _ConversionScreenState extends State<ConversionScreen> {
   void _setFallbackBalances() {
     if (mounted) {
       setState(() {
-        _inrBalance = 50000.00; // Mock INR balance
-        _usdtBalance = 1250.50; // Mock USDT balance
-        _totalUsdtBalance = 1250.50; // Mock total USDT
+        _inrBalance = 0.00; // Reset fallback to 0.0
+        _usdtBalance = 0.00; // Reset fallback to 0.0
+        _totalUsdtBalance = 0.00; // Reset fallback to 0.0
       });
-      debugPrint('=== USING FALLBACK BALANCES ===');
+      debugPrint('=== USING FALLBACK BALANCES (0.0) ===');
       debugPrint('INR Balance: $_inrBalance');
       debugPrint('USDT Balance: $_usdtBalance');
       debugPrint('Total USDT Balance: $_totalUsdtBalance');

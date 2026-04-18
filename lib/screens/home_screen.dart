@@ -18,6 +18,7 @@ import 'withdraw_screen.dart';
 import 'inr_deposit_screen.dart';
 import 'conversion_screen.dart';
 import 'spot_screen.dart';
+import '../services/socket_service.dart';
 import '../services/user_service.dart';
 import '../services/wallet_service.dart';
 import '../services/spot_service.dart';
@@ -256,6 +257,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, Map<String, dynamic>> _favoritesMarketData = {};
   bool _isWebSocketConnected = false;
   StreamSubscription<Map<String, dynamic>>? _marketDataSubscription;
+  StreamSubscription<Map<String, dynamic>>? _balanceSubscription;
   
   // Candlestick chart data for Std. Futures
   List<Map<String, dynamic>> _candleData = [];
@@ -286,6 +288,29 @@ class _HomeScreenState extends State<HomeScreen> {
     
     // Connect WebSocket for Favorites real-time data
     _connectWebSocketForFavorites();
+    _subscribeToBalance();
+  }
+
+  void _subscribeToBalance() {
+    _balanceSubscription = SocketService.balanceStream.listen((data) {
+      if (data['type'] == 'balance_update' && data['assets'] != null) {
+        double totalAvailable = 0.0;
+        final assets = data['assets'] as List;
+        for (var assetItem in assets) {
+          final assetName = assetItem['asset']?.toString().toUpperCase() ?? '';
+          if (assetName == 'USDT') {
+            final available = double.tryParse(assetItem['available']?.toString() ?? '0') ?? 0.0;
+            // The Home Screen seems to only care about available USDT for _totalBalance based on _fetchWalletBalance implementation
+            totalAvailable += available;
+          }
+        }
+        if (mounted) {
+          setState(() {
+            _totalBalance = totalAvailable;
+          });
+        }
+      }
+    });
   }
 
   // Connect WebSocket for real-time favorites market data from Binance
@@ -585,7 +610,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _priceTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
       if (mounted) {
         _fetchMarketData();
-        _fetchWalletBalance();
       }
     });
   }
@@ -619,6 +643,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _priceTimer?.cancel();
     _marketDataSubscription?.cancel();
     _binanceWsSubscription?.cancel();
+    _balanceSubscription?.cancel();
     BinanceService.disconnectAll();
     super.dispose();
   }

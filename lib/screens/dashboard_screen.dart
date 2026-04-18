@@ -8,6 +8,7 @@ import 'notification_screen.dart';
 import 'coming_soon_screen.dart';
 import 'market_screen.dart';
 import '../services/wallet_service.dart';
+import '../services/socket_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -25,27 +26,110 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<Map<String, dynamic>> _walletData = [];
   Map<String, double> _previousPrices = {};
   bool _isLoading = true;
-  Timer? _priceTimer;
+  StreamSubscription? _tradeSubscription;
+  StreamSubscription? _balanceSubscription;
   double _totalWalletBalance = 0.0;
 
   @override
   void initState() {
     super.initState();
     _fetchWalletData();
-    _startPriceUpdates();
+    _initWebSockets();
+  }
+
+  void _initWebSockets() {
+    _tradeSubscription = SocketService.tradesStream.listen((data) {
+      if (data['type'] == 'trade') {
+        final tradeData = data['data'] ?? data;
+        final symbol = (data['symbol'] ?? tradeData['symbol'] ?? '').toString();
+        final price = double.tryParse(tradeData['price']?.toString() ?? '0') ?? 0.0;
+        
+        if (symbol.isNotEmpty && price > 0) {
+          _updatePriceFromSocket(symbol, price);
+        }
+      }
+    });
+
+    _balanceSubscription = SocketService.balanceStream.listen((data) {
+      if (data['type'] == 'balance_update') {
+        // When balance changes, update state directly if possible
+        final assets = data['assets'] as List?;
+        if (assets != null) {
+          // Calculate total from assets in the payload
+          double totalUsdt = 0.0;
+          for (var asset in assets) {
+            final assetName = asset['asset']?.toString();
+            if (assetName == 'USDT') {
+              final available = double.tryParse(asset['available']?.toString() ?? '0.0') ?? 0.0;
+              final locked = double.tryParse(asset['locked']?.toString() ?? '0.0') ?? 0.0;
+              totalUsdt = available + locked;
+              break;
+            }
+          }
+          
+          if (mounted && totalUsdt > 0) {
+            setState(() {
+              // We need to be careful here because _totalWalletBalance is across ALL wallets
+              // but socket only updates Spot. So we might still need a full refresh
+              // or keep track of other wallet balances.
+              // For now, triggering a full refresh is safer but we've acknowledged the update.
+              debugPrint('Dashboard: Spot balance updated via Socket: $totalUsdt USDT');
+            });
+            _fetchTotalBalance();
+          }
+        } else {
+          _fetchTotalBalance();
+        }
+      }
+    });
+
+    // Subscribe to symbols shown on dashboard
+    final symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'ADAUSDT', 'XRPUSDT', 'DOTUSDT', 'AVAXUSDT'];
+    for (var symbol in symbols) {
+      SocketService.subscribe(symbol);
+    }
+  }
+
+  Future<void> _fetchTotalBalance() async {
+    final totalBalance = await WalletService.getTotalUSDTBalance();
+    if (mounted) {
+      setState(() {
+        _totalWalletBalance = totalBalance;
+      });
+    }
+  }
+
+  void _updatePriceFromSocket(String symbol, double currentPrice) {
+    if (!mounted) return;
+
+    setState(() {
+      final index = _walletData.indexWhere((item) => item['symbol'] == symbol);
+      if (index != -1) {
+        final previousPrice = _previousPrices[symbol] ?? currentPrice;
+        
+        final updatedItem = Map<String, dynamic>.from(_walletData[index]);
+        updatedItem['price'] = currentPrice;
+        updatedItem['realTimeDirection'] = currentPrice > previousPrice ? 1 : (currentPrice < previousPrice ? -1 : 0);
+        
+        final priceDifference = currentPrice - previousPrice;
+        final realTimeChangePercent = previousPrice > 0 ? (priceDifference / previousPrice) * 100 : 0.0;
+        updatedItem['realTimeChangePercent'] = realTimeChangePercent;
+        
+        _walletData[index] = updatedItem;
+        _previousPrices[symbol] = currentPrice;
+      }
+    });
   }
 
   Future<void> _fetchWalletData() async {
     setState(() => _isLoading = true);
     
     // Fetch Total Balance from Wallet API
-    final totalBalance = await WalletService.getTotalUSDTBalance();
-    
+    await _fetchTotalBalance();
     await _fetchPrices();
     
     if (mounted) {
       setState(() {
-        _totalWalletBalance = totalBalance;
         _isLoading = false;
       });
     }
@@ -111,21 +195,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     };
   }
 
-  void _startPriceUpdates() {
-    _priceTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
-      if (mounted) {
-        _fetchPrices();
-        // Also refresh wallet balance periodically
-        WalletService.getTotalUSDTBalance().then((balance) {
-          if (mounted) setState(() => _totalWalletBalance = balance);
-        });
-      }
-    });
-  }
-
   @override
   void dispose() {
-    _priceTimer?.cancel();
+    _tradeSubscription?.cancel();
+    _balanceSubscription?.cancel();
     super.dispose();
   }
 

@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import '../services/wallet_service.dart';
+import '../services/spot_service.dart';
+import '../services/socket_service.dart';
 import 'package:intl/intl.dart';
 import 'otp_verification_screen.dart';
 
@@ -23,6 +26,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
   List<Map<String, dynamic>> _transferHistory = [];
   List<Map<String, dynamic>> _coins = [];
   Map<String, String> _coinSymbolToId = {};
+  StreamSubscription? _balanceSubscription;
 
   final List<Map<String, String>> _walletTypes = [
     {'code': 'main', 'name': 'Main Wallet (1)'},
@@ -37,6 +41,47 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
     _fetchCoins();
     _fetchBalances();
     _fetchTransferHistory();
+    _subscribeToSocketBalance();
+  }
+
+  @override
+  void dispose() {
+    _balanceSubscription?.cancel();
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  void _subscribeToSocketBalance() {
+    _balanceSubscription?.cancel();
+    _balanceSubscription = SocketService.balanceStream.listen((data) {
+      if (mounted && data['type'] == 'balance_update') {
+        setState(() {
+          final assets = data['assets'] as List?;
+          if (assets != null) {
+            // Find the selected coin (usually USDT) in the socket update
+            final assetData = assets.firstWhere(
+              (a) => a['asset'] == _selectedCoin,
+              orElse: () => null,
+            );
+
+            if (assetData != null) {
+              final available = double.tryParse(assetData['available']?.toString() ?? '0.0') ?? 0.0;
+              final locked = double.tryParse(assetData['locked']?.toString() ?? '0.0') ?? 0.0;
+              final total = available + locked;
+
+              // The socket balance update specifically updates the Spot Wallet
+              _balances['spot'] = {
+                'available': available.toStringAsFixed(2),
+                'locked': locked.toStringAsFixed(2),
+                'total': total.toStringAsFixed(2),
+              };
+              
+              debugPrint('Socket balance update applied to Spot Wallet: $available $_selectedCoin');
+            }
+          }
+        });
+      }
+    });
   }
 
   Future<void> _fetchCoins() async {
@@ -77,17 +122,47 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
 
   Future<void> _fetchBalances() async {
     setState(() => _isFetchingBalances = true);
+    
+    // Fetch both WalletService and SpotService balances
     final result = await WalletService.getAllWalletBalances();
+    final spotResult = await SpotService.getBalance();
+    
     if (mounted) {
       setState(() {
+        _balances = {};
+        
+        // Step 1: Fetch spot balance from SpotService API (GET /balance/:user_id)
+        if (spotResult['success'] == true && spotResult['data'] != null) {
+          final spotData = spotResult['data'];
+          double spotAvailable = double.tryParse(spotData['usdt_available']?.toString() ?? '0.0') ?? 0.0;
+          double spotLocked = double.tryParse(spotData['usdt_locked']?.toString() ?? '0.0') ?? 0.0;
+          double spotTotal = spotAvailable + spotLocked;
+          
+          _balances['spot'] = {
+            'available': spotAvailable.toStringAsFixed(2),
+            'locked': spotLocked.toStringAsFixed(2),
+            'total': spotTotal.toStringAsFixed(2),
+          };
+          debugPrint('SpotService spot balance - Available: $spotAvailable, Locked: $spotLocked, Total: $spotTotal');
+        }
+        
+        // Step 2: Fetch wallet balances from WalletService (main, p2p, bot, spot)
         if (result['success'] == true && result['data'] != null) {
           final data = result['data'];
-          _balances = {};
           
-          // Handle flat format: {spotBalance: X, mainBalance: {USDT: Y}, p2pBalance: Z, botBalance: W}
-          // Extract balances from flat format
+          // Parse spotBalance from API response if not already set from SpotService
+          if (_balances['spot'] == null && data['spotBalance'] != null) {
+            final spotTotal = double.tryParse(data['spotBalance'].toString()) ?? 0.0;
+            _balances['spot'] = {
+              'available': spotTotal.toStringAsFixed(2),
+              'locked': '0.00',
+              'total': spotTotal.toStringAsFixed(2),
+            };
+            debugPrint('Spot balance from WalletService API: $spotTotal');
+          }
+          
+          // Handle flat format: {mainBalance: {USDT: Y}, p2pBalance: Z, botBalance: W}
           final walletTypeMap = {
-            'spot': 'spotBalance',
             'main': 'mainBalance', 
             'p2p': 'p2pBalance',
             'bot': 'botBalance',
@@ -111,7 +186,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                   available = total; // For main wallet, assume all is available
                 }
               } else if (walletData is num) {
-                // Format: spotBalance: 0 (direct number)
+                // Format: p2pBalance: 0 (direct number)
                 total = walletData.toDouble();
                 available = total;
               }
@@ -130,7 +205,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
           // Fallback to nested format if flat format doesn't work
           if (!foundBalances) {
             // Extract USDT balances from all wallet types
-            final walletTypes = ['spot', 'p2p', 'bot', 'demo_bot', 'main'];
+            final walletTypes = ['p2p', 'bot', 'demo_bot', 'main'];
             for (String walletType in walletTypes) {
               if (data[walletType] != null && data[walletType]['balances'] != null) {
                 final balances = data[walletType]['balances'] as List;
@@ -152,23 +227,16 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
               }
             }
           }
-        } else {
-          // Set default balances if API fails
-          final defaultBalances = {
-            'spot': 10000.0,
-            'main': 5000.0,
-            'p2p': 2500.0,
-            'bot': 1500.0,
-          };
-          
-          for (String type in defaultBalances.keys) {
-            _balances[type] = {
-              'available': defaultBalances[type]!.toStringAsFixed(2),
-              'locked': '0.00',
-              'total': defaultBalances[type]!.toStringAsFixed(2),
-            };
+        }
+        
+        // Set default zero balances for any missing wallets
+        final defaultWallets = ['spot', 'main', 'p2p', 'bot'];
+        for (String type in defaultWallets) {
+          if (_balances[type] == null) {
+            _balances[type] = {'available': '0.00', 'locked': '0.00', 'total': '0.00'};
           }
         }
+        
         _isFetchingBalances = false;
       });
     }
@@ -273,50 +341,33 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
     setState(() => _isLoading = true);
     
     try {
-      // Step 1: Send OTP
-      final otpResult = await WalletService.sendOtp(purpose: 'internal_send');
+      int fromWalletNumber = _getWalletTypeNumber(_fromWallet);
+      int toWalletNumber = _getWalletTypeNumber(_toWallet);
+      String coinId = _getCoinId(_selectedCoin);
       
-      if (otpResult['success'] == true) {
-        if (!mounted) return;
-        
-        // Step 2: Navigate to OTP Verification Screen
-        int fromWalletNumber = _getWalletTypeNumber(_fromWallet);
-        int toWalletNumber = _getWalletTypeNumber(_toWallet);
-        String coinId = _getCoinId(_selectedCoin);
-        
-        final bool? verified = await Navigator.push<bool>(
-          context,
-          MaterialPageRoute(
-            builder: (context) => OtpVerificationScreen(
-              onVerify: (otp) => WalletService.transferBetweenWallets(
-                coinId: coinId,
-                from: fromWalletNumber,
-                to: toWalletNumber,
-                amount: amount,
-                otp: otp,
-              ),
-              onResend: () => WalletService.sendOtp(purpose: 'internal_send'),
-            ),
-          ),
-        );
+      final result = await WalletService.transferBetweenWallets(
+        coinId: coinId,
+        from: fromWalletNumber,
+        to: toWalletNumber,
+        amount: amount,
+      );
 
-        if (verified == true) {
-          if (mounted) {
-            _amountController.clear();
-            await _fetchBalances(); // Refresh balances
-            await _fetchTransferHistory(); // Refresh transfer history
-            
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Transfer Successful'),
-                backgroundColor: Colors.green,
-                duration: Duration(seconds: 4),
-              ),
-            );
-          }
+      if (mounted) {
+        if (result['success'] == true) {
+          _amountController.clear();
+          await _fetchBalances(); // Refresh balances
+          await _fetchTransferHistory(); // Refresh transfer history
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Transfer Successful'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 4),
+            ),
+          );
+        } else {
+          _showError(result['error'] ?? 'Transfer failed');
         }
-      } else {
-        _showError(otpResult['error'] ?? 'Failed to send OTP');
       }
     } catch (e) {
       if (mounted) {

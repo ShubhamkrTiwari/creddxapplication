@@ -9,6 +9,7 @@ import 'package:path/path.dart' as path;
 import 'package:share_plus/share_plus.dart';
 import '../services/wallet_service.dart';
 import '../services/notification_service.dart';
+import 'dart:convert';
 
 class DepositAddressScreen extends StatefulWidget {
   final String coin;
@@ -110,8 +111,9 @@ class _DepositAddressScreenState extends State<DepositAddressScreen> {
   @override
   Widget build(BuildContext context) {
     // Generate QR code URL using a public API
+    // URL encode the address to handle special characters properly
     final qrCodeUrl = _address != null 
-        ? 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=$_address'
+        ? 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${Uri.encodeComponent(_address!)}'
         : '';
 
     return Scaffold(

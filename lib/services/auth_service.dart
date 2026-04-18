@@ -9,7 +9,7 @@ import 'user_service.dart';
 import 'notification_service.dart';
 
 class AuthService {
-  static const String _baseUrl = 'http://65.0.196.122:8085';
+  static const String _baseUrl = 'https://api11.hathmetech.com/api';
   static const String _tokenKey = 'auth_token';
   static const String _userKey = 'user_data';
 
