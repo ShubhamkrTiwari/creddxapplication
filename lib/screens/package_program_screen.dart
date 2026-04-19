@@ -62,20 +62,26 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
     super.dispose();
   }
 
+  // Countdown values
+  int _countdownDays = 0;
+
   void _startCountdownTimer() {
-    _countdownTimer = Timer.periodic(const Duration(hours: 24), (timer) {
-      if (_isSubscribed && _daysLeft > 0) {
-        setState(() {
-          _daysLeft--;
-        });
-        
-        // When subscription expires
-        if (_daysLeft == 0) {
-          setState(() {
-            _isSubscribed = false;
-          });
-          BotTradeDetailScreen.hasPackage = false;
-        }
+    _updateCountdownValues();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_isSubscribed) {
+        _updateCountdownValues();
+      }
+    });
+  }
+
+  void _updateCountdownValues() {
+    setState(() {
+      _countdownDays = _daysLeft;
+      
+      // When subscription expires
+      if (_countdownDays <= 0) {
+        _isSubscribed = false;
+        BotTradeDetailScreen.hasPackage = false;
       }
     });
   }
@@ -248,9 +254,40 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
                   const SizedBox(height: 16),
                   _buildDetailRow('Plan', 'Annual Plan'),
                   _buildDetailRow('Status', 'Active'),
-                  _buildDetailRow('Days Remaining', '$_daysLeft days'),
                   _buildDetailRow('Price', '\$25'),
                   _buildDetailRow('Duration', '365 Days'),
+                  const SizedBox(height: 16),
+                  // Countdown Timer
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF84BD00).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: const Color(0xFF84BD00).withOpacity(0.3),
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        const Text(
+                          'Time Remaining',
+                          style: TextStyle(
+                            color: Color(0xFF84BD00),
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _buildCountdownItem(_countdownDays, 'Days Remaining'),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -316,6 +353,43 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildCountdownItem(int value, String label) {
+    return Column(
+      children: [
+        Container(
+          width: 50,
+          height: 50,
+          decoration: BoxDecoration(
+            color: const Color(0xFF84BD00).withOpacity(0.2),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: const Color(0xFF84BD00),
+              width: 1,
+            ),
+          ),
+          child: Center(
+            child: Text(
+              value.toString().padLeft(2, '0'),
+              style: const TextStyle(
+                color: Color(0xFF84BD00),
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.7),
+            fontSize: 12,
+          ),
+        ),
+      ],
     );
   }
 

@@ -6,6 +6,7 @@ import 'coming_soon_screen.dart';
 import 'deposit_screen.dart';
 import 'internal_transfer_screen.dart';
 import 'wallet_history_screen.dart';
+import 'send_screen.dart';
 import '../services/wallet_service.dart';
 import '../services/spot_service.dart';
 import '../services/socket_service.dart';
@@ -168,26 +169,44 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
         spotAvailable = double.tryParse(spotData['usdt_available']?.toString() ?? '0.0') ?? 0.0;
         spotLocked = double.tryParse(spotData['usdt_locked']?.toString() ?? '0.0') ?? 0.0;
 
-        // Parse assets array if available (for additional coins like BTC)
-        final assets = spotData['assets'] as List<dynamic>?;
-        if (assets != null) {
-          for (final asset in assets) {
-            final assetName = asset['asset']?.toString() ?? '';
-            if (assetName == 'BTC') {
-              final btcFree = double.tryParse(asset['free']?.toString() ?? '0.0') ?? 0.0;
-              if (btcFree > 0) {
-                allAssets['BTC'] = {
-                  'symbol': 'BTC',
-                  'name': 'Bitcoin',
-                  'amount': btcFree.toString(),
-                  'available': btcFree.toString(),
-                  'locked': '0',
-                  'usdValue': 0.0, // Will be updated with price
-                  'icon': '₿',
-                  'color': const Color(0xFFF7931A),
-                  'iconUrl': _getCoinIconUrl('BTC'),
-                };
-              }
+        // Parse assets array (handle both List and Map formats)
+        final rawAssets = spotData['assets'];
+        List<dynamic>? assetsList;
+        if (rawAssets is List) {
+          assetsList = rawAssets;
+        } else if (rawAssets is Map) {
+          // Convert map to list format
+          assetsList = rawAssets.entries.map((e) {
+            final val = e.value;
+            if (val is Map) {
+              return {'asset': e.key, ...val};
+            }
+            return {'asset': e.key, 'available': val.toString()};
+          }).toList();
+        }
+        
+        if (assetsList != null) {
+          for (final asset in assetsList) {
+            final assetName = asset['asset']?.toString().toUpperCase() ?? '';
+            final available = double.tryParse(asset['available']?.toString() ?? 
+                                             asset['free']?.toString() ?? '0') ?? 0.0;
+            final locked = double.tryParse(asset['locked']?.toString() ?? '0') ?? 0.0;
+            
+            if (assetName == 'USDT') {
+              spotAvailable = available;
+              spotLocked = locked;
+            } else if (assetName == 'BTC' && available > 0) {
+              allAssets['BTC'] = {
+                'symbol': 'BTC',
+                'name': 'Bitcoin',
+                'amount': available.toString(),
+                'available': available.toString(),
+                'locked': locked.toString(),
+                'usdValue': 0.0,
+                'icon': '₿',
+                'color': const Color(0xFFF7931A),
+                'iconUrl': _getCoinIconUrl('BTC'),
+              };
             }
           }
         }
@@ -349,14 +368,21 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
         }
       }
 
-      // Process transaction history
+      // Process transaction history (exclude transfers)
       if (transactionResult['success'] == true && transactionResult['data'] != null) {
         final data = transactionResult['data'];
+        List<Map<String, dynamic>> transactions = [];
         if (data is Map && data['transactions'] != null) {
-          _transactionHistory = (data['transactions'] as List).map((item) => Map<String, dynamic>.from(item)).toList();
+          transactions = (data['transactions'] as List).map((item) => Map<String, dynamic>.from(item)).toList();
         } else if (data is List) {
-          _transactionHistory = data.map((item) => Map<String, dynamic>.from(item)).toList();
+          transactions = data.map((item) => Map<String, dynamic>.from(item)).toList();
         }
+        // Filter out transfer transactions
+        _transactionHistory = transactions.where((tx) {
+          final type = tx['transactionType']?.toString().toLowerCase() ??
+                       tx['type']?.toString().toLowerCase() ?? '';
+          return type != 'transfer';
+        }).toList();
       }
 
       // Process conversion history
@@ -555,7 +581,7 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
       mainAxisAlignment: MainAxisAlignment.spaceAround,
       children: [
         _actionButton(actions[0]['icon'] as IconData, actions[0]['label'] as String, actions[0]['color'] as Color, () {
-          Navigator.push(context, MaterialPageRoute(builder: (context) => const ComingSoonScreen()));
+          Navigator.push(context, MaterialPageRoute(builder: (context) => const SendScreen()));
         }),
         _actionButton(actions[1]['icon'] as IconData, actions[1]['label'] as String, actions[1]['color'] as Color, () {
           Navigator.push(context, MaterialPageRoute(builder: (context) => const ComingSoonScreen()));

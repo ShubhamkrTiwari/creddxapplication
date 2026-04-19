@@ -182,23 +182,39 @@ class WalletService {
       bool foundInTypes = false;
       for (String type in walletTypes) {
         if (data[type] != null && data[type]['balances'] != null) {
-          foundInTypes = true;
-          final balances = data[type]['balances'] as List;
-          for (var b in balances) {
-            if (b['coin']?.toString().toUpperCase() == 'USDT') {
-              // Add only AVAILABLE balance, not total
-              total += double.tryParse(b['available']?.toString() ?? '0') ?? 0.0;
+          final balancesData = data[type]['balances'];
+          // Handle both List and Map types
+          if (balancesData is List) {
+            foundInTypes = true;
+            for (var b in balancesData) {
+              if (b['coin']?.toString().toUpperCase() == 'USDT') {
+                total += double.tryParse(b['available']?.toString() ?? '0') ?? 0.0;
+              }
+            }
+          } else if (balancesData is Map && balancesData['USDT'] != null) {
+            // Handle Map format like { "USDT": { "available": 100 } }
+            foundInTypes = true;
+            final usdtData = balancesData['USDT'];
+            if (usdtData is Map) {
+              total += double.tryParse(usdtData['available']?.toString() ?? '0') ?? 0.0;
             }
           }
         }
       }
       
-      // If not found in categorized types, look for a flat balances list
+      // If not found in categorized types, look for a flat balances list or map
       if (!foundInTypes && data['balances'] != null) {
-        final balances = data['balances'] as List;
-        for (var b in balances) {
-          if (b['coin']?.toString().toUpperCase() == 'USDT') {
-            total += double.tryParse(b['available']?.toString() ?? '0') ?? 0.0;
+        final balancesData = data['balances'];
+        if (balancesData is List) {
+          for (var b in balancesData) {
+            if (b['coin']?.toString().toUpperCase() == 'USDT') {
+              total += double.tryParse(b['available']?.toString() ?? '0') ?? 0.0;
+            }
+          }
+        } else if (balancesData is Map && balancesData['USDT'] != null) {
+          final usdtData = balancesData['USDT'];
+          if (usdtData is Map) {
+            total += double.tryParse(usdtData['available']?.toString() ?? '0') ?? 0.0;
           }
         }
       }
@@ -211,10 +227,18 @@ class WalletService {
       }
     } else if (data is List) {
       for (var wallet in data) {
-        if (wallet['balances'] != null) {
-          for (var b in (wallet['balances'] as List)) {
-            if (b['coin']?.toString().toUpperCase() == 'USDT') {
-              total += double.tryParse(b['available']?.toString() ?? '0') ?? 0.0;
+        if (wallet is Map && wallet['balances'] != null) {
+          final balancesData = wallet['balances'];
+          if (balancesData is List) {
+            for (var b in balancesData) {
+              if (b['coin']?.toString().toUpperCase() == 'USDT') {
+                total += double.tryParse(b['available']?.toString() ?? '0') ?? 0.0;
+              }
+            }
+          } else if (balancesData is Map && balancesData['USDT'] != null) {
+            final usdtData = balancesData['USDT'];
+            if (usdtData is Map) {
+              total += double.tryParse(usdtData['available']?.toString() ?? '0') ?? 0.0;
             }
           }
         }
@@ -282,22 +306,39 @@ class WalletService {
       bool foundInTypes = false;
       for (String type in walletTypes) {
         if (data[type] != null && data[type]['balances'] != null) {
-          foundInTypes = true;
-          final balances = data[type]['balances'] as List;
-          for (var b in balances) {
-            if (b['coin']?.toString().toUpperCase() == 'USDT') {
-              total += double.tryParse(b['total']?.toString() ?? '0') ?? 0.0;
+          final balancesData = data[type]['balances'];
+          // Handle both List and Map types
+          if (balancesData is List) {
+            foundInTypes = true;
+            for (var b in balancesData) {
+              if (b['coin']?.toString().toUpperCase() == 'USDT') {
+                total += double.tryParse(b['total']?.toString() ?? '0') ?? 0.0;
+              }
+            }
+          } else if (balancesData is Map && balancesData['USDT'] != null) {
+            // Handle Map format like { "USDT": { "total": 100 } }
+            foundInTypes = true;
+            final usdtData = balancesData['USDT'];
+            if (usdtData is Map) {
+              total += double.tryParse(usdtData['total']?.toString() ?? '0') ?? 0.0;
             }
           }
         }
       }
       
-      // If not found in categorized types, look for a flat balances list
+      // If not found in categorized types, look for a flat balances list or map
       if (!foundInTypes && data['balances'] != null) {
-        final balances = data['balances'] as List;
-        for (var b in balances) {
-          if (b['coin']?.toString().toUpperCase() == 'USDT') {
-            total += double.tryParse(b['total']?.toString() ?? '0') ?? 0.0;
+        final balancesData = data['balances'];
+        if (balancesData is List) {
+          for (var b in balancesData) {
+            if (b['coin']?.toString().toUpperCase() == 'USDT') {
+              total += double.tryParse(b['total']?.toString() ?? '0') ?? 0.0;
+            }
+          }
+        } else if (balancesData is Map && balancesData['USDT'] != null) {
+          final usdtData = balancesData['USDT'];
+          if (usdtData is Map) {
+            total += double.tryParse(usdtData['total']?.toString() ?? '0') ?? 0.0;
           }
         }
       }
@@ -939,6 +980,24 @@ class WalletService {
     return {'fee': '0.00'};
   }
 
+  // Alias for withdrawCrypto to match the naming convention in withdraw_crypto_screen.dart
+  static Future<Map<String, dynamic>?> initiateWithdrawal({
+    required String email,
+    required String coin,
+    required String network,
+    required String address,
+    required double amount,
+  }) async {
+    // The email parameter is kept for API compatibility but not used in the actual API call
+    // as the backend uses the token for user identification
+    return withdrawCrypto(
+      coin: coin,
+      network: network,
+      address: address,
+      amount: amount,
+    );
+  }
+
   static Future<Map<String, dynamic>?> withdrawCrypto({required String coin, required String network, required String address, required double amount, String? otp}) async {
     try {
       debugPrint('Submitting crypto withdraw: coin=$coin, network=$network, amount=$amount');
@@ -997,7 +1056,7 @@ class WalletService {
         if (endDate != null) 'endDate': endDate,
       };
 
-      final uri = Uri.parse('$baseUrl/v1/wallet/inr/conversion-history')
+      final uri = Uri.parse('$baseUrl/wallet/v1/wallet/inr/conversion-history')
           .replace(queryParameters: queryParams);
 
       debugPrint('Fetching conversion history from: $uri');
@@ -1179,6 +1238,275 @@ class WalletService {
       }
     } catch (e) {
       debugPrint('Error in internalTransfer: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  // ==================== INR WITHDRAWAL APIs ====================
+
+  /// 1. Fetch Bank Details
+  /// GET /wallet/v1/wallet/deposit/inr-pay-details
+  /// Status values: 1 = Pending, 2 = Approved, 3 = Rejected
+  static Future<Map<String, dynamic>> getINRBankDetails() async {
+    try {
+      debugPrint('Fetching INR bank details from: $baseUrl/wallet/v1/wallet/deposit/inr-pay-details');
+      final response = await http.get(
+        Uri.parse('$baseUrl/wallet/v1/wallet/deposit/inr-pay-details'),
+        headers: await _getHeaders(),
+      );
+
+      debugPrint('Bank Details API Response Status: ${response.statusCode}');
+      debugPrint('Bank Details API Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          return {
+            'success': true,
+            'data': data['data'],
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to fetch bank details',
+          };
+        }
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching INR bank details: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  /// 2. Add Bank Account
+  /// POST /wallet/v1/wallet/deposit/add-inr-pay-details
+  /// type: 1 = Bank, 2 = UPI
+  static Future<Map<String, dynamic>> addINRBankAccount({
+    required String accountHolderName,
+    required String accountNumber,
+    required String ifscCode,
+    required String bankName,
+    String? upiId,
+    int type = 1, // 1 = Bank, 2 = UPI
+  }) async {
+    try {
+      final body = {
+        'accountHolderName': accountHolderName,
+        'accountNumber': accountNumber,
+        'ifscCode': ifscCode,
+        'bankName': bankName,
+        'type': type,
+        if (upiId != null && upiId.isNotEmpty) 'upiId': upiId,
+      };
+
+      debugPrint('Adding INR bank account with body: $body');
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/wallet/v1/wallet/deposit/add-inr-pay-details'),
+        headers: await _getHeaders(),
+        body: json.encode(body),
+      );
+
+      debugPrint('Add Bank API Response Status: ${response.statusCode}');
+      debugPrint('Add Bank API Response Body: ${response.body}');
+
+      final data = json.decode(response.body);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        if (data['success'] == true) {
+          return {
+            'success': true,
+            'data': data['data'],
+            'message': data['message'] ?? 'Bank account added successfully',
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to add bank account',
+          };
+        }
+      } else {
+        return {
+          'success': false,
+          'error': data['message'] ?? 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error adding INR bank account: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  /// 3. Edit Bank Account (for rejected status)
+  /// POST /wallet/v1/wallet/inr/update-inr-payment-method/{_id}
+  static Future<Map<String, dynamic>> editINRBankAccount({
+    required String id,
+    required String accountHolderName,
+    required String accountNumber,
+    required String ifscCode,
+    required String bankName,
+    String? upiId,
+  }) async {
+    try {
+      final body = {
+        'accountHolderName': accountHolderName,
+        'accountNumber': accountNumber,
+        'ifscCode': ifscCode,
+        'bankName': bankName,
+        if (upiId != null && upiId.isNotEmpty) 'upiId': upiId,
+      };
+
+      debugPrint('Editing INR bank account ID: $id with body: $body');
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/wallet/v1/wallet/inr/update-inr-payment-method/$id'),
+        headers: await _getHeaders(),
+        body: json.encode(body),
+      );
+
+      debugPrint('Edit Bank API Response Status: ${response.statusCode}');
+      debugPrint('Edit Bank API Response Body: ${response.body}');
+
+      final data = json.decode(response.body);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        if (data['success'] == true) {
+          return {
+            'success': true,
+            'data': data['data'],
+            'message': data['message'] ?? 'Bank account updated successfully',
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to update bank account',
+          };
+        }
+      } else {
+        return {
+          'success': false,
+          'error': data['message'] ?? 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error editing INR bank account: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  /// 4. Send OTP for INR Withdrawal
+  /// POST /wallet/v1/otp/send
+  static Future<Map<String, dynamic>> sendINROTP() async {
+    try {
+      final body = {
+        'purpose': 'inr_withdraw',
+      };
+
+      debugPrint('Sending OTP for INR withdrawal');
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/wallet/v1/otp/send'),
+        headers: await _getHeaders(),
+        body: json.encode(body),
+      );
+
+      debugPrint('Send OTP API Response Status: ${response.statusCode}');
+      debugPrint('Send OTP API Response Body: ${response.body}');
+
+      final data = json.decode(response.body);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        if (data['success'] == true) {
+          return {
+            'success': true,
+            'message': data['message'] ?? 'OTP sent successfully',
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to send OTP',
+          };
+        }
+      } else {
+        return {
+          'success': false,
+          'error': data['message'] ?? 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error sending INR withdrawal OTP: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  /// 5. Submit INR Withdrawal Request
+  /// POST /wallet/v1/wallet/deposit/inr-withdraw-request
+  static Future<Map<String, dynamic>> submitINRWithdrawal({
+    required String otp,
+    required double amount,
+    required String paymentMethodId,
+  }) async {
+    try {
+      final body = {
+        'otp': otp,
+        'amount': amount,
+        'paymentMethodId': paymentMethodId,
+      };
+
+      debugPrint('Submitting INR withdrawal with amount: $amount');
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/wallet/v1/wallet/deposit/inr-withdraw-request'),
+        headers: await _getHeaders(),
+        body: json.encode(body),
+      );
+
+      debugPrint('Withdrawal API Response Status: ${response.statusCode}');
+      debugPrint('Withdrawal API Response Body: ${response.body}');
+
+      final data = json.decode(response.body);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        if (data['success'] == true) {
+          return {
+            'success': true,
+            'data': data['data'],
+            'message': data['message'] ?? 'Withdrawal request submitted successfully',
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to submit withdrawal request',
+          };
+        }
+      } else {
+        return {
+          'success': false,
+          'error': data['message'] ?? 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error submitting INR withdrawal: $e');
       return {
         'success': false,
         'error': 'Network error: $e',

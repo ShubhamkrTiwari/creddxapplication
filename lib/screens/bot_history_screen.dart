@@ -26,13 +26,34 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
   DateTime? _startDate;
   DateTime? _endDate;
 
+  // Balance history data
+  Map<String, dynamic>? _balanceHistory;
+  double _investedAmount = 0.0;
+  double _balance = 0.0;
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _loadTradeHistory();
     _loadTransactions();
     _loadAvailablePairs();
+    _loadBalanceHistory();
+  }
+  
+  Future<void> _loadBalanceHistory() async {
+    try {
+      final result = await BotService.getUserBalanceHistory();
+      if (mounted && result['success'] == true) {
+        setState(() {
+          _balanceHistory = result['data'];
+          _investedAmount = result['investedAmount']?.toDouble() ?? 0.0;
+          _balance = result['balance']?.toDouble() ?? 0.0;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading balance history: $e');
+    }
   }
 
   @override
@@ -207,6 +228,7 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
               tabs: const [
                 Tab(text: 'Trades'),
                 Tab(text: 'Transactions'),
+                Tab(text: 'Balance'),
               ],
             ),
           ),
@@ -218,6 +240,7 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
               children: [
                 _buildTradesContent(),
                 _buildTransactionsContent(),
+                _buildBalanceContent(),
               ],
             ),
           ),
@@ -883,6 +906,83 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
             style: TextStyle(
               color: Colors.white.withOpacity(0.6),
               fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBalanceContent() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          // Total Invested Card
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF84BD00), Color(0xFF5A8A00)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Total Invested',
+                  style: TextStyle(
+                    color: Colors.black87,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '${_investedAmount.toStringAsFixed(2)} USDT',
+                  style: const TextStyle(
+                    color: Colors.black,
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Balance: ${_balance.toStringAsFixed(2)} USDT',
+                  style: TextStyle(
+                    color: Colors.black.withOpacity(0.7),
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          // Refresh Button
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: _loadBalanceHistory,
+              icon: const Icon(Icons.refresh, color: Colors.black),
+              label: const Text(
+                'Refresh Balance',
+                style: TextStyle(
+                  color: Colors.black,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF84BD00),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
             ),
           ),
         ],

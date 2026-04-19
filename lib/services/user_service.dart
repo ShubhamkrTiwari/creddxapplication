@@ -459,7 +459,7 @@ class UserService {
       }
 
       final response = await http.post(
-        Uri.parse('https://api11.hathmetech.com/api/v1/kyc/digilocker/initiate'),
+        Uri.parse('https://api11.hathmetech.com/api/user/v1/kyc/digilocker/initiate'),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
@@ -477,7 +477,7 @@ class UserService {
         if (responseData['success'] == true) {
           return {
             'success': true,
-            'data': responseData['data'],
+            'data': responseData, // Return full response as data
             'message': responseData['message'] ?? 'DigiLocker initiated'
           };
         } else {

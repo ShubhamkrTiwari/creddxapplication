@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.creddx">
+    package="com.creddx.android">
     <!-- Required for WebView and network operations -->
     <uses-permission android:name="android.permission.INTERNET"/>
     

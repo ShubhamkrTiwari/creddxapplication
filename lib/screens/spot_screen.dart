@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../services/spot_service.dart';
-import '../services/socket_service.dart';
+import '../services/spot_socket_service.dart';
 import '../services/binance_service.dart';
 import '../services/wallet_service.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
@@ -18,7 +18,7 @@ class SpotScreen extends StatefulWidget {
   State<SpotScreen> createState() => _SpotScreenState();
 }
 
-class _SpotScreenState extends State<SpotScreen> {
+class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver {
   bool _isBuy = true;
   double _currentPrice = 92076.6;
   double _amount = 0.0;
@@ -31,7 +31,7 @@ class _SpotScreenState extends State<SpotScreen> {
   final TextEditingController _amountController = TextEditingController();
   
   // Available coins for amount dropdown
-  final List<Map<String, dynamic>> _availableCoins = [
+  List<Map<String, dynamic>> _availableCoins = [
     {'symbol': 'BTC', 'name': 'Bitcoin'},
     {'symbol': 'USDT', 'name': 'Tether'},
   ];
@@ -66,8 +66,10 @@ class _SpotScreenState extends State<SpotScreen> {
   StreamSubscription? _tradesSubscription;
   StreamSubscription? _ordersSubscription;
   StreamSubscription? _fillsSubscription;
+  StreamSubscription? _connectionSubscription;
 
   Timer? _connectionCheckTimer;
+  bool _isScreenVisible = true;
   
   // Binance market data for dropdown
   List<Map<String, dynamic>> _binanceMarketData = [];
@@ -96,6 +98,9 @@ class _SpotScreenState extends State<SpotScreen> {
     // Initialize price controller
     _priceController.text = _currentPrice.toStringAsFixed(2);
     
+    // Add listener to amount controller to update funds required display
+    _amountController.addListener(_onAmountChanged);
+    
     // Add fallback order book data initially to prevent empty display
     if (_sellOrders.isEmpty && _buyOrders.isEmpty) {
       _addFallbackOrderBookData();
@@ -107,11 +112,87 @@ class _SpotScreenState extends State<SpotScreen> {
     // Load market data for dropdown
     _loadBinanceMarketData();
     
+    _updateAvailableCoins();
     _loadSpotData();
     _initializeWebSocket();
     _subscribeToBalance();
+    _subscribeToConnectionState();
+    
+    // Register lifecycle observer
+    WidgetsBinding.instance.addObserver(this);
   }
-  
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    switch (state) {
+      case AppLifecycleState.resumed:
+        // App is visible again, reconnect socket if needed
+        _isScreenVisible = true;
+        debugPrint('SpotScreen: App resumed, checking socket connection...');
+        if (!SpotSocketService.isConnected) {
+          debugPrint('SpotScreen: Socket not connected, reconnecting...');
+          SpotSocketService.connect();
+          SpotSocketService.subscribe(_selectedSymbol);
+        }
+        break;
+      case AppLifecycleState.paused:
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.detached:
+        // App is not visible
+        _isScreenVisible = false;
+        break;
+      case AppLifecycleState.hidden:
+        _isScreenVisible = false;
+        break;
+    }
+  }
+
+  // Handle amount text changes to update funds required display
+  void _onAmountChanged() {
+    final value = _amountController.text;
+    final newAmount = double.tryParse(value) ?? 0.0;
+    if (newAmount != _amount) {
+      setState(() {
+        _amount = newAmount;
+        // Update slider based on new amount
+        final baseAsset = _selectedSymbol.endsWith('USDT')
+            ? _selectedSymbol.substring(0, _selectedSymbol.length - 4)
+            : _selectedSymbol.split('/').first;
+        final isBaseAsset = _selectedAmountCoin == baseAsset;
+        if (_isBuy) {
+          if (isBaseAsset) {
+            // Buying with BTC amount - check against max BTC we can buy with USDT
+            final maxBtc = _balance != null
+                ? (double.tryParse(_balance!['usdt_available']?.toString() ?? '0') ?? 0.0) / _currentPrice
+                : 0.0;
+            _sliderValue = maxBtc > 0 ? (newAmount / maxBtc).clamp(0.0, 1.0) : 0.0;
+          } else {
+            // Buying with USDT amount
+            final maxUsdt = double.tryParse(_balance?['usdt_available']?.toString() ?? '0') ?? 0.0;
+            _sliderValue = maxUsdt > 0 ? (newAmount / maxUsdt).clamp(0.0, 1.0) : 0.0;
+          }
+        } else {
+          // Selling
+          if (isBaseAsset) {
+            // Selling BTC - check against available BTC
+            final availableBase = _balance != null
+                ? (double.tryParse(_balance!['free']?.toString() ?? '0') ?? 0.0)
+                : 0.0;
+            _sliderValue = availableBase > 0 ? (newAmount / availableBase).clamp(0.0, 1.0) : 0.0;
+          } else {
+            // Selling with USDT value - convert to BTC and check
+            final availableBase = _balance != null
+                ? (double.tryParse(_balance!['free']?.toString() ?? '0') ?? 0.0)
+                : 0.0;
+            final btcValue = _currentPrice > 0 ? newAmount / _currentPrice : 0.0;
+            _sliderValue = availableBase > 0 ? (btcValue / availableBase).clamp(0.0, 1.0) : 0.0;
+          }
+        }
+      });
+    }
+  }
+
   // Update price from Binance with animation
   Future<void> _updateOrderBookPrice() async {
     try {
@@ -181,9 +262,48 @@ class _SpotScreenState extends State<SpotScreen> {
     }
   }
 
+  void _updateAvailableCoins() {
+    if (!mounted) return;
+    setState(() {
+      String baseAsset;
+      String quoteAsset;
+      
+      if (_selectedSymbol.contains('/')) {
+        final parts = _selectedSymbol.split('/');
+        baseAsset = parts[0];
+        quoteAsset = parts[1];
+      } else if (_selectedSymbol.endsWith('USDT')) {
+        baseAsset = _selectedSymbol.substring(0, _selectedSymbol.length - 4);
+        quoteAsset = 'USDT';
+      } else {
+        baseAsset = 'BTC';
+        quoteAsset = 'USDT';
+      }
+      
+      _availableCoins = [
+        {'symbol': baseAsset, 'name': baseAsset},
+        {'symbol': quoteAsset, 'name': quoteAsset},
+      ];
+      
+      // Ensure selected amount coin is valid for the new pair
+      if (_selectedAmountCoin != baseAsset && _selectedAmountCoin != quoteAsset) {
+        _selectedAmountCoin = baseAsset;
+      }
+    });
+  }
+
+  void _subscribeToConnectionState() {
+    _connectionSubscription?.cancel();
+    _connectionSubscription = SpotSocketService.connectionStream.listen((state) {
+      setState(() {
+        _isWebSocketConnected = state == SocketConnectionState.connected;
+      });
+    });
+  }
+
   void _subscribeToBalance() {
     _balanceSubscription?.cancel();
-    _balanceSubscription = SocketService.balanceStream.listen((data) {
+    _balanceSubscription = SpotSocketService.balanceStream.listen((data) {
       debugPrint('Socket balance update received: $data');
       if (mounted && data['type'] == 'balance_update') {
         setState(() {
@@ -247,26 +367,27 @@ class _SpotScreenState extends State<SpotScreen> {
     _tradesSubscription?.cancel();
     _ordersSubscription?.cancel();
     _fillsSubscription?.cancel();
+    _connectionSubscription?.cancel();
+    SpotSocketService.unsubscribe(_selectedSymbol);
+    
+    // Remove lifecycle observer
+    WidgetsBinding.instance.removeObserver(this);
+    
     super.dispose();
   }
 
   // Initialize WebSocket for real-time data
   void _initializeWebSocket() {
     try {
-      // Connect to SocketService (centralized)
-      SocketService.connect();
-      
-      // Update connection status
-      setState(() {
-        _isWebSocketConnected = true; // Assume connected or check SocketService status if available
-      });
+      // Connect to SpotSocketService
+      SpotSocketService.connect();
       
       // Subscribe to symbol for order book and trades
-      SocketService.subscribe(_selectedSymbol);
+      SpotSocketService.subscribe(_selectedSymbol);
       
-      // Listen to order book updates from SocketService
+      // Listen to order book updates from SpotSocketService
       _orderbookSubscription?.cancel();
-      _orderbookSubscription = SocketService.orderbookStream.listen((data) {
+      _orderbookSubscription = SpotSocketService.orderbookStream.listen((data) {
         if (mounted && data['type'] == 'book' && data['symbol'] == _selectedSymbol) {
           setState(() {
             final orderBookData = data['data'];
@@ -275,11 +396,25 @@ class _SpotScreenState extends State<SpotScreen> {
                 (orderBookData['asks'] != null || orderBookData['bids'] != null)) {
               final asks = (orderBookData['asks'] as List? ?? [])
                   .take(10)
-                  .map((level) => {'price': level[0], 'amount': level[1]})
+                  .map((level) {
+                    if (level is List && level.length >= 2) {
+                      return {'price': level[0], 'amount': level[1]};
+                    } else if (level is Map) {
+                      return {'price': level['price'], 'amount': level['amount']};
+                    }
+                    return {'price': 0.0, 'amount': 0.0};
+                  })
                   .toList();
               final bids = (orderBookData['bids'] as List? ?? [])
                   .take(10)
-                  .map((level) => {'price': level[0], 'amount': level[1]})
+                  .map((level) {
+                    if (level is List && level.length >= 2) {
+                      return {'price': level[0], 'amount': level[1]};
+                    } else if (level is Map) {
+                      return {'price': level['price'], 'amount': level['amount']};
+                    }
+                    return {'price': 0.0, 'amount': 0.0};
+                  })
                   .toList();
               
               final mySellOrders = _sellOrders.where((o) => o['isMyOrder'] == true).toList();
@@ -316,7 +451,7 @@ class _SpotScreenState extends State<SpotScreen> {
 
       // Listen to trade updates
       _tradesSubscription?.cancel();
-      _tradesSubscription = SocketService.tradesStream.listen((data) {
+      _tradesSubscription = SpotSocketService.tradesStream.listen((data) {
         if (mounted && data['type'] == 'trade' && data['symbol'] == _selectedSymbol) {
           setState(() {
             _recentTrades.insert(0, data['data']);
@@ -330,7 +465,7 @@ class _SpotScreenState extends State<SpotScreen> {
       
       // Subscribe to order updates
       _ordersSubscription?.cancel();
-      _ordersSubscription = SocketService.ordersStream.listen((data) {
+      _ordersSubscription = SpotSocketService.ordersStream.listen((data) {
         if (mounted && data['type'] == 'order_update') {
           setState(() {
             _isWebSocketConnected = true;
@@ -359,7 +494,7 @@ class _SpotScreenState extends State<SpotScreen> {
       
       // Subscribe to fill events
       _fillsSubscription?.cancel();
-      _fillsSubscription = SocketService.fillsStream.listen((data) {
+      _fillsSubscription = SpotSocketService.fillsStream.listen((data) {
         if (mounted && data['type'] == 'fill') {
           setState(() {
             _isWebSocketConnected = true;
@@ -566,10 +701,24 @@ class _SpotScreenState extends State<SpotScreen> {
           final data = result['data'];
           // Convert [price, quantity] arrays to maps for existing UI
           final asks = (data['asks'] as List? ?? [])
-              .map((level) => {'price': level[0], 'amount': level[1]})
+              .map((level) {
+                if (level is List && level.length >= 2) {
+                  return {'price': level[0], 'amount': level[1]};
+                } else if (level is Map) {
+                  return {'price': level['price'], 'amount': level['amount']};
+                }
+                return {'price': 0.0, 'amount': 0.0};
+              })
               .toList();
           final bids = (data['bids'] as List? ?? [])
-              .map((level) => {'price': level[0], 'amount': level[1]})
+              .map((level) {
+                if (level is List && level.length >= 2) {
+                  return {'price': level[0], 'amount': level[1]};
+                } else if (level is Map) {
+                  return {'price': level['price'], 'amount': level['amount']};
+                }
+                return {'price': 0.0, 'amount': 0.0};
+              })
               .toList();
           
           _sellOrders = List<Map<String, dynamic>>.from(asks);
@@ -680,17 +829,17 @@ class _SpotScreenState extends State<SpotScreen> {
     }
   }
 
-  // Load balance
-  Future<void> _loadBalance() async {
+  // Load balance with optional force refresh
+  Future<void> _loadBalance({bool forceRefresh = false}) async {
     try {
       setState(() {
         _isLoadingBalance = true;
         _balanceError = null;
       });
-      print('Loading balance...');
+      print('Loading balance... (forceRefresh: $forceRefresh)');
       
       // Try SpotService first
-      final result = await SpotService.getBalance();
+      final result = await SpotService.getBalance(forceRefresh: forceRefresh);
       print('SpotService Balance API result: $result');
       
       // Also fetch from WalletService as fallback for spotBalance
@@ -760,65 +909,124 @@ class _SpotScreenState extends State<SpotScreen> {
       return;
     }
 
+    // Calculate minimum quantity validation
+    final baseAsset = _selectedSymbol.endsWith('USDT')
+        ? _selectedSymbol.substring(0, _selectedSymbol.length - 4)
+        : _selectedSymbol.split('/').first;
+    final isBaseAsset = _selectedAmountCoin == baseAsset;
+    final effectivePrice = _orderType == 'Market' ? _currentPrice :
+                          (double.tryParse(_priceController.text) ?? _currentPrice);
+
+    // For Market orders, ensure price is valid
+    if (_orderType == 'Market' && (effectivePrice <= 0 || effectivePrice.isNaN)) {
+      _showMessage('Market price not available. Please try again.', isError: true);
+      return;
+    }
+
+    final minQty = _getMinQty(_selectedSymbol);
+    final currentQty = isBaseAsset ? _amount : (_amount / effectivePrice);
+
+    // Debug print for Market orders
+    if (_orderType == 'Market') {
+      print('Market Order Validation: amount=$_amount, price=$effectivePrice, qty=$currentQty, minQty=$minQty');
+    }
+
+    if (currentQty < minQty) {
+      _showMessage('Order quantity is below minimum ($minQty $baseAsset)', isError: true);
+      return;
+    }
+
     setState(() {
       _isLoading = true;
     });
 
     try {
-      // Validate amount - max 5 decimal places for quantity
-      final amount = double.tryParse(_amount.toStringAsFixed(5)) ?? 0.0;
-      if (amount <= 0) {
-        _showMessage('Invalid amount format', isError: true);
-        setState(() { _isLoading = false; });
-        return;
+      // Standard spot trading logic:
+      // In a real exchange, if you have USDT and want BTC, you "Buy BTC" (Side: Buy, Qty in BTC)
+      // If you have BTC and want USDT, you "Sell BTC" (Side: Sell, Qty in BTC)
+      // Regardless of what coin you entered in the UI, the API side is determined by your intention relative to the base asset.
+
+      final baseAsset = _selectedSymbol.endsWith('USDT') 
+          ? _selectedSymbol.substring(0, _selectedSymbol.length - 4) 
+          : _selectedSymbol.split('/').first;
+      
+      final isBaseAsset = _selectedAmountCoin == baseAsset;
+
+      // API Side is always relative to the Base Asset (e.g. BTC)
+      // If user selected BTC and clicks Buy -> Side: Buy
+      // If user selected BTC and clicks Sell -> Side: Sell
+      // If user selected USDT and clicks Buy -> Side: Sell (Selling BTC to get USDT)
+      // If user selected USDT and clicks Sell -> Side: Buy (Buying BTC using USDT)
+      final String apiSide;
+      if (isBaseAsset) {
+        apiSide = _isBuy ? 'Buy' : 'Sell';
+      } else {
+        // We are trading the quote asset (USDT)
+        apiSide = _isBuy ? 'Sell' : 'Buy';
       }
 
-      // Validate price for limit orders
-      final price = _orderType == 'Market' ? 0.0 : double.tryParse(_currentPrice.toStringAsFixed(2)) ?? 0.0;
+      // The qty for the API must ALWAYS be the base asset (BTC)
+      final double qty;
+      final priceInput = double.tryParse(_priceController.text) ?? _currentPrice;
+      final effectivePrice = _orderType == 'Market' ? _currentPrice : priceInput;
       
-      // Calculate order total based on selected coin type
-      // If USDT selected, amount is already in USDT; if BTC, convert to USDT
-      final orderTotal = _selectedAmountCoin == 'USDT' ? amount : amount * price;
+      if (isBaseAsset) {
+        qty = _amount;
+      } else {
+        // User entered amount in USDT, convert to BTC
+        qty = _amount / effectivePrice;
+      }
       
-      // Parse available balance properly
-      final availableUsdt = double.tryParse(_balance?['usdt_available']?.toString() ?? '0') ?? 0.0;
-      final availableBtc = double.tryParse(_balance?['free']?.toString() ?? '0') ?? 0.0;
-      
-      // Use current price for Market orders since price is 0
-      final effectivePrice = price > 0 ? price : _currentPrice;
-      
-      // Convert amount to BTC quantity if USDT is selected for API
-      final qty = _selectedAmountCoin == 'USDT' ? amount / effectivePrice : amount;
       
       print('=== ORDER PLACEMENT ===');
-      print('Amount (input): $amount');
-      print('Qty (BTC): $qty');
-      print('Price: $price');
+      print('Amount (input): $_amount $_selectedAmountCoin');
+      print('Qty (Base Asset): $qty');
+      print('Price: $effectivePrice');
       print('Order Type: $_orderType');
-      print('Side: ${_isBuy ? 'Buy' : 'Sell'}');
+      print('Side (User): ${_isBuy ? 'Buy' : 'Sell'}');
+      print('Side (API): $apiSide');
       print('Symbol: $_selectedSymbol');
-      print('Balance: $_balance');
       print('====================');
       
       final result = await SpotService.placeOrder(
         symbol: _selectedSymbol,
-        side: _isBuy ? 'Buy' : 'Sell',
+        side: apiSide,
         orderType: _orderType,
         qty: qty,
-        price: price,
+        price: _orderType == 'Market' ? 0.0 : (double.tryParse(_priceController.text) ?? 0.0),
       );
 
       print('Order result: $result');
+      print('Result data type: ${result['data']?.runtimeType}');
 
-      if (result['success']) {
-        _showMessage('Order placed successfully!');
+      // Handle both bool and String types for success
+      final isSuccess = result['success'] is bool ? result['success'] : result['success']?.toString() == 'true';
+      if (isSuccess) {
+        final dynamic rawData = result['data'];
+        Map<String, dynamic>? orderData;
+        
+        // Handle if data is List or Map
+        if (rawData is List && rawData.isNotEmpty) {
+          orderData = rawData.first as Map<String, dynamic>?;
+        } else if (rawData is Map<String, dynamic>) {
+          orderData = rawData;
+        }
+        
+        final orderId = orderData?['order_id']?.toString() ?? orderData?['id']?.toString();
+
+        // Show success message with cancel action
+        if (orderId != null && _orderType == 'Limit') {
+          _showOrderPlacedWithCancel(orderId, _selectedSymbol, effectivePrice, apiSide);
+        } else {
+          _showMessage('Order placed successfully!');
+        }
         
         // Add order to order book and recent trades immediately for visual feedback
-        final orderData = result['data'];
         if (orderData != null) {
+          final displayPrice = _orderType == 'Market' ? _currentPrice : effectivePrice;
           final newTrade = {
-            'price': _orderType == 'Market' ? _currentPrice : price,
-            'amount': amount,
+            'price': displayPrice,
+            'amount': _amount,
             'side': _isBuy ? 'Buy' : 'Sell',
             'timestamp': DateTime.now().toIso8601String(),
             'isMyOrder': true,
@@ -834,8 +1042,8 @@ class _SpotScreenState extends State<SpotScreen> {
             // Add to order book for limit orders
             if (_orderType == 'Limit') {
               final newOrder = {
-                'price': price,
-                'amount': amount,
+                'price': displayPrice,
+                'amount': _amount,
                 'side': _isBuy ? 'Buy' : 'Sell',
                 'order_type': _orderType,
                 'isMyOrder': true,
@@ -857,12 +1065,25 @@ class _SpotScreenState extends State<SpotScreen> {
         }
         
         _loadOpenOrders(); // Refresh open orders
+        _loadOrderBook(); // Refresh order book to show new order
+        _loadBalance(forceRefresh: true); // Refresh balance with force
+        
+        // Multiple delayed retries to ensure backend has processed balance update
+        for (int i = 1; i <= 3; i++) {
+          Future.delayed(Duration(milliseconds: 500 * i), () {
+            if (mounted) {
+              print('Delayed balance refresh #$i');
+              _loadBalance(forceRefresh: true);
+            }
+          });
+        }
+        
         setState(() {
           _amount = 0.0;
           _sliderValue = 0.0;
         });
       } else {
-        _showMessage(result['error'], isError: true);
+        _showMessage(result['error']?.toString() ?? 'Order placement failed', isError: true);
       }
     } catch (e) {
       print('Error placing order: $e');
@@ -945,12 +1166,16 @@ class _SpotScreenState extends State<SpotScreen> {
                             : null,
                         onTap: isActive
                             ? () {
+                                final oldSymbol = _selectedSymbol;
                                 setState(() {
                                   _selectedSymbol = symbolName;
+                                  SpotService.currentSymbol = symbolName;
                                 });
                                 Navigator.pop(context);
+                                // Unsubscribe from old symbol and subscribe to new
+                                SpotSocketService.unsubscribe(oldSymbol);
+                                SpotSocketService.subscribe(symbolName);
                                 _loadSpotData(); // Reload data for new symbol
-                                _initializeWebSocket(); // Reconnect WebSocket for new symbol
                               }
                             : null,
                       );
@@ -1060,11 +1285,16 @@ class _SpotScreenState extends State<SpotScreen> {
                             ),
                             tileColor: isSelected ? const Color(0xFF84BD00).withOpacity(0.1) : null,
                             onTap: () {
+                                final oldSymbol = _selectedSymbol;
                               setState(() {
                                 _selectedSymbol = symbol;
                                 SpotService.currentSymbol = symbol;
                               });
+                              _updateAvailableCoins();
                               Navigator.pop(context);
+                              // Unsubscribe from old symbol and subscribe to new
+                              SpotSocketService.unsubscribe(oldSymbol);
+                              SpotSocketService.subscribe(symbol);
                               _loadSpotData();
                               _initializeWebSocket();
                             },
@@ -1348,13 +1578,22 @@ class _SpotScreenState extends State<SpotScreen> {
             _buildPriceInput(),
             const SizedBox(height: 16),
           ],
-          _buildAmountInput(),
-          const SizedBox(height: 12),
-          _buildPercentageButtons(),
-          const SizedBox(height: 12),
-          const SizedBox(height: 16),
-          _buildTotalInfo(),
-          const SizedBox(height: 20),
+          if (_orderType == 'Market') ...[
+            _buildMarketAmountInput(),
+            const SizedBox(height: 12),
+            _buildMarketPercentageButtons(),
+            const SizedBox(height: 16),
+            _buildMarketAmountInfo(),
+            const SizedBox(height: 20),
+          ] else ...[
+            _buildAmountInput(),
+            const SizedBox(height: 12),
+            _buildPercentageButtons(),
+            const SizedBox(height: 12),
+            const SizedBox(height: 16),
+            _buildTotalInfo(),
+            const SizedBox(height: 20),
+          ],
           _buildBuySellButton(),
         ],
       ),
@@ -1783,6 +2022,283 @@ class _SpotScreenState extends State<SpotScreen> {
     );
   }
 
+  Widget _buildMarketAmountInput() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Amount',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2A2A2A),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _selectedAmountCoin,
+                  dropdownColor: const Color(0xFF2A2A2A),
+                  icon: Icon(Icons.keyboard_arrow_down, color: Colors.white.withValues(alpha: 0.6), size: 14),
+                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
+                  isDense: true,
+                  selectedItemBuilder: (BuildContext context) {
+                    return _availableCoins.map((coin) {
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CoinIconMapper.getCoinIcon(coin['symbol'], size: 12),
+                          const SizedBox(width: 3),
+                          Text(coin['symbol']),
+                        ],
+                      );
+                    }).toList();
+                  },
+                  items: _availableCoins.map((coin) {
+                    return DropdownMenuItem<String>(
+                      value: coin['symbol'],
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CoinIconMapper.getCoinIcon(coin['symbol'], size: 12),
+                          const SizedBox(width: 3),
+                          Text(coin['symbol']),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (String? newValue) {
+                    if (newValue != null) {
+                      setState(() {
+                        _selectedAmountCoin = newValue;
+                      });
+                    }
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Container(
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E1E1E),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _amountController,
+                  onChanged: (value) {
+                    if (value.contains('.')) {
+                      final decimalPart = value.split('.').last;
+                      if (decimalPart.length > 5) {
+                        final trimmedValue = value.substring(0, value.indexOf('.') + 6);
+                        _amountController.value = TextEditingValue(
+                          text: trimmedValue,
+                          selection: TextSelection.collapsed(offset: trimmedValue.length),
+                        );
+                        setState(() {
+                          _amount = double.tryParse(trimmedValue) ?? 0.0;
+                          _sliderValue = _amount > 0 ? (_amount / 1.0).clamp(0.0, 1.0) : 0.0;
+                        });
+                        return;
+                      }
+                    }
+                    setState(() {
+                      _amount = double.tryParse(value) ?? 0.0;
+                      _sliderValue = _amount > 0 ? (_amount / 1.0).clamp(0.0, 1.0) : 0.0;
+                    });
+                  },
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                  decoration: InputDecoration(
+                    border: InputBorder.none,
+                    hintText: '0.00',
+                    hintStyle: const TextStyle(color: Color(0xFF6C7278)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
+                    suffixText: _selectedAmountCoin,
+                    suffixStyle: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                    ),
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+              ),
+              const SizedBox(width: 6),
+              GestureDetector(
+                onTap: () => setState(() => _amount = (_amount - 0.01).clamp(0.0, double.infinity)),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  child: const Text(
+                    '-',
+                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w300),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              GestureDetector(
+                onTap: () => setState(() => _amount += 0.01),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  child: const Text(
+                    '+',
+                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w300),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMarketAmountInfo() {
+    // Calculate funds required
+    final baseAsset = _selectedSymbol.endsWith('USDT')
+        ? _selectedSymbol.substring(0, _selectedSymbol.length - 4)
+        : _selectedSymbol.split('/').first;
+    final isBaseAsset = _selectedAmountCoin == baseAsset;
+    final effectivePrice = _currentPrice;
+
+    double fundsReq = 0.0;
+    String reqUnit = isBaseAsset ? 'USDT' : baseAsset;
+    if (isBaseAsset) {
+      fundsReq = _amount * effectivePrice;
+    } else {
+      fundsReq = effectivePrice > 0 ? (_amount / effectivePrice) : 0.0;
+    }
+
+    // Get available balance
+    double availableVal = 0.0;
+    String availableUnit = '';
+    if (_isBuy) {
+      availableVal = double.tryParse(_balance?['usdt_available']?.toString() ?? '0') ?? 0.0;
+      availableUnit = 'USDT';
+    } else {
+      availableVal = double.tryParse(_balance?['free']?.toString() ?? '0') ?? 0.0;
+      availableUnit = baseAsset;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Funds required row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Funds req.',
+                style: TextStyle(color: Color(0xFF6C7278), fontSize: 12),
+              ),
+              Flexible(
+                child: Text(
+                  '~${fundsReq.toStringAsFixed(4)} $reqUnit',
+                  style: const TextStyle(color: Colors.white, fontSize: 10),
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Available row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Available',
+                style: TextStyle(color: Color(0xFF6C7278), fontSize: 12),
+              ),
+              Flexible(
+                child: Text(
+                  '${availableVal.toStringAsFixed(4)} $availableUnit',
+                  style: const TextStyle(color: Colors.white, fontSize: 10),
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMarketPercentageButton(String label, double percentage) {
+    final baseAsset = _selectedSymbol.endsWith('USDT')
+        ? _selectedSymbol.substring(0, _selectedSymbol.length - 4)
+        : _selectedSymbol.split('/').first;
+    final isBaseAsset = _selectedAmountCoin == baseAsset;
+    final bool isActive = _sliderValue == percentage;
+    final activeColor = _isBuy ? const Color(0xFF84BD00) : Colors.red;
+
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _sliderValue = percentage;
+          print('Market% tap: label=$label, percentage=$percentage, isBaseAsset=$isBaseAsset');
+          print('Market% tap: _currentPrice=$_currentPrice, _balance=$_balance');
+          if (_isBuy) {
+            if (isBaseAsset) {
+              // BTC selected - calculate BTC amount from available USDT
+              final availableUsdt = double.tryParse(_balance?['usdt_available']?.toString() ?? '0') ?? 0.0;
+              final usdtToSpend = availableUsdt * percentage;
+              print('Market% tap: availableUsdt=$availableUsdt, usdtToSpend=$usdtToSpend');
+              // Show actual calculated value (proportional to percentage)
+              _amount = _currentPrice > 0 ? (usdtToSpend / _currentPrice) : 0.0;
+              print('Market% tap: calculated _amount=$_amount');
+            } else {
+              // USDT selected - show USDT amount directly
+              final availableUsdt = double.tryParse(_balance?['usdt_available']?.toString() ?? '0') ?? 0.0;
+              _amount = availableUsdt * percentage;
+            }
+          } else {
+            // Sell - always show percentage of available base asset (BTC)
+            final availableBase = double.tryParse(_balance?['free']?.toString() ?? '0') ?? 0.0;
+            _amount = availableBase * percentage;
+          }
+          _amountController.text = _amount.toStringAsFixed(isBaseAsset ? 5 : 2);
+        });
+      },
+      child: Text(
+        label,
+        style: TextStyle(
+          color: isActive ? activeColor : const Color(0xFF6C7278),
+          fontSize: 10,
+          fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMarketPercentageButtons() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        _buildMarketPercentageButton('10%', 0.1),
+        _buildMarketPercentageButton('25%', 0.25),
+        _buildMarketPercentageButton('50%', 0.5),
+        _buildMarketPercentageButton('75%', 0.75),
+        _buildMarketPercentageButton('100%', 1.0),
+      ],
+    );
+  }
+
   Widget _buildPercentageButtons() {
     final percentages = [0.1, 0.25, 0.5, 0.75, 1.0];
     final labels = ['10%', '25%', '50%', '75%', '100%'];
@@ -1803,36 +2319,46 @@ class _SpotScreenState extends State<SpotScreen> {
                 onTap: () {
                   setState(() {
                     _sliderValue = percentage;
+                    
+                    final baseAsset = _selectedSymbol.endsWith('USDT') 
+                        ? _selectedSymbol.substring(0, _selectedSymbol.length - 4) 
+                        : _selectedSymbol.split('/').first;
+                    
+                    final isBaseAsset = _selectedAmountCoin == baseAsset;
+                    
+                    // Get available balances
+                    final availableUsdt = double.tryParse(_balance?['usdt_available']?.toString() ?? '0') ?? 0.0;
+                    final availableBase = double.tryParse(_balance?['free']?.toString() ?? '0') ?? 0.0;
+                    
+                    // Slider percentage applied to relevant balance
                     if (_isBuy) {
-                      final availableUsdt = double.tryParse(_balance?['usdt_available']?.toString() ?? '10000') ?? 10000;
-                      // 10% fee buffer for 100% to ensure sufficient balance
-                      final feeBuffer = percentage >= 1.0 ? 0.90 : 1.0;
-                      // If USDT selected, show USDT amount directly; else convert to BTC quantity
-                      if (_selectedAmountCoin == 'USDT') {
-                        _amount = availableUsdt * percentage * feeBuffer;
+                      // Buying: We spend USDT
+                      if (isBaseAsset) {
+                        // Input is BTC, calculate based on USDT available
+                        // e.g., 10% of 100 USDT = 10 USDT worth of BTC
+                        final usdtToSpend = availableUsdt * percentage;
+                        _amount = _currentPrice > 0 ? (usdtToSpend / _currentPrice) : 0.0;
                       } else {
-                        _amount = (availableUsdt * percentage * feeBuffer) / _currentPrice;
+                        // Input is USDT, directly use USDT balance
+                        // e.g., 10% of 100 USDT = 10 USDT
+                        _amount = availableUsdt * percentage;
                       }
                     } else {
-                      final availableBtc = double.tryParse(_balance?['free']?.toString() ?? '0.1') ?? 0.1;
-                      // 10% fee buffer for 100% to ensure sufficient balance
-                      final feeBuffer = percentage >= 1.0 ? 0.90 : 1.0;
-                      final btcValue = availableBtc * _currentPrice;
-                      // If USDT selected, show USDT value; else show BTC quantity
-                      if (_selectedAmountCoin == 'USDT') {
-                        _amount = btcValue * percentage * feeBuffer;
+                      // Selling: We spend BTC
+                      if (isBaseAsset) {
+                        // Input is BTC, directly use BTC balance
+                        // e.g., 10% of 0.5 BTC = 0.05 BTC
+                        _amount = availableBase * percentage;
                       } else {
-                        _amount = (btcValue * percentage * feeBuffer) / _currentPrice;
+                        // Input is USDT, calculate based on BTC available
+                        // e.g., 10% of 0.5 BTC = 0.05 BTC worth of USDT
+                        final btcToSell = availableBase * percentage;
+                        _amount = btcToSell * _currentPrice;
                       }
                     }
-                    // Ensure minimum order quantity for BTCUSDT (0.001 BTC) only when BTC selected
-                    if (_selectedAmountCoin == 'BTC') {
-                      const minQty = 0.001;
-                      if (_amount < minQty && _selectedSymbol == 'BTCUSDT') {
-                        _amount = minQty;
-                      }
-                    }
-                    _amountController.text = _amount.toStringAsFixed(_selectedAmountCoin == 'USDT' ? 2 : 8);
+
+                    // Push calculated amount to UI
+                    _amountController.text = _amount.toStringAsFixed(isBaseAsset ? 5 : 2);
                   });
                 },
                 child: Text(
@@ -1877,44 +2403,71 @@ class _SpotScreenState extends State<SpotScreen> {
   }
 
   Widget _buildTotalInfo() {
-    // Calculate funds required based on selected coin type
-    final fundsRequired = _orderType == 'Limit'
-        ? (_selectedAmountCoin == 'USDT' ? _amount : _currentPrice * _amount)
-        : 0.0;
-
-    // Calculate total for Market orders
-    final total = _selectedAmountCoin == 'USDT' ? _amount : _currentPrice * _amount;
+    // Calculate effective price for quantity calculation
+    final effectivePrice = _orderType == 'Market' ? _currentPrice : 
+                          (double.tryParse(_priceController.text) ?? _currentPrice);
     
-    // Get available balance - show actual value or default
-    String availableBalanceText;
-    if (_isBuy) {
-      final usdtBalance = _balance?['usdt_available'] ?? 0.0;
-      availableBalanceText = '${usdtBalance.toStringAsFixed(2)} USDT';
+    final baseAsset = _selectedSymbol.endsWith('USDT') 
+        ? _selectedSymbol.substring(0, _selectedSymbol.length - 4) 
+        : _selectedSymbol.split('/').first;
+        
+    final isBaseAsset = _selectedAmountCoin == baseAsset;
+
+    // Calculate funds req (what you'll spend or receive in opposite currency)
+    // If amount is BTC → show USDT cost/value
+    // If amount is USDT → show BTC you'll get
+    double fundsReq = 0.0;
+    String reqUnit = isBaseAsset ? 'USDT' : baseAsset;
+    
+    if (isBaseAsset) {
+      // Amount is in BTC, show USDT cost
+      fundsReq = _amount * effectivePrice;
+      reqUnit = 'USDT';
     } else {
-      final btcBalance = _balance?['free'] ?? 0.0;
-      availableBalanceText = '${btcBalance.toStringAsFixed(8)} BTC';
+      // Amount is in USDT, show BTC you'll receive
+      fundsReq = effectivePrice > 0 ? (_amount / effectivePrice) : 0.0;
+      reqUnit = baseAsset;
     }
+    
+    // Get available balance from state
+    double availableVal = 0.0;
+    String availableUnit = '';
+    
+    if (_isBuy) {
+      availableVal = double.tryParse(_balance?['usdt_available']?.toString() ?? '0') ?? 0.0;
+      availableUnit = 'USDT';
+    } else {
+      availableVal = double.tryParse(_balance?['free']?.toString() ?? '0') ?? 0.0;
+      availableUnit = baseAsset;
+    }
+    
+    // Calculate final stats for display
+    final total = _isBuy ? (_selectedAmountCoin == 'USDT' ? _amount : _amount * effectivePrice) : 
+                          (_selectedAmountCoin == 'USDT' ? _amount : _amount * effectivePrice);
+    
+    final minQty = _getMinQty(_selectedSymbol);
+    final currentQty = isBaseAsset ? _amount : (_amount / effectivePrice);
+    final isBelowMin = _amount > 0 && currentQty < minQty;
     
     return Column(
       children: [
-        if (_orderType == 'Limit')
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Funds req.',
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 10),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Funds receive',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 10),
+            ),
+            Flexible(
+              child: Text(
+                '~${fundsReq.toStringAsFixed(isBaseAsset ? 2 : 4)} $reqUnit',
+                style: const TextStyle(color: Colors.white, fontSize: 10),
+                overflow: TextOverflow.ellipsis,
               ),
-              Flexible(
-                child: Text(
-                  '~${fundsRequired.toStringAsFixed(6)} USDT',
-                  style: const TextStyle(color: Colors.white, fontSize: 10),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-        if (_orderType == 'Limit') const SizedBox(height: 4),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -1924,7 +2477,7 @@ class _SpotScreenState extends State<SpotScreen> {
             ),
             Flexible(
               child: Text(
-                availableBalanceText,
+                '${availableVal.toStringAsFixed(availableUnit == 'USDT' ? 2 : 8)} $availableUnit',
                 style: const TextStyle(color: Colors.white, fontSize: 10),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -1957,6 +2510,25 @@ class _SpotScreenState extends State<SpotScreen> {
     // Check if user needs verification (mock check)
     final needsVerification = false; // Change this based on your verification logic
     
+    print('_buildBuySellButton: _isLoading=$_isLoading, _amount=$_amount, _orderType=$_orderType');
+
+    // Calculate if quantity is below minimum (only check for Limit orders)
+    bool isBelowMin = false;
+    if (_amount > 0 && _orderType == 'Limit') {
+      final baseAsset = _selectedSymbol.endsWith('USDT')
+          ? _selectedSymbol.substring(0, _selectedSymbol.length - 4)
+          : _selectedSymbol.split('/').first;
+      final isBaseAsset = _selectedAmountCoin == baseAsset;
+      final effectivePrice = double.tryParse(_priceController.text) ?? _currentPrice;
+      print('Button check: _orderType=$_orderType, effectivePrice=$effectivePrice');
+      if (effectivePrice > 0) {
+        final minQty = _getMinQty(_selectedSymbol);
+        final currentQty = isBaseAsset ? _amount : (_amount / effectivePrice);
+        isBelowMin = currentQty < minQty;
+        print('Button check: minQty=$minQty, currentQty=$currentQty, isBelowMin=$isBelowMin');
+      }
+    }
+
     if (needsVerification) {
       return Container(
         width: double.infinity,
@@ -1977,15 +2549,29 @@ class _SpotScreenState extends State<SpotScreen> {
         ),
       );
     }
-    
+
     return GestureDetector(
-      onTap: _isLoading ? null : _placeOrder,
+      onTap: (_isLoading || isBelowMin) ? null : () {
+        print('Buy button tapped: _isLoading=$_isLoading, isBelowMin=$isBelowMin, _amount=$_amount');
+        _placeOrder();
+      },
       child: Container(
         width: double.infinity,
         height: 48,
         decoration: BoxDecoration(
-          color: _isBuy ? const Color(0xFF84BD00) : Colors.red,
-          borderRadius: BorderRadius.circular(8),
+          gradient: const LinearGradient(
+            colors: [Color(0xFF84BD00), Color(0xFF6B9B00)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF84BD00).withOpacity(0.4),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
         child: Center(
           child: _isLoading
@@ -1997,11 +2583,11 @@ class _SpotScreenState extends State<SpotScreen> {
                     valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                   ),
                 )
-              : Text(
-                  '${_isBuy ? 'Buy' : 'Sell'} ${_selectedSymbol.replaceAll('USDT', '')}',
-                  style: const TextStyle(
+              : const Text(
+                  'Place Spot Order',
+                  style: TextStyle(
                     color: Colors.white,
-                    fontSize: 14,
+                    fontSize: 16,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -2023,6 +2609,78 @@ class _SpotScreenState extends State<SpotScreen> {
       return double.tryParse(_sellOrders.first['price'].toString());
     }
     return null;
+  }
+
+  double _getMinQty(String symbol) {
+    try {
+      final symbolData = _symbols.firstWhere(
+        (s) => s['symbol'] == symbol,
+        orElse: () => <String, dynamic>{},
+      );
+      
+      if (symbolData.isEmpty) {
+        // Hardcoded fallbacks for common pairs if symbols aren't loaded
+        if (symbol == 'BTCUSDT' || symbol == 'BTC/USDT') return 0.00001;
+        if (symbol == 'ETHUSDT' || symbol == 'ETH/USDT') return 0.0001;
+        return 0.00001;
+      }
+
+      if (symbolData.containsKey('min_qty')) {
+        return double.tryParse(symbolData['min_qty'].toString()) ?? 0.00001;
+      }
+      
+      if (symbolData.containsKey('filters')) {
+        final filters = symbolData['filters'] as List?;
+        final lotSize = filters?.firstWhere(
+          (f) => f['filterType'] == 'LOT_SIZE',
+          orElse: () => null,
+        );
+        if (lotSize != null) {
+          return double.tryParse(lotSize['minQty'].toString()) ?? 0.00001;
+        }
+      }
+    } catch (_) {}
+    
+    // Default fallback based on common pair rules
+    if (symbol.contains('BTC')) return 0.00001;
+    if (symbol.contains('ETH')) return 0.0001;
+    return 0.00001;
+  }
+
+  double _getMinNotional(String symbol) {
+    // Most exchanges have a minimum 5 or 10 USDT rule
+    return 5.0;
+  }
+
+  // Show order placed message with cancel action
+  void _showOrderPlacedWithCancel(String orderId, String symbol, double price, String side) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Order placed: $orderId'),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: 'CANCEL',
+          textColor: Colors.white,
+          onPressed: () async {
+            final result = await SpotService.cancelOrder(
+              orderId: orderId,
+              symbol: symbol,
+              price: price,
+              side: side,
+            );
+            // Handle both bool and String types for success
+            final cancelSuccess = result['success'] is bool ? result['success'] : result['success']?.toString() == 'true';
+            if (cancelSuccess) {
+              _showMessage('Order cancelled successfully!');
+              _loadOpenOrders();
+            } else {
+              _showMessage(result['error']?.toString() ?? 'Failed to cancel order', isError: true);
+            }
+          },
+        ),
+      ),
+    );
   }
 
   // Show price selector dialog

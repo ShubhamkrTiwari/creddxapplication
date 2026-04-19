@@ -32,13 +32,11 @@ class _ConversionScreenState extends State<ConversionScreen> {
   bool _isLoadingRate = false;
   StreamSubscription? _balanceSubscription;
   
-  // Base URL for wallet APIs
-  static const String _baseUrl = 'http://65.0.196.122:8085';
+  // Base URL for wallet APIs (use same as WalletService)
+  static const String _baseUrl = 'https://api11.hathmetech.com/api';
   // Conversion API endpoints
   static const String _inrToUsdtApiUrl = '$_baseUrl/wallet/v1/wallet/inr/convert/inr-to-usdt';
   static const String _usdtToInrApiUrl = '$_baseUrl/wallet/v1/wallet/inr/convert/usdt-to-inr';
-  // Balance API endpoint
-  static const String _balanceApiUrl = '$_baseUrl/wallet/v1/wallet/all-wallet-balance';
   
   @override
   void initState() {
@@ -104,28 +102,37 @@ class _ConversionScreenState extends State<ConversionScreen> {
         debugPrint('Data: $data');
         
         setState(() {
-          // Try different balance field names for INR
-          _inrBalance = double.tryParse(
+          // Try different balance field names for INR from main wallet
+          double mainInr = 0.0;
+          if (data['mainBalance'] is Map) {
+            mainInr = double.tryParse(data['mainBalance']['INR']?.toString() ?? '0') ?? 0.0;
+          }
+          
+          _inrBalance = mainInr > 0 ? mainInr : (double.tryParse(
             data['inr_balance']?.toString() ??
             data['inr']?.toString() ??
             data['inr_available']?.toString() ??
             data['main_inr_balance']?.toString() ??
             data['total_inr']?.toString() ??
             '0'
-          ) ?? 0;
+          ) ?? 0);
           
           // Try different balance field names for USDT
-          _usdtBalance = double.tryParse(
+          double mainUsdt = 0.0;
+          if (data['mainBalance'] is Map) {
+            mainUsdt = double.tryParse(data['mainBalance']['USDT']?.toString() ?? '0') ?? 0.0;
+          }
+          
+          _usdtBalance = mainUsdt > 0 ? mainUsdt : (double.tryParse(
             data['usdt_balance']?.toString() ??
             data['usdt']?.toString() ??
             data['usdt_available']?.toString() ??
             data['main_usdt_balance']?.toString() ??
             data['total_usdt']?.toString() ??
             '0'
-          ) ?? 0;
-          
+          ) ?? 0);
+
           // Calculate total USDT from all wallets if available
-          double mainUsdt = double.tryParse(data['main_usdt']?.toString() ?? '0') ?? 0;
           double spotUsdt = double.tryParse(data['spot_usdt']?.toString() ?? '0') ?? 0;
           double p2pUsdt = double.tryParse(data['p2p_usdt']?.toString() ?? '0') ?? 0;
           double fundingUsdt = double.tryParse(data['funding_usdt']?.toString() ?? '0') ?? 0;
@@ -206,15 +213,15 @@ class _ConversionScreenState extends State<ConversionScreen> {
   // Fetch local conversion rates as fallback
   Future<void> _fetchLocalConversionRates() async {
     try {
-      final token = await UserService().getToken();
-      
+      final token = await AuthService.getToken();
+
       // Fetch INR to USDT rate
       final inrResponse = await http.get(
         Uri.parse(_inrToUsdtApiUrl),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          if (token != null) 'Authorization': 'Bearer $token',
+          if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
         },
       ).timeout(const Duration(seconds: 10));
       
@@ -227,7 +234,7 @@ class _ConversionScreenState extends State<ConversionScreen> {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          if (token != null) 'Authorization': 'Bearer $token',
+          if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
         },
       ).timeout(const Duration(seconds: 10));
       
@@ -591,7 +598,7 @@ class _ConversionScreenState extends State<ConversionScreen> {
                 ),
               ),
               Text(
-                'Available: $available',
+                available,
                 style: const TextStyle(
                   color: Colors.white54,
                   fontSize: 12,

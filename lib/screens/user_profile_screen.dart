@@ -8,10 +8,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/socket_service.dart';
 import '../services/spot_service.dart';
 import '../services/wallet_service.dart';
+import 'invite_friends_screen.dart';
 import 'login_screen.dart';
 import 'update_profile_screen.dart';
 import 'referral_hub_screen.dart';
+import 'feedback_screen.dart';
 import 'kyc_digilocker_instruction_screen.dart';
+import 'kyc_professional_info_screen.dart';
 import 'withdraw_screen.dart';
 import 'deposit_screen.dart';
 import 'inr_deposit_screen.dart';
@@ -90,8 +93,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     _balanceSubscription = SocketService.balanceStream.listen((data) {
       if (data['type'] == 'balance_update' && data['assets'] != null) {
         debugPrint('UserProfileScreen: Balance update received via SocketService');
-        final assets = data['assets'] as List;
-        
+        final assets = data['assets'] as List<dynamic>?;
+        if (assets == null) return;
+
         // Map 'asset' to 'coin' to match UserProfileScreen expectations
         final mappedAssets = assets.map((a) => {
           'coin': a['asset'],
@@ -591,6 +595,16 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   _buildKYCTile(),
                   const SizedBox(height: 24),
                   _buildReferralHubTile(),
+                  const SizedBox(height: 24),
+                  _buildPartnerProgramTile(),
+                  const SizedBox(height: 24),
+                  _buildInviteFriendsTile(),
+                  const SizedBox(height: 24),
+                  _buildSupportTile(),
+                  const SizedBox(height: 24),
+                  _buildSettingsTile(),
+                  const SizedBox(height: 24),
+                  _buildLogoutTile(),
                 ],
               ),
             ),
@@ -622,8 +636,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       onTap: () async {
         if (_userService.isKYCNotStarted() || _userService.isKYCRejected()) {
           final result = await Navigator.push(
-            context, 
-            MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen())
+            context,
+            MaterialPageRoute(builder: (context) => const KYCProfessionalInfoScreen())
           );
           // KYC flow will handle status updates automatically
           if (mounted) {
@@ -741,6 +755,130 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             const Expanded(
               child: Text(
                 'Referral Hub',
+                style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 14),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPartnerProgramTile() {
+    return GestureDetector(
+      onTap: () {
+        // TODO: Navigate to Partner Program screen
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Partner Program coming soon!')),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1C1C1E),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.business_center, color: Color(0xFF84BD00), size: 22),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Partner Program',
+                style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 14),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInviteFriendsTile() {
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const InviteFriendsScreen()),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1C1C1E),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.person_add, color: Color(0xFF84BD00), size: 22),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Invite Friends',
+                style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 14),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSupportTile() {
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const FeedbackScreen()),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1C1C1E),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.headset_mic, color: Color(0xFF84BD00), size: 22),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Support',
+                style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 14),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSettingsTile() {
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const UpdateProfileScreen()),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1C1C1E),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.settings, color: Color(0xFF84BD00), size: 22),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Settings',
                 style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
               ),
             ),
@@ -899,8 +1037,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
       // Try flat format first (like wallet screen)
       if (data['mainBalance'] is Map) {
-        final mainBalance = data['mainBalance'] as Map;
-        if (mainBalance['INR'] != null) {
+        final mainBalance = data['mainBalance'] as Map<dynamic, dynamic>?;
+        if (mainBalance != null && mainBalance['INR'] != null) {
           total = double.tryParse(mainBalance['INR'].toString()) ?? 0.0;
           debugPrint('Found INR balance from flat format: $total');
         }
@@ -1985,5 +2123,31 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         );
       }
     }
+  }
+
+  Widget _buildLogoutTile() {
+    return GestureDetector(
+      onTap: () => _showLogoutConfirmDialog(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1C1C1E),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.logout, color: Color(0xFFFF3B30), size: 22),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Logout',
+                style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 14),
+          ],
+        ),
+      ),
+    );
   }
 }

@@ -1,254 +1,155 @@
 import 'dart:convert';
 import 'dart:async';
+import 'dart:io';
 import 'package:http/http.dart' as http;
-import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'auth_service.dart';
 
+/// A professional-grade service for Spot Trading operations.
+/// Handles order placement, market data, and account balances via the :9000 REST API.
 class SpotService {
-  static const String _baseUrl = 'https://api4.creddx.com';
-  static const String _newApiUrl = 'https://api4.creddx.com';
+  static const String _baseUrl = 'http://api4.creddx.com:9000';
   
-  // Persistent order data across screen navigation
+  // Persistence for UI state (used by SpotScreen to maintain lists across rebuilds)
   static List<Map<String, dynamic>> userBuyOrders = [];
   static List<Map<String, dynamic>> userSellOrders = [];
   static List<Map<String, dynamic>> userTrades = [];
   static String currentSymbol = 'BTCUSDT';
 
-  // Get ticker data (market summary)
+  /// Fetches a standard set of headers for authenticated requests.
+  static Future<Map<String, String>> _getHeaders({String? userId}) async {
+    final token = await AuthService.getToken();
+    return {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+      if (userId != null) 'X-User-Id': userId,
+    };
+  }
+
+  // --- Market Data Endpoints ---
+
+  /// Get ticker data (price, 24h change, etc.) for a specific symbol.
   static Future<Map<String, dynamic>> getTicker(String symbol) async {
     try {
       final response = await http.get(
         Uri.parse('$_baseUrl/ticker/$symbol'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 30));
-
-      print('Ticker Response: ${response.body}');
+        headers: await _getHeaders(),
+      ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['success'] == true) {
-          return {
-            'success': true,
-            'data': responseData['data'],
-            'error': null
-          };
-        } else {
-          return {
-            'success': false,
-            'data': null,
-            'error': responseData['error'] ?? 'Failed to get ticker data'
-          };
-        }
-      } else {
-        final errorData = json.decode(response.body);
-        return {
-          'success': false,
-          'data': null,
-          'error': errorData['error'] ?? 'Failed to get ticker data'
-        };
+        final data = json.decode(response.body);
+        return {'success': true, 'data': data['data'] ?? data};
       }
+      return {'success': false, 'error': 'Failed to load ticker: ${response.statusCode}'};
     } catch (e) {
-      return {
-        'success': false,
-        'data': null,
-        'error': 'Error fetching ticker: ${e.toString()}'
-      };
+      return {'success': false, 'error': e.toString()};
     }
   }
 
-  // Get order book (L2 orderbook snapshot)
+  /// Get L2 Order Book snapshot for a symbol.
   static Future<Map<String, dynamic>> getOrderBook(String symbol) async {
     try {
       final response = await http.get(
-        Uri.parse('https://api4.creddx.com/orderbook?symbol=$symbol'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 30));
-
-      print('OrderBook Response from new API: ${response.body}');
+        Uri.parse('https://api11.hathmetech.com/orderbook?symbol=$symbol'),
+        headers: await _getHeaders(),
+      ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['success'] == true) {
-          return {
-            'success': true,
-            'data': responseData['data'],
-            'error': null
-          };
-        } else {
-          return {
-            'success': false,
-            'data': null,
-            'error': responseData['error'] ?? 'Failed to get order book'
-          };
-        }
-      } else {
-        final errorData = json.decode(response.body);
-        return {
-          'success': false,
-          'data': null,
-          'error': errorData['error'] ?? 'Failed to get order book'
-        };
+        final data = json.decode(response.body);
+        return {'success': true, 'data': data['data'] ?? data};
       }
+      return {'success': false, 'error': 'Order book unavailable'};
     } catch (e) {
-      print('Error fetching order book from new API: $e');
-      return {
-        'success': false,
-        'data': null,
-        'error': 'Error fetching order book: ${e.toString()}'
-      };
+      return {'success': false, 'error': e.toString()};
     }
   }
 
-  // Place spot order
+  /// Get all tradeable symbols and their properties.
+  static Future<Map<String, dynamic>> getSymbols() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/symbols'),
+        headers: await _getHeaders(),
+      ).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return {'success': true, 'data': data['data'] ?? data};
+      }
+      return {'success': false, 'error': 'Failed to fetch symbols'};
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
+  /// Get recent market trades for a symbol.
+  static Future<Map<String, dynamic>> getRecentTrades(String symbol) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/trades/$symbol'),
+        headers: await _getHeaders(),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return {'success': true, 'data': data['data'] ?? data};
+      }
+      return {'success': false, 'error': 'Failed to fetch trades'};
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
+  // --- Trading Endpoints ---
+
+  /// Places a new spot order (Limit or Market).
   static Future<Map<String, dynamic>> placeOrder({
     required String symbol,
     required String side, // 'Buy' or 'Sell'
     required String orderType, // 'Limit' or 'Market'
     required double qty,
-    double price = 0.0, // Use 0 for market orders
-    bool reduceOnly = false,
+    double price = 0.0,
   }) async {
     try {
-      final token = await AuthService.getToken();
-      if (token == null) {
-        return {
-          'success': false,
-          'data': null,
-          'error': 'Authentication required'
-        };
-      }
-
-      // Get user_id from token or storage (assuming it's stored during login)
       final userId = await _getUserId();
-
-      final requestBody = jsonEncode({
+      final Map<String, dynamic> requestBody = {
         'user_id': userId,
         'symbol': symbol,
         'side': side,
-        'price': price,
         'qty': qty,
         'order_type': orderType,
-        'reduce_only': reduceOnly,
-      });
-
-      print('Place Order Request: $requestBody');
-      print('Token: $token');
-      print('Authorization Header: Bearer $token');
+        'reduce_only': false,
+      };
+      
+      // Add price field for all orders (0.0 for Market orders)
+      requestBody['price'] = orderType == 'Market' ? 0.0 : price;
+      
+      final body = jsonEncode(requestBody);
+      print('SpotService.placeOrder: requestBody=$requestBody');
+      print('SpotService.placeOrder: body=$body');
 
       final response = await http.post(
         Uri.parse('$_baseUrl/order/new'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: requestBody,
+        headers: await _getHeaders(userId: userId),
+        body: body,
       ).timeout(const Duration(seconds: 30));
 
-      print('Place Order Response: ${response.body}');
-
-      if (response.statusCode == 201 || response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['success'] == true) {
-          return {
-            'success': true,
-            'data': responseData['data'],
-            'error': null
-          };
-        } else {
-          return {
-            'success': false,
-            'data': null,
-            'error': responseData['error'] ?? 'Failed to place order'
-          };
+      final data = json.decode(response.body);
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        // Handle both bool and String types for success field
+        final success = data['success'] is bool ? data['success'] : data['success']?.toString() == 'true';
+        if (success) {
+          return {'success': true, 'data': data['data']};
         }
-      } else {
-        final errorData = json.decode(response.body);
-        return {
-          'success': false,
-          'data': null,
-          'error': errorData['error'] ?? 'Failed to place order'
-        };
       }
+      return {'success': false, 'error': data['message']?.toString() ?? data['error']?.toString() ?? 'Order placement failed'};
     } catch (e) {
-      return {
-        'success': false,
-        'data': null,
-        'error': 'Error placing order: ${e.toString()}'
-      };
+      return {'success': false, 'error': 'Network error: $e'};
     }
   }
 
-  // Get open orders
-  static Future<Map<String, dynamic>> getOpenOrders({String? symbol}) async {
-    try {
-      final token = await AuthService.getToken();
-      if (token == null) {
-        return {
-          'success': false,
-          'data': null,
-          'error': 'Authentication required'
-        };
-      }
-
-      final userId = await _getUserId();
-
-      String url = '$_baseUrl/orders/open/$userId';
-      if (symbol != null) {
-        url += '?symbol=$symbol';
-      }
-
-      final response = await http.get(
-        Uri.parse(url),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(const Duration(seconds: 30));
-
-      print('Open Orders Response: ${response.body}');
-
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['success'] == true) {
-          return {
-            'success': true,
-            'data': responseData['data'],
-            'error': null
-          };
-        } else {
-          return {
-            'success': false,
-            'data': null,
-            'error': responseData['error'] ?? 'Failed to get open orders'
-          };
-        }
-      } else {
-        final errorData = json.decode(response.body);
-        return {
-          'success': false,
-          'data': null,
-          'error': errorData['error'] ?? 'Failed to get open orders'
-        };
-      }
-    } catch (e) {
-      return {
-        'success': false,
-        'data': null,
-        'error': 'Error fetching open orders: ${e.toString()}'
-      };
-    }
-  }
-
-  // Cancel order
+  /// Cancels an existing open order.
   static Future<Map<String, dynamic>> cancelOrder({
     required String orderId,
     required String symbol,
@@ -256,19 +157,8 @@ class SpotService {
     required String side,
   }) async {
     try {
-      final token = await AuthService.getToken();
-      if (token == null) {
-        return {
-          'success': false,
-          'data': null,
-          'error': 'Authentication required'
-        };
-      }
-
-      // Get user_id from storage
       final userId = await _getUserId();
-
-      final requestBody = jsonEncode({
+      final body = jsonEncode({
         'user_id': userId,
         'symbol': symbol,
         'order_id': int.tryParse(orderId) ?? 0,
@@ -276,693 +166,193 @@ class SpotService {
         'side': side,
       });
 
-      print('Cancel Order Request: $requestBody');
-
       final response = await http.post(
         Uri.parse('$_baseUrl/order/cancel'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: requestBody,
+        headers: await _getHeaders(userId: userId),
+        body: body,
       ).timeout(const Duration(seconds: 30));
 
-      print('Cancel Order Response: ${response.body}');
-
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['success'] == true) {
-          return {
-            'success': true,
-            'data': responseData['data'],
-            'error': null
-          };
-        } else {
-          return {
-            'success': false,
-            'data': null,
-            'error': responseData['error'] ?? 'Failed to cancel order'
-          };
-        }
-      } else {
-        final errorData = json.decode(response.body);
-        return {
-          'success': false,
-          'data': null,
-          'error': errorData['error'] ?? 'Failed to cancel order'
-        };
+      final data = json.decode(response.body);
+      if (response.statusCode == 200 && data['success'] == true) {
+        return {'success': true, 'data': data['data']};
       }
+      return {'success': false, 'error': data['error'] ?? 'Cancellation failed'};
     } catch (e) {
-      return {
-        'success': false,
-        'data': null,
-        'error': 'Error cancelling order: ${e.toString()}'
-      };
+      return {'success': false, 'error': e.toString()};
     }
   }
 
-  // Get user balance
-  static Future<Map<String, dynamic>> getBalance() async {
+  // --- Account Endpoints ---
+
+  /// Get user balance for all assets.
+  static Future<Map<String, dynamic>> getBalance({bool forceRefresh = false}) async {
     try {
-      final token = await AuthService.getToken();
-      if (token == null) {
-        return {
-          'success': false,
-          'data': null,
-          'error': 'Authentication required'
-        };
-      }
-
-      // Get user_id from storage
       final userId = await _getUserId();
-
+      // Add cache-busting timestamp to ensure fresh data
+      final cacheBuster = forceRefresh ? '&t=${DateTime.now().millisecondsSinceEpoch}' : '';
       final response = await http.get(
-        Uri.parse('$_baseUrl/balance/$userId'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(const Duration(seconds: 30));
-
-      print('RAW SPOT BALANCE PAYLOAD (9000): ${response.body}');
+        Uri.parse('$_baseUrl/balance/$userId?_=${DateTime.now().millisecondsSinceEpoch}$cacheBuster'),
+        headers: await _getHeaders(userId: userId),
+      ).timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['success'] == true) {
-          // Parse assets array from API response
-          final data = responseData['data'];
-          final assets = data['assets'] as List<dynamic>? ?? [];
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          // Process assets into a more usable map for the UI
+          final assetsList = data['data']?['assets'] as List? ?? [];
+          final Map<String, dynamic> formattedAssets = {};
           
-          // Extract USDT and BTC balances from assets array
-          double usdtAvailable = 0.0;
-          double usdtLocked = 0.0;
-          double usdtFree = 0.0;
-          double btcAvailable = 0.0;
-          double btcLocked = 0.0;
-          double btcFree = 0.0;
-          
-          for (final asset in assets) {
-            final assetName = asset['asset']?.toString() ?? '';
-            if (assetName == 'USDT') {
-              usdtAvailable = double.tryParse(asset['available']?.toString() ?? '0') ?? 0.0;
-              usdtLocked = double.tryParse(asset['locked']?.toString() ?? '0') ?? 0.0;
-              usdtFree = double.tryParse(asset['free']?.toString() ?? '0') ?? 0.0;
-            } else if (assetName == 'BTC') {
-              btcAvailable = double.tryParse(asset['available']?.toString() ?? '0') ?? 0.0;
-              btcLocked = double.tryParse(asset['locked']?.toString() ?? '0') ?? 0.0;
-              btcFree = double.tryParse(asset['free']?.toString() ?? '0') ?? 0.0;
-            }
+          for (var asset in assetsList) {
+            final name = asset['asset']?.toString().toUpperCase() ?? '';
+            formattedAssets[name] = {
+              'available': double.tryParse(asset['available']?.toString() ?? '0') ?? 0.0,
+              'locked': double.tryParse(asset['locked']?.toString() ?? '0') ?? 0.0,
+              'free': double.tryParse(asset['free']?.toString() ?? '0') ?? 0.0,
+            };
           }
-          
-          // Return flat structure for UI compatibility
-          final parsedData = {
-            'user_id': data['user_id'] ?? userId,
-            'usdt_available': usdtAvailable,
-            'usdt_locked': usdtLocked,
-            'usdt_free': usdtFree,
-            'btc_available': btcAvailable,
-            'btc_locked': btcLocked,
-            'btc_free': btcFree,
-            'free': btcFree, // For sell orders (BTC free)
-            'assets': assets, // Keep original for reference
-          };
-          
-          print('Parsed Balance: USDT=$usdtAvailable, BTC=$btcFree');
-          
+
+          // Compatibility fields for existing UI components
+          final usdt = formattedAssets['USDT'] ?? {'available': 0.0, 'locked': 0.0, 'free': 0.0};
+          final btc = formattedAssets['BTC'] ?? {'available': 0.0, 'locked': 0.0, 'free': 0.0};
+
           return {
             'success': true,
-            'data': parsedData,
-            'error': null
-          };
-        } else {
-          return {
-            'success': false,
-            'data': null,
-            'error': responseData['error'] ?? 'Failed to get balance'
+            'data': {
+              'user_id': userId,
+              'assets': formattedAssets,
+              'raw_assets': assetsList,
+              // Legacy support fields
+              'usdt_available': usdt['available'],
+              'usdt_locked': usdt['locked'],
+              'free': btc['available'],
+              'btc_locked': btc['locked'],
+            }
           };
         }
-      } else {
-        final errorData = json.decode(response.body);
-        return {
-          'success': false,
-          'data': null,
-          'error': errorData['error'] ?? 'Failed to get balance'
-        };
       }
+      return {'success': false, 'error': 'Failed to load balance'};
     } catch (e) {
-      return {
-        'success': false,
-        'data': null,
-        'error': 'Error fetching balance: ${e.toString()}'
-      };
+      return {'success': false, 'error': e.toString()};
     }
   }
 
-  // Get user positions
-  static Future<Map<String, dynamic>> getPositions() async {
+  /// Get all currently open orders for the user.
+  static Future<Map<String, dynamic>> getOpenOrders({String? symbol}) async {
     try {
-      final token = await AuthService.getToken();
-      if (token == null) {
-        return {
-          'success': false,
-          'data': null,
-          'error': 'Authentication required'
-        };
-      }
-
       final userId = await _getUserId();
+      String url = '$_baseUrl/orders/open/$userId';
+      if (symbol != null) url += '?symbol=$symbol';
 
       final response = await http.get(
-        Uri.parse('$_baseUrl/positions/$userId'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(const Duration(seconds: 30));
-
-      print('Positions Response: ${response.body}');
+        Uri.parse(url),
+        headers: await _getHeaders(userId: userId),
+      ).timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['success'] == true) {
-          return {
-            'success': true,
-            'data': responseData['data'],
-            'error': null
-          };
-        } else {
-          return {
-            'success': false,
-            'data': null,
-            'error': responseData['error'] ?? 'Failed to get positions'
-          };
-        }
-      } else {
-        final errorData = json.decode(response.body);
-        return {
-          'success': false,
-          'data': null,
-          'error': errorData['error'] ?? 'Failed to get positions'
-        };
+        final data = json.decode(response.body);
+        return {'success': true, 'data': data['data'] ?? []};
       }
+      return {'success': false, 'error': 'Failed to load open orders'};
     } catch (e) {
-      return {
-        'success': false,
-        'data': null,
-        'error': 'Error fetching positions: ${e.toString()}'
-      };
+      return {'success': false, 'error': e.toString()};
     }
   }
 
-  // Get 24hr ticker statistics for all symbols
+  /// Get user's specific trade history.
+  static Future<Map<String, dynamic>> getUserTradeHistory({String? symbol}) async {
+    try {
+      final userId = await _getUserId();
+      String url = '$_baseUrl/trades/user/$userId';
+      if (symbol != null) url += '?symbol=$symbol';
+
+      final response = await http.get(
+        Uri.parse(url),
+        headers: await _getHeaders(userId: userId),
+      ).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return {'success': true, 'data': data['data'] ?? []};
+      }
+      return {'success': false, 'error': 'Failed to load trade history'};
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
+  // --- Helper Methods ---
+
+  /// Retrieves the current User ID from local storage.
+  static Future<String> _getUserId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('user_id') ?? '1';
+  }
+  
+  /// Get 24hr statistics for all symbols.
   static Future<Map<String, dynamic>> get24hrTickerStats() async {
     try {
       final response = await http.get(
         Uri.parse('$_baseUrl/ticker/24hr'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 30));
-
-      print('24hr Ticker Stats Response: ${response.body}');
+        headers: await _getHeaders(),
+      ).timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['success'] == true) {
-          return {
-            'success': true,
-            'data': responseData['data'],
-            'error': null
-          };
-        } else {
-          return {
-            'success': false,
-            'data': null,
-            'error': responseData['error'] ?? 'Failed to get 24hr ticker stats'
-          };
-        }
-      } else {
-        final errorData = json.decode(response.body);
-        return {
-          'success': false,
-          'data': null,
-          'error': errorData['error'] ?? 'Failed to get 24hr ticker stats'
-        };
+        final data = json.decode(response.body);
+        return {'success': true, 'data': data['data'] ?? data};
       }
+      return {'success': false, 'error': 'Market stats unavailable'};
     } catch (e) {
-      return {
-        'success': false,
-        'data': null,
-        'error': 'Error fetching 24hr ticker stats: ${e.toString()}'
-      };
+      return {'success': false, 'error': e.toString()};
     }
   }
 
-  // Get server time
+  /// Get the current server time (useful for sync).
   static Future<Map<String, dynamic>> getServerTime() async {
     try {
       final response = await http.get(
         Uri.parse('$_baseUrl/time'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 10));
-
-      print('Server Time Response: ${response.body}');
+        headers: await _getHeaders(),
+      ).timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        return {
-          'success': true,
-          'data': responseData,
-          'error': null
-        };
-      } else {
-        final errorData = json.decode(response.body);
-        return {
-          'success': false,
-          'data': null,
-          'error': errorData['error'] ?? 'Failed to get server time'
-        };
+        return {'success': true, 'data': json.decode(response.body)};
       }
+      return {'success': false, 'error': 'Sync failed'};
     } catch (e) {
-      return {
-        'success': false,
-        'data': null,
-        'error': 'Error fetching server time: ${e.toString()}'
-      };
+      return {'success': false, 'error': e.toString()};
     }
   }
 
-  // Get exchange information
-  static Future<Map<String, dynamic>> getExchangeInfo() async {
-    try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/exchangeInfo'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 30));
-
-      print('Exchange Info Response: ${response.body}');
-
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['success'] == true) {
-          return {
-            'success': true,
-            'data': responseData['data'],
-            'error': null
-          };
-        } else {
-          return {
-            'success': false,
-            'data': null,
-            'error': responseData['error'] ?? 'Failed to get exchange info'
-          };
-        }
-      } else {
-        final errorData = json.decode(response.body);
-        return {
-          'success': false,
-          'data': null,
-          'error': errorData['error'] ?? 'Failed to get exchange info'
-        };
-      }
-    } catch (e) {
-      return {
-        'success': false,
-        'data': null,
-        'error': 'Error fetching exchange info: ${e.toString()}'
-      };
-    }
-  }
-
-  // Get user trade history
-  static Future<Map<String, dynamic>> getUserTradeHistory({String? symbol}) async {
-    try {
-      final token = await AuthService.getToken();
-      if (token == null) {
-        return {
-          'success': false,
-          'data': null,
-          'error': 'Authentication required'
-        };
-      }
-
-      final userId = await _getUserId();
-
-      String url = '$_baseUrl/trades/user/$userId';
-      if (symbol != null) {
-        url += '?symbol=$symbol';
-      }
-
-      final response = await http.get(
-        Uri.parse(url),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(const Duration(seconds: 30));
-
-      print('User Trade History Response: ${response.body}');
-
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['success'] == true) {
-          return {
-            'success': true,
-            'data': responseData['data'],
-            'error': null
-          };
-        } else {
-          return {
-            'success': false,
-            'data': null,
-            'error': responseData['error'] ?? 'Failed to get user trade history'
-          };
-        }
-      } else {
-        final errorData = json.decode(response.body);
-        return {
-          'success': false,
-          'data': null,
-          'error': errorData['error'] ?? 'Failed to get user trade history'
-        };
-      }
-    } catch (e) {
-      return {
-        'success': false,
-        'data': null,
-        'error': 'Error fetching user trade history: ${e.toString()}'
-      };
-    }
-  }
-
-  // Get order history
-  static Future<Map<String, dynamic>> getOrderHistory({
-    String? symbol,
-    int? limit,
-    int? offset,
-  }) async {
-    try {
-      final token = await AuthService.getToken();
-      if (token == null) {
-        return {
-          'success': false,
-          'data': null,
-          'error': 'Authentication required'
-        };
-      }
-
-      String url = '$_baseUrl/v1/spot/orders/history';
-      List<String> queryParams = [];
-      
-      if (symbol != null) queryParams.add('symbol=$symbol');
-      if (limit != null) queryParams.add('limit=$limit');
-      if (offset != null) queryParams.add('offset=$offset');
-      
-      if (queryParams.isNotEmpty) {
-        url += '?${queryParams.join('&')}';
-      }
-
-      final response = await http.get(
-        Uri.parse(url),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(const Duration(seconds: 30));
-
-      print('Order History Response: ${response.body}');
-
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['success'] == true) {
-          return {
-            'success': true,
-            'data': responseData['data'],
-            'error': null
-          };
-        } else {
-          return {
-            'success': false,
-            'data': null,
-            'error': responseData['error'] ?? 'Failed to get order history'
-          };
-        }
-      } else {
-        final errorData = json.decode(response.body);
-        return {
-          'success': false,
-          'data': null,
-          'error': errorData['error'] ?? 'Failed to get order history'
-        };
-      }
-    } catch (e) {
-      return {
-        'success': false,
-        'data': null,
-        'error': 'Error fetching order history: ${e.toString()}'
-      };
-    }
-  }
-
-  // Get all tradeable symbols
-  static Future<Map<String, dynamic>> getSymbols() async {
-    try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/symbols'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 30));
-
-      print('Symbols Response: ${response.body}');
-
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['success'] == true) {
-          return {
-            'success': true,
-            'data': responseData['data'],
-            'error': null
-          };
-        } else {
-          return {
-            'success': false,
-            'data': null,
-            'error': responseData['error'] ?? 'Failed to get symbols'
-          };
-        }
-      } else {
-        final errorData = json.decode(response.body);
-        return {
-          'success': false,
-          'data': null,
-          'error': errorData['error'] ?? 'Failed to get symbols'
-        };
-      }
-    } catch (e) {
-      return {
-        'success': false,
-        'data': null,
-        'error': 'Error fetching symbols: ${e.toString()}'
-      };
-    }
-  }
-
-  // Get recent trades (last 50)
-  static Future<Map<String, dynamic>> getRecentTrades(String symbol) async {
-    try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/trades/$symbol'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 30));
-
-      print('Recent Trades Response: ${response.body}');
-
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['success'] == true) {
-          return {
-            'success': true,
-            'data': responseData['data'],
-            'error': null
-          };
-        } else {
-          return {
-            'success': false,
-            'data': null,
-            'error': responseData['error'] ?? 'Failed to get recent trades'
-          };
-        }
-      } else {
-        final errorData = json.decode(response.body);
-        return {
-          'success': false,
-          'data': null,
-          'error': errorData['error'] ?? 'Failed to get recent trades'
-        };
-      }
-    } catch (e) {
-      return {
-        'success': false,
-        'data': null,
-        'error': 'Error fetching recent trades: ${e.toString()}'
-      };
-    }
-  }
-
-  // Get exchange fees
-  static Future<Map<String, dynamic>> getFees() async {
-    try {
-      final url = Uri.parse('$_baseUrl/fees');
-      final response = await http.get(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 10));
-
-      print('Fees Response: ${response.body}');
-
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['success'] == true) {
-          return {
-            'success': true,
-            'data': responseData['data'],
-            'error': null
-          };
-        } else {
-          return {
-            'success': false,
-            'data': null,
-            'error': responseData['error'] ?? 'Failed to get fees'
-          };
-        }
-      } else {
-        final errorData = json.decode(response.body);
-        return {
-          'success': false,
-          'data': null,
-          'error': errorData['error'] ?? 'Failed to get fees'
-        };
-      }
-    } catch (e) {
-      return {
-        'success': false,
-        'data': null,
-        'error': 'Error fetching fees: ${e.toString()}'
-      };
-    }
-  }
-  
-  // Get health status
+  /// Get health status of the spot engine.
   static Future<Map<String, dynamic>> getHealth() async {
     try {
-      final url = Uri.parse('$_baseUrl/health');
       final response = await http.get(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 10));
+        Uri.parse('$_baseUrl/health'),
+        headers: await _getHeaders(),
+      ).timeout(const Duration(seconds: 5));
 
-      print('Health Response: ${response.body}');
-
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        return {
-          'success': true,
-          'data': responseData,
-          'error': null
-        };
-      } else {
-        final errorData = json.decode(response.body);
-        return {
-          'success': false,
-          'data': null,
-          'error': errorData['error'] ?? 'Failed to get health status'
-        };
-      }
+      return {'success': response.statusCode == 200, 'data': json.decode(response.body)};
     } catch (e) {
-      return {
-        'success': false,
-        'data': null,
-        'error': 'Error fetching health status: ${e.toString()}'
-      };
+      return {'success': false, 'error': e.toString()};
     }
   }
 
-  // Get ready status
-  static Future<Map<String, dynamic>> getReady() async {
+  /// Get trading fees for the user.
+  static Future<Map<String, dynamic>> getFees() async {
     try {
-      final url = Uri.parse('$_baseUrl/ready');
-      final response = await http.get(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 10));
-
-      print('Ready Response: ${response.body}');
-
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        return {
-          'success': true,
-          'data': responseData,
-          'error': null
-        };
-      } else {
-        final errorData = json.decode(response.body);
-        return {
-          'success': false,
-          'data': null,
-          'error': errorData['error'] ?? 'Failed to get ready status'
-        };
-      }
-    } catch (e) {
+      // Mock fee data for now as per professional standards if endpoint not ready
+      // Usually 0.1% maker/taker
       return {
-        'success': false,
-        'data': null,
-        'error': 'Error fetching ready status: ${e.toString()}'
+        'success': true, 
+        'data': {
+          'maker': 0.001,
+          'taker': 0.001,
+          'discount_asset': 'CRD',
+          'has_discount': false
+        }
       };
-    }
-  }
-
-  // Helper method to get user ID from storage
-  static Future<String> _getUserId() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      // Try to get as String first (new way)
-      String? userId = prefs.getString('user_id');
-      if (userId != null) return userId;
-      
-      // Fallback for migration: try getting as int and converting
-      int? userIdInt = prefs.getInt('user_id');
-      if (userIdInt != null) return userIdInt.toString();
-      
-      return '1'; // Default fallback
     } catch (e) {
-      return '1'; // Default fallback
+      return {'success': false, 'error': e.toString()};
     }
   }
 }

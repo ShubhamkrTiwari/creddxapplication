@@ -343,6 +343,175 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
     ).then((_) => setState(() {}));
   }
 
+  void _showInvestDialog(Map<String, dynamic> strategy) {
+    final TextEditingController amountController = TextEditingController();
+
+    // Get available balance for max invest amount
+    final availableBalance = botBalanceData?['availableBalance']?.toString() ?? '0.0';
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1C1C1E),
+          title: Text(
+            'Invest in ${strategy['name']}',
+            style: const TextStyle(color: Colors.white),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: amountController,
+                keyboardType: TextInputType.number,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Amount (USDT)',
+                  labelStyle: const TextStyle(color: Color(0xFF8E8E93)),
+                  border: const OutlineInputBorder(),
+                  hintText: 'Enter amount to invest',
+                  hintStyle: const TextStyle(color: Color(0xFF4E4E4E)),
+                  suffixText: 'Max: $availableBalance',
+                  suffixStyle: const TextStyle(
+                    color: Color(0xFF84BD00),
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Available: $availableBalance USDT',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF84BD00),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      amountController.text = availableBalance;
+                    },
+                    child: const Text(
+                      'Set Max',
+                      style: TextStyle(
+                        color: Color(0xFF84BD00),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Note: Investment will be processed in ${strategy['name']} strategy.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white)),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final amount = double.tryParse(amountController.text);
+                if (amount == null || amount <= 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Please enter a valid amount'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+
+                final maxAmount = double.tryParse(availableBalance) ?? 0.0;
+                if (amount > maxAmount) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Maximum invest amount is $availableBalance USDT'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+
+                Navigator.of(context).pop();
+
+                // Show loading indicator
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) => const Center(
+                    child: CircularProgressIndicator(
+                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF84BD00)),
+                    ),
+                  ),
+                );
+
+                try {
+                  // Generate botId from strategy name
+                  String botId = strategy['name'].replaceAll('-', '_').toLowerCase();
+
+                  final result = await BotService.invest(
+                    botId: botId,
+                    amount: amount,
+                    strategy: strategy['name'],
+                  );
+
+                  Navigator.of(context).pop(); // Remove loading indicator
+
+                  if (result['success'] == true) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(result['message'] ?? 'Investment successful!'),
+                        backgroundColor: const Color(0xFF84BD00),
+                        duration: const Duration(seconds: 3),
+                      ),
+                    );
+                    // Refresh data
+                    _fetchUserData();
+                    _fetchBotBalance();
+                    setState(() {});
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(result['error'] ?? 'Investment failed'),
+                        backgroundColor: Colors.red,
+                        duration: const Duration(seconds: 3),
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  Navigator.of(context).pop(); // Remove loading indicator
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF84BD00),
+              ),
+              child: const Text('Invest', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   void _showWithdrawDialog(Map<String, dynamic> strategy) {
     final TextEditingController amountController = TextEditingController();
     
@@ -527,14 +696,23 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
           ),
         ),
       ),
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            const SizedBox(height: 30),
-            // Bot Balance Section
-            _buildBotBalanceSection(),
-            const SizedBox(height: 20),
-            // User Info Section
+      body: RefreshIndicator(
+        onRefresh: () async {
+          await Future.wait([
+            _fetchUserData(),
+            _fetchStrategyPerformance(),
+            _fetchBotBalance(),
+          ]);
+        },
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: Column(
+            children: [
+              const SizedBox(height: 20),
+              // Bot Balance Section
+              _buildBotBalanceSection(),
+              const SizedBox(height: 20),
+              // User Info Section
             if (!isLoadingUserData && userData != null)
               Container(
                 margin: const EdgeInsets.symmetric(horizontal: 20),
@@ -675,7 +853,7 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
           ],
         ),
       ),
-    );
+    ));
   }
 
   Widget _buildStrategyCard(Map<String, dynamic> strategy) {
@@ -837,7 +1015,7 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
                 : Row(
                     children: [
                       Expanded(
-                        child: _buildActionButton('Invest more ↗', () => _navigateToDetail(strategy)),
+                        child: _buildActionButton('Invest more ↗', () => _showInvestDialog(strategy)),
                       ),
                       const SizedBox(width: 12),
                       Expanded(

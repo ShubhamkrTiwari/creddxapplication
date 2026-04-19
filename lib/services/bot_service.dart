@@ -382,6 +382,26 @@ class BotService {
             'error': data['message'] ?? 'Failed to fetch user bot trades',
           };
         }
+      } else if (response.statusCode == 500) {
+        // Handle 500 error - check if it's "No investment found" (empty state)
+        final data = json.decode(response.body);
+        final message = data['message']?.toString() ?? '';
+        if (message.toLowerCase().contains('no investment found')) {
+          // Return empty trades as success (user has no investments yet)
+          return {
+            'success': true,
+            'data': {
+              'strategy': strategy,
+              'symbol': symbol,
+              'userInvestment': 0,
+              'userTrades': [],
+            },
+          };
+        }
+        return {
+          'success': false,
+          'error': message,
+        };
       } else {
         return {
           'success': false,
@@ -639,13 +659,25 @@ class BotService {
         return {
           'success': data['success'] ?? false,
           'subscription': data['subscription'],
-          'message': 'Subscription successful',
+          'message': data['message'] ?? 'Subscription successful',
         };
-      } else {
-        final errorData = json.decode(response.body);
+      } else if (response.statusCode == 400) {
+        // 400 error - insufficient balance
         return {
           'success': false,
-          'error': errorData['message'] ?? 'Subscription failed',
+          'error': 'insufficient bot wallet balance',
+        };
+      } else {
+        String errorMessage = 'Subscription failed (Status: ${response.statusCode})';
+        try {
+          final errorData = json.decode(response.body);
+          errorMessage = errorData['message'] ?? errorMessage;
+        } catch (_) {
+          // If response body is not valid JSON, use status code
+        }
+        return {
+          'success': false,
+          'error': errorMessage,
         };
       }
     } catch (e) {
@@ -984,6 +1016,59 @@ class BotService {
     } catch (e) {
       debugPrint('Error fetching bot balance history: $e');
       return _getMockBalanceHistory(strategy, days ?? 30);
+    }
+  }
+
+  // Get user balance history - to show invested amount
+  static Future<Map<String, dynamic>> getUserBalanceHistory() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/bot/v1/api/user/balance-history'),
+        headers: await _getHeaders(),
+      );
+
+      debugPrint('User Balance History API Response Status: ${response.statusCode}');
+      debugPrint('User Balance History API Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          return {
+            'success': true,
+            'data': data['data'] ?? data,
+            'investedAmount': data['data']?['investedAmount'] ?? data['investedAmount'] ?? 0.0,
+            'balance': data['data']?['balance'] ?? data['balance'] ?? 0.0,
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to fetch user balance history',
+          };
+        }
+      } else if (response.statusCode == 404) {
+        // Return mock data for demo
+        return {
+          'success': true,
+          'data': {
+            'investedAmount': 0.0,
+            'balance': 0.0,
+          },
+        };
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching user balance history: $e');
+      return {
+        'success': true,
+        'data': {
+          'investedAmount': 0.0,
+          'balance': 0.0,
+        },
+      };
     }
   }
 

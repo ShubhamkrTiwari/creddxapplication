@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'bot_trade_detail_screen.dart';
 import 'package_program_screen.dart';
 import 'bot_history_screen.dart';
+import '../services/bot_service.dart';
 
 class BotTradeScreen extends StatefulWidget {
   const BotTradeScreen({super.key});
@@ -17,11 +18,47 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
   bool _hasOpenPosition = true; // Set to true to show open position
   bool _showMoreOptions = false;
   String _selectedTimeframe = '15 Min';
+  
+  // User subscription data
+  Map<String, dynamic>? _userSubscription;
+  int _subscriptionDaysLeft = 0;
+  bool _isLoadingSubscription = true;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _fetchUserSubscription();
+  }
+  
+  Future<void> _fetchUserSubscription() async {
+    try {
+      final response = await BotService.getUserSubscription();
+      if (response['success'] == true && response['subscription'] != null) {
+        final subscription = response['subscription'];
+        final startDate = DateTime.tryParse(subscription['startDate'] ?? '');
+        final duration = subscription['duration'] ?? 365;
+        
+        if (startDate != null) {
+          final endDate = startDate.add(Duration(days: duration));
+          final now = DateTime.now();
+          final daysLeft = endDate.difference(now).inDays;
+          
+          setState(() {
+            _userSubscription = subscription;
+            _subscriptionDaysLeft = daysLeft > 0 ? daysLeft : 0;
+            _isLoadingSubscription = false;
+          });
+        } else {
+          setState(() => _isLoadingSubscription = false);
+        }
+      } else {
+        setState(() => _isLoadingSubscription = false);
+      }
+    } catch (e) {
+      debugPrint('Error fetching subscription: $e');
+      setState(() => _isLoadingSubscription = false);
+    }
   }
 
   @override
@@ -171,6 +208,72 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Subscription Package Card
+            if (_userSubscription != null && _subscriptionDaysLeft > 0) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF84BD00), Color(0xFF5A8A00)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Active Package',
+                          style: TextStyle(
+                            color: Colors.black,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            '$_subscriptionDaysLeft days left',
+                            style: const TextStyle(
+                              color: Colors.black,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      _userSubscription?['plan'] ?? 'Annual Plan',
+                      style: const TextStyle(
+                        color: Colors.black,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Price: \$${_userSubscription?['price']?.toString() ?? '25.00'}',
+                      style: TextStyle(
+                        color: Colors.black.withOpacity(0.7),
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
             // Trading Chart Section
             Container(
               width: double.infinity,

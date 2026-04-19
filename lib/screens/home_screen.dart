@@ -15,6 +15,8 @@ import 'internal_transfer_screen.dart';
 import 'wallet_history_screen.dart';
 import 'invite_friends_screen.dart';
 import 'withdraw_screen.dart';
+import 'withdraw_crypto_screen.dart';
+import 'withdraw_inr_screen.dart';
 import 'inr_deposit_screen.dart';
 import 'conversion_screen.dart';
 import 'spot_screen.dart';
@@ -614,13 +616,141 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
   
+  void _showWithdrawalSelectionMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E20),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext context) {
+        return Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'Select Withdrawal Type',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 24),
+              _buildWithdrawalOption(
+                icon: Icons.currency_bitcoin,
+                title: 'Withdraw Crypto',
+                subtitle: 'Send crypto to external wallet',
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.of(context).push(MaterialPageRoute(
+                      builder: (context) => const WithdrawCryptoScreen()));
+                },
+              ),
+              const SizedBox(height: 16),
+              _buildWithdrawalOption(
+                icon: Icons.currency_rupee,
+                title: 'Withdraw INR',
+                subtitle: 'Withdraw to bank account',
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.of(context).push(MaterialPageRoute(
+                      builder: (context) => const WithdrawINRScreen()));
+                },
+              ),
+              const SizedBox(height: 20),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildWithdrawalOption({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF2A2A2C),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                color: const Color(0xFF84BD00).withOpacity(0.2),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                icon,
+                color: const Color(0xFF84BD00),
+                size: 28,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: Colors.white54,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.arrow_forward_ios,
+              color: Colors.white54,
+              size: 16,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _handleActionTap(String action) {
     if (action == 'Deposit') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const DepositScreen()));
     } else if (action == 'INR Deposit') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const InrDepositScreen()));
     } else if (action == 'Withdraw') {
-      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const WithdrawScreen()));
+      _showWithdrawalSelectionMenu();
     } else if (action == 'Internal Deposit' || action == 'Inter send') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const InternalDepositScreen()));
     } else if (action == 'Receive') {

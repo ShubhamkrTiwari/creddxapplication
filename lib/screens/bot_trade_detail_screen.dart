@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import '../services/bot_service.dart';
 import 'package_program_screen.dart';
 
@@ -15,6 +16,7 @@ class BotTradeDetailScreen extends StatefulWidget {
   // Simple static states to simulate persistence for this demo session
   static bool hasPackage = false;
   static bool isInvested = false;
+  static double investedAmount = 0.0;
 
   @override
   State<BotTradeDetailScreen> createState() => _BotTradeDetailScreenState();
@@ -31,6 +33,38 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
   void initState() {
     super.initState();
     _fetchPerformanceData();
+    _fetchUserBalanceHistory();
+    _checkUserSubscription();
+  }
+
+  Future<void> _checkUserSubscription() async {
+    try {
+      final response = await BotService.getUserSubscription();
+      if (mounted && response['success'] == true && response['subscription'] != null) {
+        final subscription = response['subscription'];
+        final startDate = DateTime.tryParse(subscription['startDate'] ?? '');
+        final duration = subscription['duration'] ?? 365;
+        
+        if (startDate != null) {
+          final endDate = startDate.add(Duration(days: duration));
+          final now = DateTime.now();
+          final daysLeft = endDate.difference(now).inDays;
+          
+          // Only set hasPackage if subscription is still active
+          if (daysLeft > 0) {
+            setState(() {
+              BotTradeDetailScreen.hasPackage = true;
+            });
+          } else {
+            setState(() {
+              BotTradeDetailScreen.hasPackage = false;
+            });
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error checking subscription: $e');
+    }
   }
 
   Future<void> _fetchPerformanceData() async {
@@ -49,6 +83,23 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
       if (mounted) {
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  Future<void> _fetchUserBalanceHistory() async {
+    try {
+      final response = await BotService.getUserBalanceHistory();
+      if (mounted && response['success'] == true) {
+        final investedAmount = response['investedAmount'] ?? response['data']?['investedAmount'] ?? 0.0;
+        if (investedAmount > 0) {
+          setState(() {
+            BotTradeDetailScreen.investedAmount = investedAmount.toDouble();
+            BotTradeDetailScreen.isInvested = true;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching user balance history: $e');
     }
   }
 
@@ -282,6 +333,7 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
         if (result['success'] == true) {
           setState(() {
             BotTradeDetailScreen.isInvested = true;
+            BotTradeDetailScreen.investedAmount = amount;
           });
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -418,9 +470,9 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        const Text(
-                          '50.00 USDT',
-                          style: TextStyle(
+                        Text(
+                          '${BotTradeDetailScreen.investedAmount.toStringAsFixed(2)} USDT',
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
@@ -439,19 +491,24 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
                           Expanded(
                             child: SizedBox(
                               height: 56,
-                              child: OutlinedButton(
-                                onPressed: null, // Disabled when already invested
-                                style: OutlinedButton.styleFrom(
-                                  side: BorderSide(color: Colors.white.withOpacity(0.2)),
-                                  backgroundColor: const Color(0xFF1C1C1E),
+                              child: ElevatedButton(
+                                onPressed: () => _showAmountDialog(
+                                  title: 'Enter Investment Amount',
+                                  hint: 'Max: \$1000.00',
+                                  controller: _investController,
+                                  isConfirmingInvestment: true,
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF84BD00),
+                                  foregroundColor: Colors.black,
+                                  elevation: 0,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(12),
                                   ),
                                 ),
                                 child: const Text(
-                                  'Invested',
+                                  'Invest',
                                   style: TextStyle(
-                                    color: Colors.grey,
                                     fontSize: 16,
                                     fontWeight: FontWeight.bold,
                                   ),
@@ -466,7 +523,7 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
                               child: ElevatedButton(
                                 onPressed: () => _showAmountDialog(
                                   title: 'Enter Withdrawal Amount',
-                                  hint: 'Total: \$50.00',
+                                  hint: 'Total: \$${BotTradeDetailScreen.investedAmount.toStringAsFixed(2)}',
                                   controller: _withdrawController,
                                   isConfirmingInvestment: false,
                                 ),
