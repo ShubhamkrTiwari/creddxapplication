@@ -133,7 +133,7 @@ class _InternalDepositScreenState extends State<InternalDepositScreen> with Sing
 
     try {
       // Step 1: Send OTP
-      final otpResult = await WalletService.sendOtp(purpose: 'internal_send');
+      final otpResult = await WalletService.sendOtp(purpose: 'internal_transfer');
       
       if (otpResult['success'] == true) {
         if (!mounted) return;
@@ -143,12 +143,21 @@ class _InternalDepositScreenState extends State<InternalDepositScreen> with Sing
           context,
           MaterialPageRoute(
             builder: (context) => OtpVerificationScreen(
-              onVerify: (otp) => WalletService.internalTransfer(
-                receiverUid: _recipientUidController.text.trim(),
-                amount: amount,
-                otp: otp,
-              ),
-              onResend: () => WalletService.sendOtp(purpose: 'internal_send'),
+              onVerify: (otp) async {
+                final result = await WalletService.internalTransfer(
+                  receiverUid: _recipientUidController.text.trim(),
+                  amount: amount,
+                  otp: otp,
+                );
+
+                if (result['success'] == true) {
+                  // Trigger global balance refresh after success
+                  WalletService.getAllWalletBalances();
+                }
+
+                return result;
+              },
+              onResend: () => WalletService.sendOtp(purpose: 'internal_transfer'),
             ),
           ),
         );

@@ -4,6 +4,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'confirm_order_screen.dart';
 import 'otp_verification_screen.dart';
+import 'wallet_history_screen.dart';
 import '../services/wallet_service.dart';
 
 class SendScreen extends StatefulWidget {
@@ -74,62 +75,89 @@ class _SendScreenState extends State<SendScreen> with SingleTickerProviderStateM
   }
 
   Future<void> _sendInternalTransfer() async {
+    // Input validations before OTP
+    if (_selectedInternalCoin.isEmpty) {
+      _showError('Select an asset to continue.');
+      return;
+    }
+
     if (_recipientUidController.text.isEmpty) {
-      _showError('Please enter recipient UID');
+      _showError('Enter recipient UID.');
       return;
     }
 
     if (_internalAmountController.text.isEmpty) {
-      _showError('Please enter amount');
+      _showError('Enter a valid amount.');
       return;
     }
 
     final amount = double.tryParse(_internalAmountController.text);
     if (amount == null || amount <= 0) {
-      _showError('Please enter a valid amount');
+      _showError('Enter a valid amount.');
       return;
     }
 
     if (amount > _availableBalance) {
-      _showError('Insufficient balance');
+      _showError('Insufficient balance. Please enter a lower amount.');
       return;
     }
 
     setState(() => _isInternalLoading = true);
 
     try {
-      final otpResult = await WalletService.sendOtp(purpose: 'internal_send');
+      // Step 1: Send OTP for internal transfer
+      final otpResult = await WalletService.sendOtp(purpose: 'internal_transfer');
 
       if (otpResult['success'] == true) {
         if (!mounted) return;
 
+        _showSuccess('OTP sent successfully for proceeding the transfer!');
+
+        // Step 2: Navigate to OTP verification screen
         final bool? verified = await Navigator.push<bool>(
           context,
           MaterialPageRoute(
             builder: (context) => OtpVerificationScreen(
-              onVerify: (otp) => WalletService.internalTransfer(
-                receiverUid: _recipientUidController.text.trim(),
-                amount: amount,
-                otp: otp,
-              ),
-              onResend: () => WalletService.sendOtp(purpose: 'internal_send'),
+              onVerify: (otp) async {
+                // Validate OTP length
+                if (otp.length != 6) {
+                  return {
+                    'success': false,
+                    'error': 'Please enter the 6-digit OTP.',
+                  };
+                }
+                // Call transfer API with OTP
+                return await WalletService.internalTransfer(
+                  receiverUid: _recipientUidController.text.trim(),
+                  amount: amount,
+                  otp: otp,
+                );
+              },
+              onResend: () => WalletService.sendOtp(purpose: 'internal_transfer'),
             ),
           ),
         );
 
+        // Step 3: Handle transfer success
         if (verified == true) {
           if (mounted) {
-            _showSuccess('Transfer successful!');
+            _showSuccess('Transfer completed successfully. Funds have been credited instantly.');
             _recipientUidController.clear();
             _internalAmountController.clear();
+
+            // Navigate to internal transfer history
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const WalletHistoryScreen()),
+            );
           }
         }
       } else {
-        _showError(otpResult['error'] ?? 'Failed to send OTP');
+        _showError(otpResult['error'] ?? 'OTP sent failed. Please try again.');
       }
     } catch (e) {
       if (mounted) {
-        _showError('Error: $e');
+        _showError('Transfer failed. Please try again later.');
       }
     } finally {
       if (mounted) {

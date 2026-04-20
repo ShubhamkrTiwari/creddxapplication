@@ -102,12 +102,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
         final email = widget.email ?? 'user@example.com';
         final result = await AuthService.loginWithOtp(email, _otp);
 
-        if (result['success']) {
+        if (result['success'] == true) {
           _showSuccess('OTP verified successfully!');
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => const MainNavigation()),
-          );
+          Navigator.pop(context, _otp);
         } else {
           _showError(result['message']);
         }

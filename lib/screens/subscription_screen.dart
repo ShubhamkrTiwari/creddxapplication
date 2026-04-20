@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
+import '../services/auth_service.dart';
 import 'bot_trade_detail_screen.dart';
+import 'login_screen.dart';
 
 class SubscriptionScreen extends StatefulWidget {
   const SubscriptionScreen({super.key});
@@ -10,11 +12,28 @@ class SubscriptionScreen extends StatefulWidget {
   State<SubscriptionScreen> createState() => _SubscriptionScreenState();
 }
 
+// Available packages with prices
+final List<Map<String, dynamic>> _packages = [
+  {'name': 'Free Plan', 'price': 0.0},
+  {'name': 'Basic Package', 'price': 25.0},
+];
+
 class _SubscriptionScreenState extends State<SubscriptionScreen> {
   bool _isSubscribing = false;
   bool _isSubscribed = false;
-  int _daysLeft = 3;
+  int _daysLeft = 0;
+  String? _planName;
+  double? _planPrice;
+  String? _errorMessage;
   Timer? _countdownTimer;
+  
+  // Selected plan for subscription - gets values from _packages
+  Map<String, dynamic> get _selectedPackage => _packages.firstWhere(
+    (p) => p['name'] == 'Basic Package',
+    orElse: () => _packages[1], // Default to Basic Package
+  );
+  String get _selectedPlan => _selectedPackage['name'];
+  double get _selectedPrice => _selectedPackage['price'];
 
   @override
   void initState() {
@@ -25,34 +44,81 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
 
   Future<void> _loadUserSubscription() async {
     try {
-      final response = await BotService.getUserSubscription();
-      if (response['success'] == true && response['subscription'] != null) {
-        final subscription = response['subscription'];
-        final startDate = DateTime.tryParse(subscription['startDate'] ?? '');
-        final duration = subscription['duration'] ?? 30;
-        
-        if (startDate != null) {
-          final endDate = startDate.add(Duration(days: duration));
-          final now = DateTime.now();
-          final daysLeft = endDate.difference(now).inDays;
-          
-          if (daysLeft > 0) {
-            setState(() {
-              _isSubscribed = true;
-              _daysLeft = daysLeft;
-            });
-            BotTradeDetailScreen.hasPackage = true;
-          } else {
-            setState(() {
-              _isSubscribed = false;
-              _daysLeft = 0;
-            });
-            BotTradeDetailScreen.hasPackage = false;
+      final response = await BotService.getUserData();
+
+      if (response['success'] == true && response['data'] != null) {
+        final userData = response['data'];
+        final subscription = userData['subscription'];
+
+        // Check subscription
+        if (subscription == null) {
+          setState(() {
+            _isSubscribed = false;
+            _planName = null;
+            _planPrice = null;
+            _daysLeft = 0;
+            _errorMessage = null;
+          });
+          BotTradeDetailScreen.hasPackage = false;
+          return;
+        }
+
+        // Extract subscription details
+        final planName = subscription['plan']?.toString();
+        final planPrice = double.tryParse(subscription['price']?.toString() ?? '');
+
+        // Check expiry
+        int remainingDays = 0;
+        bool isActive = true;
+
+        if (subscription['endDate'] != null) {
+          final endDate = DateTime.tryParse(subscription['endDate'].toString());
+          if (endDate != null) {
+            final currentDate = DateTime.now();
+            remainingDays = endDate.difference(currentDate).inDays;
+
+            // Expired case
+            if (remainingDays <= 0) {
+              isActive = false;
+              remainingDays = 0;
+            }
           }
         }
+
+        // Update state with final values
+        setState(() {
+          _isSubscribed = isActive;
+          _planName = isActive ? planName : null;
+          _planPrice = isActive ? planPrice : null;
+          _daysLeft = remainingDays;
+          _errorMessage = null;
+        });
+
+        BotTradeDetailScreen.hasPackage = isActive;
+      } else {
+        // API returned error
+        final errorMsg = response['error']?.toString() ??
+                        response['message']?.toString() ??
+                        'Could not load subscription details';
+        setState(() {
+          _errorMessage = errorMsg;
+          _isSubscribed = false;
+          _planName = null;
+          _planPrice = null;
+          _daysLeft = 0;
+        });
+        BotTradeDetailScreen.hasPackage = false;
       }
     } catch (e) {
       debugPrint('Error loading user subscription: $e');
+      setState(() {
+        _errorMessage = 'Could not load subscription details';
+        _isSubscribed = false;
+        _planName = null;
+        _planPrice = null;
+        _daysLeft = 0;
+      });
+      BotTradeDetailScreen.hasPackage = false;
     }
   }
 
@@ -152,10 +218,10 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                   const SizedBox(height: 16),
                   
                   // Price
-                  const Text(
-                    '\$25',
-                    style: TextStyle(
-                      color: const Color(0xFF84BD00),
+                  Text(
+                    _planPrice != null ? '\$${_planPrice!.toStringAsFixed(0)}' : '\$25',
+                    style: const TextStyle(
+                      color: Color(0xFF84BD00),
                       fontSize: 32,
                       fontWeight: FontWeight.bold,
                     ),
@@ -184,37 +250,38 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                   SizedBox(
                     width: double.infinity,
                     height: 56,
-                    child: ElevatedButton(
-                      onPressed: _isSubscribing 
-                          ? null 
-                          : () => _subscribeToBasicPackage(),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _isSubscribed 
-                            ? Colors.grey 
-                            : const Color(0xFF84BD00),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: _isSubscribing
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
-                              ),
-                            )
-                          : Text(
-                              _isSubscribed 
-                                  ? 'Already Subscribed'
-                                  : 'Get Annual Plan',
-                              style: TextStyle(
-                                color: _isSubscribed ? Colors.white : Colors.black,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
+                    child: Builder(
+                      builder: (context) {
+                        final buttonState = _getButtonState();
+                        return ElevatedButton(
+                          onPressed: _isSubscribing || !buttonState['enabled']
+                              ? null
+                              : () => _handleSubscribe(),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: buttonState['color'],
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
                             ),
+                          ),
+                          child: _isSubscribing
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
+                                  ),
+                                )
+                              : Text(
+                                  buttonState['text'],
+                                  style: TextStyle(
+                                    color: buttonState['enabled'] ? Colors.black : Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                        );
+                      },
                     ),
                   ),
                 ],
@@ -247,10 +314,10 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  _buildDetailRow('Plan', 'Annual Plan'),
-                  _buildDetailRow('Status', 'Active'),
+                  _buildDetailRow('Plan', _planName ?? 'Annual Plan'),
+                  _buildDetailRow('Status', _isSubscribed ? 'Active' : 'Inactive'),
                   _buildDetailRow('Days Remaining', '$_daysLeft days'),
-                  _buildDetailRow('Price', '\$25'),
+                  _buildDetailRow('Price', _planPrice != null ? '\$${_planPrice!.toStringAsFixed(2)}' : '\$25.00'),
                   _buildDetailRow('Duration', '365 Days'),
                 ],
               ),
@@ -319,36 +386,246 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     );
   }
 
-  Future<void> _subscribeToBasicPackage() async {
+  // Handle subscribe button click
+  Future<void> _handleSubscribe() async {
+    // 1. Check if user is logged in
+    final token = await AuthService.getToken();
+    if (token == null || token.isEmpty) {
+      _showErrorDialog('Authentication Required', 'Please Login to invest in Bot Trade');
+      // Redirect to login
+      Future.delayed(const Duration(seconds: 1), () {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const LoginScreen()),
+        );
+      });
+      return;
+    }
+
+    // 2. Get current plan
+    final current = _packages.firstWhere(
+      (p) => p['name'] == _planName,
+      orElse: () => <String, dynamic>{},
+    );
+
+    // 3. Define conditions
+    final bool hasCurrentPlan = current.isNotEmpty;
+    final bool isSame = hasCurrentPlan && current['name'] == _selectedPlan;
+    final bool isDowngrade = hasCurrentPlan && _selectedPrice < (current['price'] as double);
+    final bool isUpgrade = !hasCurrentPlan || _selectedPrice > (current['price'] as double);
+
+    // 4. Handle conditions
+    if (isSame) {
+      // Same plan - do nothing (button should be disabled)
+      return;
+    }
+
+    if (isDowngrade) {
+      // Downgrade not allowed
+      _showErrorDialog('Downgrade Not Allowed', 'Downgrade not allowed. Please wait for current plan to expire.');
+      return;
+    }
+
+    // 5. Open confirmation modal for upgrade or new subscription
+    _showConfirmationModal(
+      plan: _selectedPlan,
+      price: _selectedPrice,
+      isUpgrade: isUpgrade,
+      current: current.isNotEmpty ? current : null,
+    );
+  }
+
+  // Show confirmation modal
+  void _showConfirmationModal({
+    required String plan,
+    required double price,
+    required bool isUpgrade,
+    Map<String, dynamic>? current,
+  }) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1C1C1E),
+        title: Text(
+          isUpgrade ? 'Upgrade Subscription' : 'Confirm Subscription',
+          style: const TextStyle(color: Color(0xFF84BD00)),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Plan: $plan',
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Price: \$${price.toStringAsFixed(2)}',
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+            ),
+            if (current != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Current: ${current['name']}',
+                style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 14),
+              ),
+            ],
+            const SizedBox(height: 16),
+            Text(
+              isUpgrade
+                  ? 'You will be upgraded to $plan. Your new subscription will start immediately.'
+                  : 'Subscribe to $plan for \$${price.toStringAsFixed(2)}?',
+              style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 14),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _handleConfirmPlan(plan: plan, price: price);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF84BD00),
+            ),
+            child: const Text(
+              'Confirm',
+              style: TextStyle(color: Colors.black),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Handle confirm plan subscription
+  Future<void> _handleConfirmPlan({required String plan, required double price}) async {
+    // Prevent multiple clicks
+    if (_isSubscribing) return;
+
     setState(() => _isSubscribing = true);
-    
+
     try {
-      debugPrint('=== SUBSCRIBING TO ANNUAL PLAN ===');
-      
+      debugPrint('=== CONFIRMING SUBSCRIPTION ===');
+      debugPrint('Plan: $plan, Price: $price');
+
+      // Call API
       final response = await BotService.subscribeToPlan(
-        plan: 'Annual Plan',
-        price: 25.0, // Set price to 25 USD as required by API
+        plan: plan,
+        price: price,
       );
-      
+
       if (response['success'] == true) {
+        // Refresh bot wallet balance
+        await _refetchBotWalletData();
+
+        // Calculate remaining days based on plan
+        final int remainingDays = price == 0 ? 30 : 365;
+
+        // Update UI
         setState(() {
           _isSubscribed = true;
-          _daysLeft = 365; // 365 days for annual plan
+          _planName = plan;
+          _planPrice = price;
+          _daysLeft = remainingDays;
         });
-        
-        // Set the global package state to true
+
+        // Set global package state
         BotTradeDetailScreen.hasPackage = true;
-        
-        _showSuccessDialog('Subscription successful!', response['message'] ?? 'You are now subscribed to Annual Plan');
+
+        _showSuccessDialog(
+          'Subscription Successful!',
+          response['message'] ?? 'You are now subscribed to $plan',
+        );
       } else {
-        _showErrorDialog('Subscription failed', response['error'] ?? 'Something went wrong');
+        // Show error
+        final errorMsg = response['error']?.toString() ??
+                        response['message']?.toString() ??
+                        'Subscription failed';
+        _showErrorDialog('Subscription Failed', errorMsg);
       }
     } catch (e) {
       debugPrint('Subscription error: $e');
-      _showErrorDialog('Error', 'Network error. Please try again.');
+      _showErrorDialog('Error', e.toString().isNotEmpty ? e.toString() : 'Subscription failed');
     } finally {
       setState(() => _isSubscribing = false);
     }
+  }
+
+  // Refresh bot wallet data
+  Future<void> _refetchBotWalletData() async {
+    try {
+      debugPrint('=== REFETCHING BOT WALLET DATA ===');
+      final result = await BotService.getBotBalance();
+      debugPrint('Bot wallet refresh result: $result');
+    } catch (e) {
+      debugPrint('Error refreshing bot wallet: $e');
+    }
+  }
+
+  // Get button state based on subscription rules
+  Map<String, dynamic> _getButtonState() {
+    // No active subscription - enable button
+    if (!_isSubscribed || _planName == null) {
+      return {
+        'enabled': true,
+        'text': 'Get Basic Package',
+        'color': const Color(0xFF84BD00),
+      };
+    }
+
+    // Same plan - disable button
+    if (_planName == _selectedPlan) {
+      return {
+        'enabled': false,
+        'text': 'Current Plan',
+        'color': Colors.grey,
+      };
+    }
+
+    // Get current plan details
+    final current = _packages.firstWhere(
+      (p) => p['name'] == _planName,
+      orElse: () => {'name': '', 'price': 0.0},
+    );
+
+    // Downgrade - disable button
+    if (_selectedPrice < (current['price'] as double)) {
+      return {
+        'enabled': false,
+        'text': 'Not Allowed',
+        'color': Colors.grey,
+      };
+    }
+
+    // Upgrade - enable button
+    if (_selectedPrice > (current['price'] as double)) {
+      return {
+        'enabled': true,
+        'text': 'Upgrade Plan',
+        'color': const Color(0xFF84BD00),
+      };
+    }
+
+    // Default
+    return {
+      'enabled': true,
+      'text': 'Get Basic Package',
+      'color': const Color(0xFF84BD00),
+    };
+  }
+
+  // Legacy method - replaced by _handleSubscribe
+  Future<void> _subscribeToBasicPackage() async {
+    await _handleSubscribe();
   }
 
   void _showSuccessDialog(String title, String message) {

@@ -91,7 +91,7 @@ class _ConversionScreenState extends State<ConversionScreen> {
 
   Future<void> _fetchBalances() async {
     try {
-      debugPrint('=== Fetching balances via WalletService ===');
+      debugPrint('=== Fetching balances via WalletService (INR excluded - socket only) ===');
       
       // Use WalletService to fetch all wallet balances
       final result = await WalletService.getAllWalletBalances();
@@ -102,20 +102,9 @@ class _ConversionScreenState extends State<ConversionScreen> {
         debugPrint('Data: $data');
         
         setState(() {
-          // Try different balance field names for INR from main wallet
-          double mainInr = 0.0;
-          if (data['mainBalance'] is Map) {
-            mainInr = double.tryParse(data['mainBalance']['INR']?.toString() ?? '0') ?? 0.0;
-          }
-          
-          _inrBalance = mainInr > 0 ? mainInr : (double.tryParse(
-            data['inr_balance']?.toString() ??
-            data['inr']?.toString() ??
-            data['inr_available']?.toString() ??
-            data['main_inr_balance']?.toString() ??
-            data['total_inr']?.toString() ??
-            '0'
-          ) ?? 0);
+          // NOTE: INR balance is NOT fetched from API - only from sockets
+          // Keep existing INR balance from socket, don't overwrite with API data
+          // _inrBalance remains unchanged from socket updates
           
           // Try different balance field names for USDT
           double mainUsdt = 0.0;

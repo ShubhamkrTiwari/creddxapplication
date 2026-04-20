@@ -11,6 +11,7 @@ import '../services/wallet_service.dart';
 import '../services/spot_service.dart';
 import '../services/socket_service.dart';
 import '../services/auth_service.dart';
+import '../services/unified_wallet_service.dart' as unified;
 import '../widgets/bitcoin_loading_indicator.dart';
 
 class WalletScreen extends StatefulWidget {
@@ -20,18 +21,20 @@ class WalletScreen extends StatefulWidget {
   State<WalletScreen> createState() => _WalletScreenState();
 }
 
-class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMixin, WidgetsBindingObserver {
   late TabController _tabController;
+  late TabController _holdingsTabController;
   final NumberFormat _currencyFormat = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
-  StreamSubscription<Map<String, dynamic>>? _balanceUpdateSubscription;
-  Timer? _balanceRefreshTimer;
+  StreamSubscription? _walletSubscription;
+  StreamSubscription? _coinSubscription;
   
   bool _isLoading = true;
-  bool _isScreenVisible = true;
   String _walletAddress = 'Fetching...';
-  double _totalBalance = 0.0;
-  Map<String, dynamic> _walletBalances = {};
-  List<Map<String, dynamic>> _cryptoHoldings = [];
+  
+  unified.WalletBalance? _walletBalance;
+  List<unified.CoinBalance> _coinBalances = [];
+  double _inrBalance = 0.0; // Track INR for rebuilds
+
   List<Map<String, dynamic>> _transferHistory = [];
   List<Map<String, dynamic>> _transactionHistory = [];
   List<Map<String, dynamic>> _conversionHistory = [];
@@ -41,415 +44,130 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _tabController = TabController(length: 2, vsync: this);
-    _fetchWalletData();
-    _connectWebSocketBalanceUpdates();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    super.didChangeAppLifecycleState(state);
-    switch (state) {
-      case AppLifecycleState.resumed:
-        // Screen is visible again, refresh data
-        if (mounted) {
-          _isScreenVisible = true;
-          _fetchWalletData();
-        }
-        break;
-      case AppLifecycleState.paused:
-      case AppLifecycleState.inactive:
-      case AppLifecycleState.detached:
-        // Screen is not visible
-        _isScreenVisible = false;
-        break;
-      case AppLifecycleState.hidden:
-        // TODO: Handle this case.
-        throw UnimplementedError();
-    }
-  }
-
-  void _connectWebSocketBalanceUpdates() {
-    // Connect to global SocketService
-    SocketService.connect();
+    _holdingsTabController = TabController(length: 2, vsync: this);
     
-    _balanceUpdateSubscription = SocketService.balanceStream.listen(
-      (balanceData) {
-        debugPrint('=== WebSocket Balance Update Received ===');
-        debugPrint('Raw data: $balanceData');
-        
-        if (mounted && _isScreenVisible) {
-          final payload = balanceData['data'] ?? balanceData;
-          
-          setState(() {
-            String walletType = payload['wallet_type']?.toString() ?? 'spot';
-            double available = double.tryParse(payload['available']?.toString() ?? '0') ?? 0.0;
-            double locked = double.tryParse(payload['locked']?.toString() ?? '0') ?? 0.0;
-            double total = double.tryParse(payload['total']?.toString() ?? (available + locked).toString()) ?? (available + locked);
-
-            if (walletType == 'spot' || payload['usdt_available'] != null) {
-              final usdtAvailable = double.tryParse(payload['usdt_available']?.toString() ?? available.toString()) ?? available;
-              
-              _walletBalances['spot'] = {
-                'total': usdtAvailable.toStringAsFixed(2),
-                'available': usdtAvailable.toStringAsFixed(2),
-                'locked': locked.toStringAsFixed(2),
-              };
-            } else if (_walletBalances.containsKey(walletType)) {
-              _walletBalances[walletType] = {
-                'total': total.toStringAsFixed(2),
-                'available': available.toStringAsFixed(2),
-                'locked': locked.toStringAsFixed(2),
-              };
-            }
-            
-            // Recalculate total balance
-            double newTotalEquity = 0.0;
-            _walletBalances.forEach((key, value) {
-              if (key != 'demo_bot') {
-                newTotalEquity += double.tryParse(value['total']?.toString() ?? '0') ?? 0.0;
-              }
-            });
-            _totalBalance = newTotalEquity;
-          });
-        }
-      },
-    );
-  }
-
-  String _getCoinFullName(String symbol) {
-    switch (symbol.toUpperCase()) {
-      case 'BTC': return 'Bitcoin';
-      case 'ETH': return 'Ethereum';
-      case 'USDT': return 'Tether';
-      case 'BNB': return 'Binance Coin';
-      case 'SOL': return 'Solana';
-      default: return symbol;
-    }
-  }
-
-  Future<void> _fetchWalletData() async {
-    if (!mounted) return;
-    setState(() => _isLoading = true);
+    _setupStreams();
+    _fetchUserData();
+    _fetchHistoryData();
     
-    try {
-      // Fetch user data for real wallet address
-      final userData = await AuthService.getUserData();
-      if (userData != null && mounted) {
-        setState(() {
-          _walletAddress = userData['walletAddress'] ?? userData['address'] ?? userData['_id'] ?? 'No Address';
-        });
-      }
-
-      // Fetch history from WalletService
-      final historyResult = await WalletService.getWalletTransferHistory();
-      final transactionResult = await WalletService.getCompleteTransactionHistory(limit: 20);
-      final conversionResult = await WalletService.getConversionHistory(limit: 20);
-
-      double totalEquityUSDT = 0.0;
-      Map<String, dynamic> walletBreakdowns = {};
-      Map<String, Map<String, dynamic>> allAssets = {};
-
-      // Step 1: First fetch SPOT balance from SpotService API (GET /balance/:user_id)
-      debugPrint('Fetching spot balance from SpotService API...');
-      final spotResult = await SpotService.getBalance();
-      debugPrint('SpotService Result: $spotResult');
-
-      // Set default balances for all wallets
-      double mainBalance = 0.0;
-      double spotAvailable = 0.0;
-      double spotLocked = 0.0;
-      double p2pBalance = 0.0;
-      double botBalance = 0.0;
-
-      if (spotResult['success'] == true && spotResult['data'] != null) {
-        final spotData = spotResult['data'];
-        debugPrint('SpotService data: $spotData');
-
-        // Parse spot balance from API response
-        spotAvailable = double.tryParse(spotData['usdt_available']?.toString() ?? '0.0') ?? 0.0;
-        spotLocked = double.tryParse(spotData['usdt_locked']?.toString() ?? '0.0') ?? 0.0;
-
-        // Parse assets array (handle both List and Map formats)
-        final rawAssets = spotData['assets'];
-        List<dynamic>? assetsList;
-        if (rawAssets is List) {
-          assetsList = rawAssets;
-        } else if (rawAssets is Map) {
-          // Convert map to list format
-          assetsList = rawAssets.entries.map((e) {
-            final val = e.value;
-            if (val is Map) {
-              return {'asset': e.key, ...val};
-            }
-            return {'asset': e.key, 'available': val.toString()};
-          }).toList();
-        }
-        
-        if (assetsList != null) {
-          for (final asset in assetsList) {
-            final assetName = asset['asset']?.toString().toUpperCase() ?? '';
-            final available = double.tryParse(asset['available']?.toString() ?? 
-                                             asset['free']?.toString() ?? '0') ?? 0.0;
-            final locked = double.tryParse(asset['locked']?.toString() ?? '0') ?? 0.0;
-            
-            if (assetName == 'USDT') {
-              spotAvailable = available;
-              spotLocked = locked;
-            } else if (assetName == 'BTC' && available > 0) {
-              allAssets['BTC'] = {
-                'symbol': 'BTC',
-                'name': 'Bitcoin',
-                'amount': available.toString(),
-                'available': available.toString(),
-                'locked': locked.toString(),
-                'usdValue': 0.0,
-                'icon': '₿',
-                'color': const Color(0xFFF7931A),
-                'iconUrl': _getCoinIconUrl('BTC'),
-              };
-            }
-          }
-        }
-
-        debugPrint('Parsed Spot Balance - Available: $spotAvailable, Locked: $spotLocked');
-      }
-
-      // Step 2: Fetch wallet balances from WalletService (main, p2p, bot, spot)
-      final balanceResult = await WalletService.getAllWalletBalances();
-      debugPrint('WalletService getAllWalletBalances Result: $balanceResult');
-
-      if (balanceResult['success'] == true && balanceResult['data'] != null) {
-        final data = balanceResult['data'];
-        debugPrint('Processing WalletService data: $data');
-
-        // Handle flat format: {mainBalance: {USDT: Y}, p2pBalance: Z, botBalance: W, spotBalance: X}
-        final walletTypeMap = {
-          'main': 'mainBalance',
-          'p2p': 'p2pBalance',
-          'bot': 'botBalance',
-          'demo_bot': 'demoBalance',
-        };
-
-        for (String type in walletTypeMap.keys) {
-          final fieldName = walletTypeMap[type]!;
-          final walletData = data[fieldName];
-
-          if (walletData != null) {
-            double total = 0.0;
-
-            if (walletData is Map) {
-              // Format: {INR: X, USDT: Y}
-              if (walletData['USDT'] != null) {
-                total = double.tryParse(walletData['USDT'].toString()) ?? 0.0;
-              }
-            } else if (walletData is num) {
-              // Format: p2pBalance: 0 (direct number)
-              total = walletData.toDouble();
-            }
-
-            // Assign to respective wallet
-            switch (type) {
-              case 'main':
-                mainBalance = total;
-                break;
-              case 'p2p':
-                p2pBalance = total;
-                break;
-              case 'bot':
-                botBalance = total;
-                break;
-            }
-            debugPrint('$type USDT from WalletService: $total');
-          }
-        }
-
-        // Parse spotBalance from API response (new format: spotBalance: 15)
-        if (data['spotBalance'] != null) {
-          final spotTotal = double.tryParse(data['spotBalance'].toString()) ?? 0.0;
-          spotAvailable = spotTotal;
-          debugPrint('Spot balance from WalletService API: $spotTotal');
-        }
-
-        // Also try nested format as fallback
-        if (mainBalance == 0 && p2pBalance == 0 && botBalance == 0) {
-          final walletTypes = ['main', 'p2p', 'bot', 'demo_bot'];
-          for (String type in walletTypes) {
-            if (data[type] != null) {
-              final wallet = data[type];
-              if (wallet['balances'] != null && wallet['balances'] is List) {
-                final balances = wallet['balances'] as List;
-                for (var b in balances) {
-                  final coin = b['coin']?.toString().toUpperCase() ?? '';
-                  if (coin == 'USDT') {
-                    final available = double.tryParse(b['available']?.toString() ?? '0') ?? 0.0;
-                    final locked = double.tryParse(b['locked']?.toString() ?? '0') ?? 0.0;
-                    final total = double.tryParse(b['total']?.toString() ?? '0') ?? 0.0;
-                    final calculatedTotal = total > 0 ? total : (available + locked);
-
-                    switch (type) {
-                      case 'main':
-                        mainBalance = calculatedTotal;
-                        break;
-                      case 'p2p':
-                        p2pBalance = calculatedTotal;
-                        break;
-                      case 'bot':
-                        botBalance = calculatedTotal;
-                        break;
-                    }
-                    debugPrint('$type USDT (nested) - Total: $calculatedTotal');
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-
-      // Build wallet breakdowns with all balances
-      walletBreakdowns['main'] = {
-        'total': mainBalance.toStringAsFixed(2),
-        'available': mainBalance.toStringAsFixed(2),
-        'locked': '0.00',
-      };
-
-      walletBreakdowns['spot'] = {
-        'total': (spotAvailable + spotLocked).toStringAsFixed(2),
-        'available': spotAvailable.toStringAsFixed(2),
-        'locked': spotLocked.toStringAsFixed(2),
-      };
-
-      walletBreakdowns['p2p'] = {
-        'total': p2pBalance.toStringAsFixed(2),
-        'available': p2pBalance.toStringAsFixed(2),
-        'locked': '0.00',
-      };
-
-      walletBreakdowns['bot'] = {
-        'total': botBalance.toStringAsFixed(2),
-        'available': botBalance.toStringAsFixed(2),
-        'locked': '0.00',
-      };
-
-      // Calculate total equity (exclude demo_bot)
-      totalEquityUSDT = mainBalance + spotAvailable + spotLocked + p2pBalance + botBalance;
-
-      // Add USDT to assets list
-      allAssets['USDT'] = {
-        'symbol': 'USDT',
-        'name': 'Tether',
-        'amount': totalEquityUSDT.toString(),
-        'available': (spotAvailable + mainBalance + p2pBalance + botBalance).toString(),
-        'locked': spotLocked.toString(),
-        'usdValue': totalEquityUSDT,
-        'icon': '₮',
-        'color': const Color(0xFF26A17B),
-        'iconUrl': _getCoinIconUrl('USDT'),
-      };
-
-      debugPrint('Final wallet balances - Main: $mainBalance, Spot: $spotAvailable (locked: $spotLocked), P2P: $p2pBalance, Bot: $botBalance');
-
-      // Initialize other wallets with zero if not set
-      final walletTypes = ['spot', 'p2p', 'bot', 'demo_bot', 'main'];
-      for (String type in walletTypes) {
-        if (!walletBreakdowns.containsKey(type)) {
-          walletBreakdowns[type] = {'total': '0.00', 'available': '0.00', 'locked': '0.00'};
-        }
-      }
-
-      debugPrint('Final totalEquityUSDT: $totalEquityUSDT');
-      debugPrint('Final walletBreakdowns: $walletBreakdowns');
-      if (historyResult['success'] == true && historyResult['data'] != null) {
-        final data = historyResult['data'];
-        if (data is List) {
-          _transferHistory = data.map((item) => Map<String, dynamic>.from(item)).toList();
-        } else if (data is Map && data['transfers'] != null) {
-          _transferHistory = (data['transfers'] as List).map((item) => Map<String, dynamic>.from(item)).toList();
-        }
-      }
-
-      // Process transaction history (exclude transfers)
-      if (transactionResult['success'] == true && transactionResult['data'] != null) {
-        final data = transactionResult['data'];
-        List<Map<String, dynamic>> transactions = [];
-        if (data is Map && data['transactions'] != null) {
-          transactions = (data['transactions'] as List).map((item) => Map<String, dynamic>.from(item)).toList();
-        } else if (data is List) {
-          transactions = data.map((item) => Map<String, dynamic>.from(item)).toList();
-        }
-        // Filter out transfer transactions
-        _transactionHistory = transactions.where((tx) {
-          final type = tx['transactionType']?.toString().toLowerCase() ??
-                       tx['type']?.toString().toLowerCase() ?? '';
-          return type != 'transfer';
-        }).toList();
-      }
-
-      // Process conversion history
-      if (conversionResult['success'] == true && conversionResult['data'] != null) {
-        final data = conversionResult['data'];
-        List<Map<String, dynamic>> conversions = [];
-        if (data is Map && data['conversions'] != null) {
-          conversions = (data['conversions'] as List).map((item) {
-            final conversion = Map<String, dynamic>.from(item);
-            // Mark as conversion type for UI display
-            conversion['transactionType'] = 'conversion';
-            conversion['isConversion'] = true;
-            return conversion;
-          }).toList();
-        } else if (data is List) {
-          conversions = data.map((item) {
-            final conversion = Map<String, dynamic>.from(item);
-            conversion['transactionType'] = 'conversion';
-            conversion['isConversion'] = true;
-            return conversion;
-          }).toList();
-        }
-        _conversionHistory = conversions;
-        // Merge conversion history with transaction history
-        _transactionHistory = [..._transactionHistory, ..._conversionHistory];
-        // Sort by date (newest first)
-        _transactionHistory.sort((a, b) {
-          final aDate = DateTime.tryParse(a['createdAt']?.toString() ?? '') ?? DateTime.now();
-          final bDate = DateTime.tryParse(b['createdAt']?.toString() ?? '') ?? DateTime.now();
-          return bDate.compareTo(aDate);
-        });
-      }
-
-      if (mounted) {
-        setState(() {
-          _totalBalance = totalEquityUSDT;
-          _walletBalances = walletBreakdowns;
-          _cryptoHoldings = allAssets.values.toList();
-          // If no assets found, put a placeholder USDT
-          if (_cryptoHoldings.isEmpty) {
-            _cryptoHoldings = [{
-              'symbol': 'USDT',
-              'name': 'Tether',
-              'amount': '0.00',
-              'available': '0.00',
-              'locked': '0.00',
-              'usdValue': 0.0,
-              'icon': '₮',
-              'color': const Color(0xFF26A17B),
-              'iconUrl': _getCoinIconUrl('USDT'),
-            }];
-          }
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('Error fetching wallet data: $e');
-      if (mounted) setState(() => _isLoading = false);
-    }
+    // Initial fetch if not already initialized
+    unified.UnifiedWalletService.initialize();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _walletSubscription?.cancel();
+    _coinSubscription?.cancel();
     _tabController.dispose();
-    _balanceUpdateSubscription?.cancel();
+    _holdingsTabController.dispose();
     super.dispose();
+  }
+
+  void _setupStreams() {
+    _walletSubscription = unified.UnifiedWalletService.walletBalanceStream.listen((balance) {
+      if (mounted) {
+        setState(() {
+          _walletBalance = balance;
+          _inrBalance = unified.UnifiedWalletService.totalINRBalance;
+          _isLoading = false;
+        });
+      }
+    });
+
+    _coinSubscription = unified.UnifiedWalletService.coinBalanceStream.listen((coins) {
+      if (mounted) {
+        setState(() {
+          _coinBalances = coins;
+        });
+      }
+    });
+    
+    // Initial state
+    _walletBalance = unified.UnifiedWalletService.walletBalance;
+    _coinBalances = unified.UnifiedWalletService.coinBalance;
+    _inrBalance = unified.UnifiedWalletService.totalINRBalance;
+    if (_walletBalance != null) {
+      _isLoading = false;
+    }
+  }
+
+  Future<void> _fetchUserData() async {
+    final userData = await AuthService.getUserData();
+    if (userData != null && mounted) {
+      setState(() {
+        _walletAddress = userData['walletAddress'] ?? userData['address'] ?? userData['_id'] ?? 'No Address';
+      });
+    }
+  }
+
+  Future<void> _fetchHistoryData() async {
+    try {
+      // Fetch history from WalletService
+      final historyResult = await WalletService.getWalletTransferHistory();
+      final transactionResult = await WalletService.getCompleteTransactionHistory(limit: 20);
+      final conversionResult = await WalletService.getConversionHistory(limit: 20);
+
+      if (mounted) {
+        setState(() {
+          if (historyResult['success'] == true && historyResult['data'] != null) {
+            final data = historyResult['data'];
+            if (data is List) {
+              _transferHistory = data.map((item) => Map<String, dynamic>.from(item)).toList();
+            } else if (data is Map && data['transfers'] != null) {
+              _transferHistory = (data['transfers'] as List).map((item) => Map<String, dynamic>.from(item)).toList();
+            }
+          }
+
+          // Process transaction history
+          if (transactionResult['success'] == true && transactionResult['data'] != null) {
+            final data = transactionResult['data'];
+            if (data is Map && data['transactions'] != null) {
+              _transactionHistory = (data['transactions'] as List).map((item) => Map<String, dynamic>.from(item)).toList();
+            } else if (data is List) {
+              _transactionHistory = data.map((item) => Map<String, dynamic>.from(item)).toList();
+            }
+          }
+
+          // Process conversion history
+          if (conversionResult['success'] == true && conversionResult['data'] != null) {
+            final data = conversionResult['data'];
+            List<Map<String, dynamic>> conversions = [];
+            if (data is Map && data['conversions'] != null) {
+              conversions = (data['conversions'] as List).map((item) {
+                final conversion = Map<String, dynamic>.from(item);
+                conversion['transactionType'] = 'conversion';
+                conversion['isConversion'] = true;
+                return conversion;
+              }).toList();
+            } else if (data is List) {
+              conversions = data.map((item) {
+                final conversion = Map<String, dynamic>.from(item);
+                conversion['transactionType'] = 'conversion';
+                conversion['isConversion'] = true;
+                return conversion;
+              }).toList();
+            }
+            _conversionHistory = conversions;
+            _transactionHistory = [..._transactionHistory, ..._conversionHistory];
+            _transactionHistory.sort((a, b) {
+              final aDate = DateTime.tryParse(a['createdAt']?.toString() ?? '') ?? DateTime.now();
+              final bDate = DateTime.tryParse(b['createdAt']?.toString() ?? '') ?? DateTime.now();
+              return bDate.compareTo(aDate);
+            });
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching history data: $e');
+    }
+  }
+
+  Future<void> _onRefresh() async {
+    await Future.wait([
+      unified.UnifiedWalletService.refreshAllBalances(),
+      _fetchHistoryData(),
+    ]);
   }
 
   void _copyAddress() {
@@ -473,14 +191,14 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh, color: Colors.white),
-            onPressed: _fetchWalletData,
+            onPressed: _onRefresh,
           ),
         ],
       ),
       body: _isLoading
           ? const Center(child: BitcoinLoadingIndicator(size: 40))
           : RefreshIndicator(
-              onRefresh: _fetchWalletData,
+              onRefresh: _onRefresh,
               color: const Color(0xFF84BD00),
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -494,7 +212,7 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
                     const SizedBox(height: 16),
                     _buildActionButtons(),
                     const SizedBox(height: 16),
-                    _buildCryptoHoldings(),
+                    _buildHoldingsSection(),
                     const SizedBox(height: 16),
                     _buildHistorySection(),
                   ],
@@ -505,6 +223,9 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
   }
 
   Widget _buildBalanceSection() {
+    final totalEquity = _walletBalance?.totalEquityUSDT ?? 0.0;
+    final mainUSDT = unified.UnifiedWalletService.mainUSDTBalance; // Main only, not total
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -548,7 +269,7 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
           ),
           const SizedBox(height: 12),
           Text(
-            _currencyFormat.format(_totalBalance),
+            _currencyFormat.format(totalEquity),
             style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: -0.5),
           ),
           const SizedBox(height: 4),
@@ -559,7 +280,7 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
                 style: TextStyle(color: Colors.white54, fontSize: 13),
               ),
               Text(
-                '${_totalBalance.toStringAsFixed(2)} USDT',
+                '${mainUSDT.toStringAsFixed(2)} USDT',
                 style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w500),
               ),
             ],
@@ -590,7 +311,7 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
           Navigator.push(context, MaterialPageRoute(builder: (context) => const DepositScreen()));
         }),
         _actionButton(actions[3]['icon'] as IconData, actions[3]['label'] as String, actions[3]['color'] as Color, () {
-          Navigator.push(context, MaterialPageRoute(builder: (context) => const InternalTransferScreen())).then((_) => _fetchWalletData());
+          Navigator.push(context, MaterialPageRoute(builder: (context) => const InternalTransferScreen())).then((_) => _onRefresh());
         }),
       ],
     );
@@ -654,17 +375,32 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
           itemBuilder: (context, index) {
             final wallet = walletTypes[index];
             final walletCode = wallet['code'] as String;
-            final balance = _walletBalances[walletCode] ?? {'total': '0.00', 'available': '0.00', 'locked': '0.00'};
-            final total = double.tryParse(balance['total']?.toString() ?? '0') ?? 0.0;
-            final locked = double.tryParse(balance['locked']?.toString() ?? '0') ?? 0.0;
-            final available = double.tryParse(balance['available']?.toString() ?? '0') ?? 0.0;
             
-            // Debug logging for spot wallet
-            if (walletCode == 'spot') {
-              debugPrint('=== Spot Wallet Debug ===');
-              debugPrint('_walletBalances: $_walletBalances');
-              debugPrint('balance: $balance');
-              debugPrint('total: $total, available: $available, locked: $locked');
+            double total = 0.0;
+            double available = 0.0;
+            double locked = 0.0;
+            
+            if (_walletBalance != null) {
+              switch (walletCode) {
+                case 'main':
+                  total = available = unified.UnifiedWalletService.mainUSDTBalance;
+                  break;
+                case 'spot':
+                  total = available = _walletBalance!.spotBalance;
+                  // Look for locked in coin balances
+                  final usdtCoin = _coinBalances.where((c) => c.asset == 'USDT').firstOrNull;
+                  if (usdtCoin != null) {
+                    locked = usdtCoin.locked;
+                    total = usdtCoin.total;
+                  }
+                  break;
+                case 'p2p':
+                  total = available = _walletBalance!.p2pBalance;
+                  break;
+                case 'bot':
+                  total = available = _walletBalance!.botBalance;
+                  break;
+              }
             }
             
             return Container(
@@ -707,14 +443,22 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
                     style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
                   ),
                   if (locked > 0)
-                    Text(
-                      '${available.toStringAsFixed(2)} avail • ${locked.toStringAsFixed(2)} locked',
-                      style: const TextStyle(color: Color(0x66FFFFFF), fontSize: 7),
+                    Expanded(
+                      child: Text(
+                        '${available.toStringAsFixed(2)} avail • ${locked.toStringAsFixed(2)} locked',
+                        style: const TextStyle(color: Color(0x66FFFFFF), fontSize: 7),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
                     )
                   else
-                    const Text(
-                      'USDT',
-                      style: TextStyle(color: Color(0x66FFFFFF), fontSize: 7),
+                    const Expanded(
+                      child: Text(
+                        'USDT',
+                        style: TextStyle(color: Color(0x66FFFFFF), fontSize: 7),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
                     ),
                 ],
               ),
@@ -725,17 +469,384 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
     );
   }
 
-  Widget _buildCryptoHoldings() {
+  Widget _buildHoldingsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Assets',
-          style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+        TabBar(
+          controller: _holdingsTabController,
+          indicatorColor: const Color(0xFF84BD00),
+          indicatorSize: TabBarIndicatorSize.label,
+          labelColor: const Color(0xFF84BD00),
+          unselectedLabelColor: Colors.white60,
+          labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+          tabs: const [
+            Tab(text: 'Wallet'),
+            Tab(text: 'Coins'),
+          ],
         ),
-        const SizedBox(height: 8),
-        ..._cryptoHoldings.map((crypto) => _cryptoListItem(crypto)).toList(),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 400,
+          child: TabBarView(
+            controller: _holdingsTabController,
+            children: [
+              _buildWalletAssetsView(),
+              _buildCoinsView(),
+            ],
+          ),
+        ),
       ],
+    );
+  }
+
+  Widget _buildWalletAssetsView() {
+    List<Map<String, dynamic>> assets = [];
+    
+    // Main Wallet USDT only (not sum)
+    final mainUSDT = unified.UnifiedWalletService.mainUSDTBalance;
+    if (mainUSDT > 0) {
+      assets.add({
+        'symbol': 'USDT',
+        'name': 'Tether',
+        'amount': mainUSDT.toString(),
+        'available': mainUSDT.toString(),
+        'locked': '0.00',
+        'usdValue': mainUSDT,
+        'icon': '₮',
+        'color': const Color(0xFF26A17B),
+        'iconUrl': _getCoinIconUrl('USDT'),
+      });
+    }
+
+    // Total INR from all sources (main + spot + bot)
+    final totalINR = _inrBalance;
+    if (totalINR > 0) {
+      assets.add({
+        'symbol': 'INR',
+        'name': 'Indian Rupee',
+        'amount': totalINR.toString(),
+        'available': totalINR.toString(),
+        'locked': '0.00',
+        'usdValue': totalINR / 90.0,
+        'icon': '₹',
+        'color': const Color(0xFFE44134),
+        'iconUrl': '',
+      });
+    }
+
+    return ListView.builder(
+      padding: EdgeInsets.zero,
+      itemCount: assets.length,
+      itemBuilder: (context, index) => _cryptoListItem(assets[index]),
+    );
+  }
+
+  Widget _buildCoinsView() {
+    // Show all spot coins including zero balance
+    final coins = _coinBalances;
+    
+    if (coins.isEmpty) {
+      return const Center(
+        child: Text(
+          'No coins found',
+          style: TextStyle(color: Colors.white54, fontSize: 12),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: EdgeInsets.zero,
+      itemCount: coins.length,
+      itemBuilder: (context, index) {
+        final coin = coins[index];
+        return _buildSpotCoinItem(coin);
+      },
+    );
+  }
+
+  Widget _buildSpotHoldingsView() {
+    // Get all spot assets from wallet balance (including zero balance)
+    final spotAssets = _walletBalance?.spotAssets ?? {};
+    debugPrint('WalletScreen: spotAssets count: ${spotAssets.length}');
+    debugPrint('WalletScreen: spotAssets keys: ${spotAssets.keys.toList()}');
+    final allSpotAssets = spotAssets.entries.toList();
+    
+    // Calculate total spot value in USDT
+    final totalSpotUSDT = _walletBalance?.spotBalance ?? 0.0;
+    final usdtCoin = _coinBalances.where((c) => c.asset == 'USDT').firstOrNull;
+    final lockedUSDT = usdtCoin?.locked ?? 0.0;
+    final totalUSDT = usdtCoin?.total ?? totalSpotUSDT;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Spot Summary Card
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                const Color(0xFF627EEA).withValues(alpha: 0.15),
+                const Color(0xFF1E1E20),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFF627EEA).withValues(alpha: 0.2)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF627EEA).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Icon(Icons.trending_up, color: Color(0xFF627EEA), size: 14),
+                  ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Spot Balance',
+                    style: TextStyle(color: Colors.white54, fontSize: 10),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '${totalUSDT.toStringAsFixed(2)} USDT',
+                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              if (lockedUSDT > 0)
+                Text(
+                  '${(totalUSDT - lockedUSDT).toStringAsFixed(2)} avail • ${lockedUSDT.toStringAsFixed(2)} locked',
+                  style: const TextStyle(color: Colors.orange, fontSize: 9),
+                ),
+              const SizedBox(height: 6),
+              Text(
+                '${allSpotAssets.length} Assets',
+                style: const TextStyle(color: Colors.white38, fontSize: 10),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        
+        // Spot Token List - Show all assets including zero balance
+        Expanded(
+          child: allSpotAssets.isEmpty
+              ? Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E1E20),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Center(
+                    child: Text(
+                      'No spot holdings found',
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                  ),
+                )
+              : ListView.builder(
+                  padding: EdgeInsets.zero,
+                  itemCount: allSpotAssets.length,
+                  itemBuilder: (context, index) => _buildSpotAssetItem(allSpotAssets[index]),
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSpotCoinItem(unified.CoinBalance coin) {
+    final iconUrl = _getCoinIconUrl(coin.asset);
+    final color = _getCoinColor(coin.asset);
+    final symbol = _getCoinSymbol(coin.asset);
+    final name = _getCoinFullName(coin.asset);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E20),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.1),
+              shape: BoxShape.circle,
+            ),
+            child: iconUrl.isNotEmpty
+                ? ClipOval(
+                    child: Image.network(
+                      iconUrl,
+                      width: 40,
+                      height: 40,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => Center(
+                        child: Text(
+                          symbol,
+                          style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16),
+                        ),
+                      ),
+                    ),
+                  )
+                : Center(
+                    child: Text(
+                      symbol,
+                      style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  coin.asset,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  name,
+                  style: const TextStyle(color: Colors.white54, fontSize: 10),
+                ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                coin.total.toStringAsFixed(coinDecimals(coin.asset)),
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '${coin.free.toStringAsFixed(coinDecimals(coin.asset))} avail',
+                style: const TextStyle(color: Colors.white54, fontSize: 9),
+              ),
+              if (coin.locked > 0)
+                Text(
+                  '${coin.locked.toStringAsFixed(coinDecimals(coin.asset))} locked',
+                  style: const TextStyle(color: Colors.orange, fontSize: 8),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSpotAssetItem(MapEntry<String, dynamic> assetEntry) {
+    final asset = assetEntry.key;
+    final assetData = assetEntry.value as Map<String, dynamic>? ?? {};
+    final free = double.tryParse(assetData['free']?.toString() ?? assetData['available']?.toString() ?? '0') ?? 0.0;
+    final locked = double.tryParse(assetData['locked']?.toString() ?? '0') ?? 0.0;
+    final total = free + locked;
+
+    final iconUrl = _getCoinIconUrl(asset);
+    final color = _getCoinColor(asset);
+    final symbol = _getCoinSymbol(asset);
+    final name = _getCoinFullName(asset);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E20),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.1),
+              shape: BoxShape.circle,
+            ),
+            child: iconUrl.isNotEmpty
+                ? ClipOval(
+                    child: Image.network(
+                      iconUrl,
+                      width: 40,
+                      height: 40,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => Center(
+                        child: Text(
+                          symbol,
+                          style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16),
+                        ),
+                      ),
+                    ),
+                  )
+                : Center(
+                    child: Text(
+                      symbol,
+                      style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  asset,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  name,
+                  style: const TextStyle(color: Colors.white54, fontSize: 10),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(
+            width: 80,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  total.toStringAsFixed(coinDecimals(asset)),
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${free.toStringAsFixed(coinDecimals(asset))} avail',
+                  style: const TextStyle(color: Colors.white54, fontSize: 9),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+                if (locked > 0)
+                  Text(
+                    '${locked.toStringAsFixed(coinDecimals(asset))} locked',
+                    style: const TextStyle(color: Colors.orange, fontSize: 8),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1117,6 +1228,26 @@ class _WalletScreenState extends State<WalletScreen> with SingleTickerProviderSt
       case 'ETH': return const Color(0xFF627EEA);
       case 'USDT': return const Color(0xFF26A17B);
       default: return const Color(0xFF84BD00);
+    }
+  }
+
+  String _getCoinFullName(String coin) {
+    switch (coin.toUpperCase()) {
+      case 'BTC': return 'Bitcoin';
+      case 'ETH': return 'Ethereum';
+      case 'USDT': return 'Tether';
+      case 'BNB': return 'Binance Coin';
+      case 'SOL': return 'Solana';
+      case 'ADA': return 'Cardano';
+      case 'DOT': return 'Polkadot';
+      case 'MATIC': return 'Polygon';
+      case 'AVAX': return 'Avalanche';
+      case 'LINK': return 'Chainlink';
+      case 'UNI': return 'Uniswap';
+      case 'LTC': return 'Litecoin';
+      case 'XRP': return 'Ripple';
+      case 'INR': return 'Indian Rupee';
+      default: return coin;
     }
   }
 

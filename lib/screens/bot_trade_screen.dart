@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'bot_trade_detail_screen.dart';
 import 'package_program_screen.dart';
 import 'bot_history_screen.dart';
+import 'bot_algorithm_screen.dart';
 import '../services/bot_service.dart';
 
 class BotTradeScreen extends StatefulWidget {
@@ -725,13 +726,24 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
               if (isAvailable)
                 ElevatedButton(
                   onPressed: () {
-                    // Navigate to details screen, not directly to package
-                    Navigator.push(
-                      context, 
-                      MaterialPageRoute(
-                        builder: (context) => BotTradeDetailScreen(name: name, multiplier: multiplier)
-                      )
-                    ).then((_) => setState(() {}));
+                    // Check if user has active subscription
+                    if (_userSubscription != null && _subscriptionDaysLeft > 0) {
+                      // User is subscribed, navigate directly to Algos screen
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const BotAlgorithmScreen()
+                        )
+                      ).then((_) => setState(() {}));
+                    } else {
+                      // Navigate to details screen for subscription
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => BotTradeDetailScreen(name: name, multiplier: multiplier)
+                        )
+                      ).then((_) => setState(() {}));
+                    }
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF84BD00),

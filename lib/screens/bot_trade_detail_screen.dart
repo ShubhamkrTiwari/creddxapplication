@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import '../services/bot_service.dart';
+import '../services/unified_wallet_service.dart';
 import 'package_program_screen.dart';
 
 class BotTradeDetailScreen extends StatefulWidget {
+  static bool hasPackage = false;
   final String name;
   final String multiplier;
 
@@ -12,11 +14,6 @@ class BotTradeDetailScreen extends StatefulWidget {
     required this.name,
     required this.multiplier,
   });
-
-  // Simple static states to simulate persistence for this demo session
-  static bool hasPackage = false;
-  static bool isInvested = false;
-  static double investedAmount = 0.0;
 
   @override
   State<BotTradeDetailScreen> createState() => _BotTradeDetailScreenState();
@@ -27,6 +24,9 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
   final TextEditingController _withdrawController = TextEditingController();
   
   bool _isLoading = true;
+  bool _hasPackage = false;
+  bool _isInvested = false;
+  double _investedAmount = 0.0;
   Map<String, dynamic>? _performanceData;
 
   @override
@@ -50,14 +50,14 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
           final now = DateTime.now();
           final daysLeft = endDate.difference(now).inDays;
           
-          // Only set hasPackage if subscription is still active
+          // Only set _hasPackage if subscription is still active
           if (daysLeft > 0) {
             setState(() {
-              BotTradeDetailScreen.hasPackage = true;
+              _hasPackage = true;
             });
           } else {
             setState(() {
-              BotTradeDetailScreen.hasPackage = false;
+              _hasPackage = false;
             });
           }
         }
@@ -88,18 +88,50 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
 
   Future<void> _fetchUserBalanceHistory() async {
     try {
-      final response = await BotService.getUserBalanceHistory();
+      final response = await BotService.getBotBalance();
       if (mounted && response['success'] == true) {
-        final investedAmount = response['investedAmount'] ?? response['data']?['investedAmount'] ?? 0.0;
-        if (investedAmount > 0) {
-          setState(() {
-            BotTradeDetailScreen.investedAmount = investedAmount.toDouble();
-            BotTradeDetailScreen.isInvested = true;
+        final data = response['data'] ?? {};
+        
+        // Use exact strategy name mapping to check investment
+        String mappedStrategyKey = 'Omega';
+        if (widget.name.toLowerCase().contains('omega')) {
+          mappedStrategyKey = 'Omega';
+        } else if (widget.name.toLowerCase().contains('alpha')) {
+          mappedStrategyKey = 'Alpha';
+        } else if (widget.name.toLowerCase().contains('ranger')) {
+          mappedStrategyKey = 'Ranger';
+        } else if (widget.name.toLowerCase().contains('delta')) {
+          mappedStrategyKey = 'Delta';
+        }
+
+        // Get invested amount for this specific bot from user data
+        final userDataResult = await BotService.getUserData();
+        if (userDataResult['success'] == true) {
+          final userData = userDataResult['data'] ?? {};
+          final investments = userData['investments'] as Map<String, dynamic>? ?? {};
+          
+          double specificInvestment = 0.0;
+          investments.forEach((key, value) {
+            if (key.toLowerCase().contains(mappedStrategyKey.toLowerCase())) {
+              specificInvestment += double.tryParse(value.toString()) ?? 0.0;
+            }
           });
+
+          if (specificInvestment > 0) {
+            setState(() {
+              _investedAmount = specificInvestment;
+              _isInvested = true;
+            });
+          } else {
+            setState(() {
+              _investedAmount = 0.0;
+              _isInvested = false;
+            });
+          }
         }
       }
     } catch (e) {
-      debugPrint('Error fetching user balance history: $e');
+      debugPrint('Error fetching bot balance: $e');
     }
   }
 
@@ -242,7 +274,7 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
   }
 
   void _handleInvestClick() {
-    if (BotTradeDetailScreen.hasPackage) {
+    if (_hasPackage) {
       _showAmountDialog(
         title: 'Enter Investment Amount',
         hint: 'Max: \$19.00',
@@ -253,7 +285,9 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
       Navigator.push(
         context,
         MaterialPageRoute(builder: (context) => const PackageProgramScreen()),
-      ).then((_) => setState(() {})); 
+      ).then((_) {
+        _checkUserSubscription();
+      }); 
     }
   }
 
@@ -276,7 +310,7 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
 
         if (result['success'] == true) {
           setState(() {
-            BotTradeDetailScreen.isInvested = false;
+            _isInvested = false;
           });
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -285,8 +319,8 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
               duration: const Duration(seconds: 3),
             ),
           );
-          // Refresh total investment across the app
-          BotService.updateTotalInvestment(amount, isAddition: false);
+          // Refresh balance via UnifiedWalletService
+          UnifiedWalletService.refreshBotBalance();
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -332,8 +366,8 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
 
         if (result['success'] == true) {
           setState(() {
-            BotTradeDetailScreen.isInvested = true;
-            BotTradeDetailScreen.investedAmount = amount;
+            _isInvested = true;
+            _investedAmount = amount;
           });
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -342,8 +376,8 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
               duration: const Duration(seconds: 3),
             ),
           );
-          // Refresh total investment across the app
-          BotService.updateTotalInvestment(amount, isAddition: true);
+          // Refresh balance via UnifiedWalletService
+          UnifiedWalletService.refreshBotBalance();
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -456,7 +490,7 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
 
                 const SizedBox(height: 40),
                 
-                if (BotTradeDetailScreen.isInvested) ...[
+                if (_isInvested) ...[
                   Padding(
                     padding: const EdgeInsets.only(bottom: 24.0),
                     child: Row(
@@ -471,7 +505,7 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
                           ),
                         ),
                         Text(
-                          '${BotTradeDetailScreen.investedAmount.toStringAsFixed(2)} USDT',
+                          '${_investedAmount.toStringAsFixed(2)} USDT',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 18,
@@ -485,7 +519,7 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
                 
                 Padding(
                   padding: const EdgeInsets.only(bottom: 30.0),
-                  child: BotTradeDetailScreen.isInvested
+                  child: _isInvested
                     ? Row(
                         children: [
                           Expanded(
@@ -523,7 +557,7 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
                               child: ElevatedButton(
                                 onPressed: () => _showAmountDialog(
                                   title: 'Enter Withdrawal Amount',
-                                  hint: 'Total: \$${BotTradeDetailScreen.investedAmount.toStringAsFixed(2)}',
+                                  hint: 'Total: \$${_investedAmount.toStringAsFixed(2)}',
                                   controller: _withdrawController,
                                   isConfirmingInvestment: false,
                                 ),

@@ -353,6 +353,49 @@ class AuthService {
     }
   }
 
+  // Generic OTP generation for various purposes
+  static Future<Map<String, dynamic>> generateOtp({required String purpose, String? email}) async {
+    try {
+      final deviceUuid = await getDeviceUuid();
+      final osInt = getDeviceOSInt();
+
+      final payload = {
+        'purpose': purpose,
+        if (email != null) 'email': email.trim(),
+        'os': osInt,
+        'deviceOs': osInt,
+        'deviceUuid': deviceUuid,
+        'deviceName': getDeviceName(),
+      };
+
+      debugPrint('Generating OTP for purpose: $purpose');
+
+      final response = await http.post(
+        Uri.parse('$_baseUrl/user/v1/otp/generate'),
+        headers: _getHeaders(),
+        body: jsonEncode(payload),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = json.decode(response.body);
+        return {
+          'success': true,
+          'message': data['message'] ?? 'OTP generated successfully',
+          'data': data,
+        };
+      } else {
+        final errorData = json.decode(response.body);
+        return {
+          'success': false,
+          'message': errorData['message'] ?? errorData['error'] ?? 'Failed to generate OTP',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error generating OTP: $e');
+      return {'success': false, 'message': 'Network error: $e'};
+    }
+  }
+
   static Future<Map<String, dynamic>> loginWithOtp(String email, String otp) async {
     try {
       final deviceUuid = await getDeviceUuid();

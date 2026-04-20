@@ -4,7 +4,6 @@ import '../services/wallet_service.dart';
 import '../services/spot_service.dart';
 import '../services/socket_service.dart';
 import 'package:intl/intl.dart';
-import 'otp_verification_screen.dart';
 
 class InternalTransferScreen extends StatefulWidget {
   const InternalTransferScreen({super.key});
@@ -178,12 +177,16 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
             if (walletData != null) {
               double available = 0.0;
               double total = 0.0;
+              double inrTotal = 0.0;
               
               if (walletData is Map) {
                 // Format: {INR: X, USDT: Y}
                 if (walletData['USDT'] != null) {
                   total = double.tryParse(walletData['USDT'].toString()) ?? 0.0;
                   available = total; // For main wallet, assume all is available
+                }
+                if (walletData['INR'] != null) {
+                  inrTotal = double.tryParse(walletData['INR'].toString()) ?? 0.0;
                 }
               } else if (walletData is num) {
                 // Format: p2pBalance: 0 (direct number)
@@ -195,10 +198,11 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                 'available': available.toStringAsFixed(2),
                 'locked': '0.00',
                 'total': total.toStringAsFixed(2),
+                'inr_total': inrTotal.toStringAsFixed(2),
               };
               
               foundBalances = true;
-              debugPrint('$type USDT - Available: $available, Total: $total');
+              debugPrint('$type USDT - Available: $available, Total: $total, INR: $inrTotal');
             }
           }
           
@@ -339,12 +343,13 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
     }
 
     setState(() => _isLoading = true);
-    
+
     try {
+      // Perform transfer directly without OTP
       int fromWalletNumber = _getWalletTypeNumber(_fromWallet);
       int toWalletNumber = _getWalletTypeNumber(_toWallet);
       String coinId = _getCoinId(_selectedCoin);
-      
+
       final result = await WalletService.transferBetweenWallets(
         coinId: coinId,
         from: fromWalletNumber,
@@ -352,12 +357,14 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
         amount: amount,
       );
 
-      if (mounted) {
-        if (result['success'] == true) {
-          _amountController.clear();
-          await _fetchBalances(); // Refresh balances
-          await _fetchTransferHistory(); // Refresh transfer history
-          
+      if (!mounted) return;
+
+      if (result['success'] == true) {
+        _amountController.clear();
+        await _fetchBalances(); // Refresh balances
+        await _fetchTransferHistory(); // Refresh transfer history
+
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Transfer Successful'),
@@ -365,9 +372,9 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
               duration: Duration(seconds: 4),
             ),
           );
-        } else {
-          _showError(result['error'] ?? 'Transfer failed');
         }
+      } else {
+        _showError(result['error'] ?? 'Transfer failed');
       }
     } catch (e) {
       if (mounted) {
@@ -948,9 +955,18 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(wallet['name']!),
-                      Text(
-                        'Available: $available USDT',
-                        style: const TextStyle(color: Color(0xFF84BD00), fontSize: 10),
+                      Row(
+                        children: [
+                          Text(
+                            'Available: $available USDT',
+                            style: const TextStyle(color: Color(0xFF84BD00), fontSize: 10),
+                          ),
+                          if (walletCode == 'main' && balance['inr_total'] != null && balance['inr_total'] != '0.00')
+                            Text(
+                              ' | ₹${balance['inr_total']}',
+                              style: const TextStyle(color: Colors.orange, fontSize: 10),
+                            ),
+                        ],
                       ),
                     ],
                   ),

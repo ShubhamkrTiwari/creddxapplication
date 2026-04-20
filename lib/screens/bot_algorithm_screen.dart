@@ -11,12 +11,17 @@ class BotAlgorithmScreen extends StatefulWidget {
 }
 
 class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
-  Map<String, dynamic>? userData;
+  // User data state
+  double walletBalance = 0;
+  String? subscriptionPlan;
+  Map<String, double> investments = {};
+  bool btnDisable = true;
+  String? errorMessage;
+  
+  // Loading states
   bool isLoadingUserData = true;
   bool isLoadingStrategies = true;
   Map<String, dynamic>? strategyPerformanceData;
-  Map<String, dynamic>? botBalanceData;
-  bool isLoadingBotBalance = true;
 
   final List<Map<String, dynamic>> _strategies = [
     {
@@ -51,8 +56,30 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
     },
   ];
 
+  // 7. Invest Button Conditions - Check if invest should be enabled
+  bool _isInvestEnabled(Map<String, dynamic> strategy) {
+    // If loading, disable
+    if (btnDisable || isLoadingUserData) return false;
+
+    // If subscriptionPlan == null, disable (user must subscribe first)
+    if (subscriptionPlan == null) return false;
+
+    // If strategy.available == false (Coming Soon), disable
+    if (strategy['isComingSoon'] == true) return false;
+
+    // User can invest if they have wallet balance OR already have investment in this strategy
+    final strategyKey = strategy['name']?.toString() ?? '';
+    final hasExistingInvestment = (investments[strategyKey] ?? 0) > 0;
+    
+    // Enable if wallet has balance OR user has existing investment (for invest more)
+    if (walletBalance > 0 || hasExistingInvestment) return true;
+
+    // Else, disable
+    return false;
+  }
+
   Widget _buildBotBalanceSection() {
-    if (isLoadingBotBalance) {
+    if (isLoadingUserData) {
       return Container(
         margin: const EdgeInsets.symmetric(horizontal: 20),
         padding: const EdgeInsets.all(10),
@@ -86,44 +113,6 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
         ),
       );
     }
-
-    if (botBalanceData == null) {
-      return Container(
-        margin: const EdgeInsets.symmetric(horizontal: 20),
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: const Color(0xFF0F0F0F),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: Colors.white.withOpacity(0.1),
-          ),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.account_balance_wallet, color: Colors.grey, size: 16),
-            SizedBox(width: 8),
-            Text(
-              'Balance unavailable',
-              style: TextStyle(
-                color: Colors.grey,
-                fontSize: 12,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    final currency = botBalanceData!['currency'] ?? 'USDT';
-    final totalBalance = botBalanceData!['totalBalance']?.toString() ?? '0.00';
-    final availableBalance = botBalanceData!['availableBalance']?.toString() ?? '0.00';
-    final investedBalance = botBalanceData!['investedBalance']?.toString() ?? '0.00';
-    
-    debugPrint('=== BALANCE UI VALUES ===');
-    debugPrint('Currency: $currency');
-    debugPrint('Total Balance: $totalBalance');
-    debugPrint('Available Balance: $availableBalance');
-    debugPrint('Invested Balance: $investedBalance');
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20),
@@ -160,7 +149,7 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Total Balance',
+                    'Available Balance',
                     style: TextStyle(
                       color: Color(0xFF8E8E93),
                       fontSize: 10,
@@ -168,7 +157,7 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
                   ),
                   SizedBox(height: 4),
                   Text(
-                    '$totalBalance $currency',
+                    '\$${walletBalance.toStringAsFixed(2)} USDT',
                     style: TextStyle(
                       color: Color(0xFF84BD00),
                       fontSize: 14,
@@ -177,48 +166,22 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
                   ),
                 ],
               ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    'Available',
-                    style: TextStyle(
-                      color: Color(0xFF8E8E93),
-                      fontSize: 10,
-                    ),
+              if (subscriptionPlan != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF84BD00).withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(4),
                   ),
-                  SizedBox(height: 4),
-                  Text(
-                    '$availableBalance $currency',
+                  child: Text(
+                    'Subscribed: $subscriptionPlan',
                     style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
+                      color: Color(0xFF84BD00),
+                      fontSize: 10,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
-                ],
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    'Invested',
-                    style: TextStyle(
-                      color: Color(0xFF8E8E93),
-                      fontSize: 10,
-                    ),
-                  ),
-                  SizedBox(height: 4),
-                  Text(
-                    '$investedBalance $currency',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
+                ),
             ],
           ),
         ],
@@ -229,9 +192,24 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
   @override
   void initState() {
     super.initState();
-    _fetchUserData();
-    _fetchStrategyPerformance();
-    _fetchBotBalance();
+    _initializeData();
+  }
+
+  Future<void> _initializeData() async {
+    // 1. On Page Load - Reset state
+    setState(() {
+      btnDisable = true;
+      walletBalance = 0;
+      subscriptionPlan = null;
+      investments = {};
+      errorMessage = null;
+    });
+
+    // 2. Call APIs
+    await Future.wait([
+      _fetchUserData(),
+      _fetchStrategyPerformance(),
+    ]);
   }
 
   @override
@@ -264,31 +242,6 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
     }
   }
 
-  Future<void> _fetchBotBalance() async {
-    try {
-      final result = await BotService.getBotBalance();
-      debugPrint('=== BOT BALANCE RESULT ===');
-      debugPrint('Result: $result');
-      if (result['success'] == true) {
-        setState(() {
-          botBalanceData = result['data'];
-          debugPrint('Bot Balance Data Set: $botBalanceData');
-          isLoadingBotBalance = false;
-        });
-      } else {
-        debugPrint('Bot Balance Failed: ${result['error']}');
-        setState(() {
-          isLoadingBotBalance = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('Bot Balance Exception: $e');
-      setState(() {
-        isLoadingBotBalance = false;
-      });
-    }
-  }
-
   void _updateStrategiesWithRealData() {
     if (strategyPerformanceData == null) return;
     
@@ -309,18 +262,68 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
   Future<void> _fetchUserData() async {
     try {
       final response = await BotService.getUserData();
-      
+
       if (mounted) {
         setState(() {
-          if (response['success']) {
-            userData = response['data'];
+          if (response['success'] == true && response['data'] != null) {
+            final data = response['data'];
+
+            // 3. Set Wallet Balance
+            walletBalance = (data['balance'] as num?)?.toDouble() ?? 0;
+
+            // 4. Check Subscription with endDate validation
+            final subscription = data['subscription'];
+            if (subscription != null && subscription['endDate'] != null) {
+              final endDate = DateTime.tryParse(subscription['endDate'].toString());
+              final currentDate = DateTime.now();
+
+              if (endDate != null) {
+                final remainingDays = endDate.difference(currentDate).inDays;
+
+                if (remainingDays <= 0) {
+                  // Expired subscription
+                  subscriptionPlan = null;
+                } else {
+                  // Active subscription
+                  subscriptionPlan = subscription['plan']?.toString();
+                }
+              } else {
+                subscriptionPlan = subscription['plan']?.toString();
+              }
+            } else {
+              subscriptionPlan = null;
+            }
+
+            // 5. Set Investments (Strategy-wise)
+            investments = {
+              'Alpha-2X': (data['maxWithdrawAplha'] as num?)?.toDouble() ?? 0,
+              'Omega-3X': (data['maxWithdrawOmega'] as num?)?.toDouble() ?? 0,
+            };
+
+            errorMessage = null;
+          } else {
+            // 8. Error Handling
+            errorMessage = 'Failed to fetch user info.';
+            walletBalance = 0;
+            subscriptionPlan = null;
+            investments = {};
           }
+
+          // 6. Button Control - After API success/fail
+          btnDisable = false;
           isLoadingUserData = false;
         });
       }
     } catch (e) {
+      debugPrint('Error fetching user data: $e');
       if (mounted) {
         setState(() {
+          // 8. Error Handling
+          errorMessage = 'Failed to fetch user info.';
+          walletBalance = 0;
+          subscriptionPlan = null;
+          investments = {};
+          btnDisable = false;
           isLoadingUserData = false;
         });
       }
@@ -346,8 +349,8 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
   void _showInvestDialog(Map<String, dynamic> strategy) {
     final TextEditingController amountController = TextEditingController();
 
-    // Get available balance for max invest amount
-    final availableBalance = botBalanceData?['availableBalance']?.toString() ?? '0.0';
+    // Get available balance for max invest amount from walletBalance
+    final availableBalance = walletBalance.toStringAsFixed(2);
 
     showDialog(
       context: context,
@@ -480,7 +483,6 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
                     );
                     // Refresh data
                     _fetchUserData();
-                    _fetchBotBalance();
                     setState(() {});
                   } else {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -515,10 +517,9 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
   void _showWithdrawDialog(Map<String, dynamic> strategy) {
     final TextEditingController amountController = TextEditingController();
     
-    // Get the invested amount for this strategy from userData
-    final investments = userData?['investments'] as Map<String, dynamic>? ?? {};
+    // Get the invested amount for this strategy from investments state
     final strategyKey = strategy['name']?.toString() ?? '';
-    final investedAmount = investments[strategyKey]?.toString() ?? '0.0';
+    final investedAmount = investments[strategyKey]?.toStringAsFixed(2) ?? '0.0';
     final maxWithdraw = double.tryParse(investedAmount) ?? 0.0;
     
     showDialog(
@@ -701,7 +702,6 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
           await Future.wait([
             _fetchUserData(),
             _fetchStrategyPerformance(),
-            _fetchBotBalance(),
           ]);
         },
         child: SingleChildScrollView(
@@ -711,78 +711,6 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
               const SizedBox(height: 20),
               // Bot Balance Section
               _buildBotBalanceSection(),
-              const SizedBox(height: 20),
-              // User Info Section
-            if (!isLoadingUserData && userData != null)
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: 20),
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0F0F0F),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.1),
-                  ),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Welcome back, ${userData!['name'] ?? 'User'}!',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Subscription: ${userData!['subscription'] ?? 'Free'}',
-                            style: const TextStyle(
-                              color: Color(0xFF84BD00),
-                              fontSize: 10,
-                              fontWeight: FontWeight.w500,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Total Investment: \$${userData!['totalInvestment'] ?? '0'}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w500,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF84BD00),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        'Active Bots: ${userData!['activeBots'] ?? 0}',
-                        style: const TextStyle(
-                          color: Colors.black,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            if (!isLoadingUserData && userData != null)
               const SizedBox(height: 20),
             Center(
               child: Padding(
@@ -1015,7 +943,10 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
                 : Row(
                     children: [
                       Expanded(
-                        child: _buildActionButton('Invest more ↗', () => _showInvestDialog(strategy)),
+                        child: _buildActionButton(
+                          'Invest more ↗',
+                          _isInvestEnabled(strategy) ? () => _showInvestDialog(strategy) : null,
+                        ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -1118,13 +1049,19 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
     );
   }
 
-  Widget _buildActionButton(String label, VoidCallback onTap) {
+  Widget _buildActionButton(String label, VoidCallback? onTap) {
+    final bool isDisabled = onTap == null;
+    final bool isInvest = label.contains('Invest');
+
     return GestureDetector(
       onTap: onTap,
+      behavior: HitTestBehavior.opaque,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 16),
         decoration: BoxDecoration(
-          color: label.contains('Invest') ? const Color(0xFF84BD00) : Colors.transparent,
+          color: isInvest
+              ? (isDisabled ? const Color(0xFF444444) : const Color(0xFF84BD00))
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(12),
           border: label.contains('Withdraw')
               ? Border.all(color: Colors.white.withOpacity(0.1))
@@ -1134,7 +1071,9 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
           child: Text(
             label,
             style: TextStyle(
-              color: label.contains('Invest') ? Colors.black : Colors.white,
+              color: isInvest
+                  ? (isDisabled ? Colors.white54 : Colors.black)
+                  : Colors.white,
               fontSize: 14,
               fontWeight: FontWeight.bold,
             ),

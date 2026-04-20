@@ -51,7 +51,7 @@ class _InrDepositScreenState extends State<InrDepositScreen> {
 
     try {
       // Step 1: Send OTP
-      final otpResult = await WalletService.sendOtp(purpose: 'inr_deposit');
+      final otpResult = await WalletService.sendOtp(purpose: 'inr_withdraw');
 
       if (otpResult['success'] == true) {
         if (!mounted) return;
@@ -62,17 +62,14 @@ class _InrDepositScreenState extends State<InrDepositScreen> {
           MaterialPageRoute(
             builder: (context) => OtpVerificationScreen(
               onVerify: (otp) async {
-                // For deposit, we verify OTP first, then proceed to payment details
-                // The actual deposit request happens later in PaymentProofScreen
-                // So we just return success here if OTP is correct
-                // However, WalletService needs a dedicated verifyOtp method for this
-                // Or we can use a dummy purpose or check if OTP is valid
-                
-                // Assuming we need a verifyOtp call here
-                // For now, let's assume it's successful if we reached here or use a helper
-                return {'success': true}; 
+                // Verify OTP before proceeding to payment details
+                final result = await WalletService.verifyOtp(otp: otp);
+                return {
+                  'success': result['success'],
+                  'message': result['error'] ?? result['message']
+                };
               },
-              onResend: () => WalletService.sendOtp(purpose: 'inr_deposit'),
+              onResend: () => WalletService.sendOtp(purpose: 'inr_withdraw'),
             ),
           ),
         );

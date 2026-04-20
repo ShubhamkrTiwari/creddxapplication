@@ -1180,6 +1180,48 @@ class WalletService {
     }
   }
 
+  // Verify OTP for various purposes
+  static Future<Map<String, dynamic>> verifyOtp({required String otp, String? purpose}) async {
+    try {
+      final requestBody = {
+        'otp': otp,
+        if (purpose != null) 'purpose': purpose,
+      };
+      debugPrint('Verifying OTP for purpose: $purpose');
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/v1/otp/verify'),
+        headers: await _getHeaders(),
+        body: json.encode(requestBody),
+      );
+
+      debugPrint('Verify OTP Response: ${response.statusCode}');
+
+      dynamic data;
+      try {
+        data = json.decode(response.body);
+      } catch (e) {
+        debugPrint('Failed to decode verify OTP response: ${response.body}');
+        return {
+          'success': false,
+          'error': 'Failed to verify OTP. Server returned an invalid response.',
+        };
+      }
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return {'success': true, 'data': data, 'message': data['message'] ?? 'OTP verified successfully'};
+      } else {
+        return {
+          'success': false,
+          'error': data['message'] ?? data['error'] ?? 'Failed to verify OTP',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error in verifyOtp: $e');
+      return {'success': false, 'error': 'Network error: $e'};
+    }
+  }
+
   // Internal transfer - send crypto to another CreddX user
   static Future<Map<String, dynamic>> internalTransfer({
     required String receiverUid,

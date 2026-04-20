@@ -14,6 +14,7 @@ import 'screens/spot_screen.dart';
 import 'screens/p2p_user_profile_screen.dart';
 import '../services/wallet_service.dart';
 import '../services/user_service.dart';
+import '../services/unified_wallet_service.dart';
 
 class MainNavigation extends StatefulWidget {
   final int initialIndex;
@@ -34,6 +35,10 @@ class _MainNavigationState extends State<MainNavigation> {
     super.initState();
     _selectedIndex = widget.initialIndex;
     _userService = UserService();
+    
+    // Initialize Unified Wallet Service early
+    UnifiedWalletService.initialize();
+
     _screens = [
       const HomeScreen(),
       const FuturesScreen(),

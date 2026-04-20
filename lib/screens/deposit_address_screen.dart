@@ -392,12 +392,19 @@ class _DepositAddressScreenState extends State<DepositAddressScreen> {
             fontSize: 14,
           ),
         ),
-        Text(
-          value,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
+        const SizedBox(width: 12),
+        // ye use kre - Expanded with ellipsis to prevent overflow
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+            textAlign: TextAlign.end,
           ),
         ),
       ],
