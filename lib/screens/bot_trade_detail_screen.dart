@@ -3,16 +3,19 @@ import 'package:flutter/foundation.dart';
 import '../services/bot_service.dart';
 import '../services/unified_wallet_service.dart';
 import 'package_program_screen.dart';
+import 'bot_invest_withdraw_screen.dart';
 
 class BotTradeDetailScreen extends StatefulWidget {
   static bool hasPackage = false;
   final String name;
   final String multiplier;
+  final bool isAvailable;
 
   const BotTradeDetailScreen({
     super.key,
     required this.name,
     required this.multiplier,
+    this.isAvailable = true,
   });
 
   @override
@@ -22,49 +25,123 @@ class BotTradeDetailScreen extends StatefulWidget {
 class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
   final TextEditingController _investController = TextEditingController();
   final TextEditingController _withdrawController = TextEditingController();
-  
+
   bool _isLoading = true;
   bool _hasPackage = false;
   bool _isInvested = false;
   double _investedAmount = 0.0;
   Map<String, dynamic>? _performanceData;
+  
+  // New State Variables based on User Data flow
+  double _walletBalance = 0.0;
+  String? _subscriptionPlan;
+  Map<String, double> _investments = {};
+  bool _btnDisable = true;
+  String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
+    _fetchUserData(); // Main flow for balance, subscription and investments
     _fetchPerformanceData();
     _fetchUserBalanceHistory();
-    _checkUserSubscription();
   }
 
-  Future<void> _checkUserSubscription() async {
+  Future<void> _fetchUserData() async {
+    if (!mounted) return;
+    
+    debugPrint('=== FETCHING USER DATA FLOW ===');
+    // 1. On Page Load - Reset state
+    setState(() {
+      _btnDisable = true;
+      _isLoading = true;
+    });
+
     try {
-      final response = await BotService.getUserSubscription();
-      if (mounted && response['success'] == true && response['subscription'] != null) {
-        final subscription = response['subscription'];
-        final startDate = DateTime.tryParse(subscription['startDate'] ?? '');
-        final duration = subscription['duration'] ?? 365;
+      // 2. Call API
+      final res = await BotService.getUserData();
+      debugPrint('User Data Response: $res');
+
+      if (res['success'] == true && res['data'] != null) {
+        final data = res['data'];
         
-        if (startDate != null) {
-          final endDate = startDate.add(Duration(days: duration));
-          final now = DateTime.now();
-          final daysLeft = endDate.difference(now).inDays;
-          
-          // Only set _hasPackage if subscription is still active
-          if (daysLeft > 0) {
-            setState(() {
-              _hasPackage = true;
-            });
-          } else {
-            setState(() {
-              _hasPackage = false;
-            });
+        // 3. Set Wallet Balance
+        final balance = double.tryParse(data['balance']?.toString() ?? '0') ?? 0.0;
+        
+        // 4. Check Subscription
+        String? plan;
+        final subscription = data['subscription'];
+        
+        if (subscription != null) {
+          final endDateStr = subscription['endDate']?.toString();
+          if (endDateStr != null) {
+            final endDate = DateTime.tryParse(endDateStr);
+            if (endDate != null) {
+              final currentDate = DateTime.now();
+              final remainingDays = endDate.difference(currentDate).inDays;
+
+              debugPrint('Subscription End Date: $endDate, Remaining Days: $remainingDays');
+
+              if (remainingDays <= 0) {
+                plan = null; // Expired
+              } else {
+                plan = subscription['plan']?.toString();
+              }
+            }
           }
         }
+
+        // 5. Set Investments (Strategy-wise)
+        final inv = {
+          "Alpha-2X": double.tryParse(data['maxWithdrawAplha']?.toString() ?? '0') ?? 0.0,
+          "Omega-3X": double.tryParse(data['maxWithdrawOmega']?.toString() ?? '0') ?? 0.0,
+        };
+
+        if (!mounted) return;
+        setState(() {
+          _walletBalance = balance;
+          _subscriptionPlan = plan;
+          _investments = inv;
+          _hasPackage = plan != null;
+          
+          // Current strategy investment
+          _investedAmount = inv[widget.name] ?? 0.0;
+          _isInvested = _investedAmount > 0;
+          
+          _errorMessage = null;
+          _isLoading = false;
+          _btnDisable = false;
+        });
+        debugPrint('Final State: Balance=$_walletBalance, Plan=$_subscriptionPlan, Invested=$_investedAmount');
+      } else {
+        // 8. Error Handling
+        if (!mounted) return;
+        setState(() {
+          _errorMessage = "Failed to fetch user info.";
+          _isLoading = false;
+          _btnDisable = false;
+        });
       }
     } catch (e) {
-      debugPrint('Error checking subscription: $e');
+      debugPrint('Error fetching user data: $e');
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = "Failed to fetch user info.";
+        _isLoading = false;
+        _btnDisable = false;
+      });
     }
+  }
+
+  // Helper to check Invest Button Conditions
+  bool _canInvest() {
+    // 7. Invest Button Conditions
+    if (_btnDisable) return false;
+    if (_subscriptionPlan == null) return false;
+    if (_walletBalance <= 0) return false;
+    if (!widget.isAvailable) return false;
+    
+    return true;
   }
 
   Future<void> _fetchPerformanceData() async {
@@ -91,7 +168,12 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
       final response = await BotService.getBotBalance();
       if (mounted && response['success'] == true) {
         final data = response['data'] ?? {};
-        
+
+        // Parse all balance fields for Invest/Withdraw screen
+        final totalBalance = double.tryParse(data['totalBalance']?.toString() ?? '0') ?? 0.0;
+        final availableBalance = double.tryParse(data['availableBalance']?.toString() ?? '0') ?? 0.0;
+        final investedBalance = double.tryParse(data['investedBalance']?.toString() ?? '0') ?? 0.0;
+
         // Use exact strategy name mapping to check investment
         String mappedStrategyKey = 'Omega';
         if (widget.name.toLowerCase().contains('omega')) {
@@ -109,7 +191,7 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
         if (userDataResult['success'] == true) {
           final userData = userDataResult['data'] ?? {};
           final investments = userData['investments'] as Map<String, dynamic>? ?? {};
-          
+
           double specificInvestment = 0.0;
           investments.forEach((key, value) {
             if (key.toLowerCase().contains(mappedStrategyKey.toLowerCase())) {
@@ -117,17 +199,17 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
             }
           });
 
-          if (specificInvestment > 0) {
-            setState(() {
+          setState(() {
+            _walletBalance = availableBalance;
+
+            if (specificInvestment > 0) {
               _investedAmount = specificInvestment;
               _isInvested = true;
-            });
-          } else {
-            setState(() {
+            } else {
               _investedAmount = 0.0;
               _isInvested = false;
-            });
-          }
+            }
+          });
         }
       }
     } catch (e) {
@@ -274,21 +356,40 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
   }
 
   void _handleInvestClick() {
-    if (_hasPackage) {
-      _showAmountDialog(
-        title: 'Enter Investment Amount',
-        hint: 'Max: \$19.00',
-        controller: _investController,
-        isConfirmingInvestment: true,
-      );
+    if (_subscriptionPlan != null) {
+      // Open combined Invest/Withdraw screen when subscribed
+      _openInvestWithdrawScreen(index: 0);
     } else {
       Navigator.push(
         context,
         MaterialPageRoute(builder: (context) => const PackageProgramScreen()),
       ).then((_) {
-        _checkUserSubscription();
-      }); 
+        _fetchUserData();
+      });
     }
+  }
+
+  void _openInvestWithdrawScreen({int index = 0}) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => BotInvestWithdrawScreen(
+          strategy: {
+            'name': widget.name,
+            'multiplier': widget.multiplier,
+            'annualizedROI': _performanceData?['annualizedROI'] ?? '0%',
+          },
+          walletBalance: _walletBalance,
+          investedAmount: _investedAmount,
+          initialTabIndex: index,
+        ),
+      ),
+    ).then((result) {
+      // Refresh data when returning from invest/withdraw screen
+      if (result == true) {
+        _fetchUserData();
+      }
+    });
   }
 
   Future<void> _makeWithdrawal(double amount) async {
@@ -526,23 +627,19 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
                             child: SizedBox(
                               height: 56,
                               child: ElevatedButton(
-                                onPressed: () => _showAmountDialog(
-                                  title: 'Enter Investment Amount',
-                                  hint: 'Max: \$1000.00',
-                                  controller: _investController,
-                                  isConfirmingInvestment: true,
-                                ),
+                                onPressed: _canInvest() ? _openInvestWithdrawScreen : null,
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF84BD00),
                                   foregroundColor: Colors.black,
                                   elevation: 0,
+                                  disabledBackgroundColor: Colors.grey.withOpacity(0.3),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(12),
                                   ),
                                 ),
-                                child: const Text(
-                                  'Invest',
-                                  style: TextStyle(
+                                child: Text(
+                                  _subscriptionPlan == null ? 'Subscribe First' : 'Invest',
+                                  style: const TextStyle(
                                     fontSize: 16,
                                     fontWeight: FontWeight.bold,
                                   ),
@@ -555,12 +652,7 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
                             child: SizedBox(
                               height: 56,
                               child: ElevatedButton(
-                                onPressed: () => _showAmountDialog(
-                                  title: 'Enter Withdrawal Amount',
-                                  hint: 'Total: \$${_investedAmount.toStringAsFixed(2)}',
-                                  controller: _withdrawController,
-                                  isConfirmingInvestment: false,
-                                ),
+                                onPressed: _btnDisable ? null : _openInvestWithdrawScreen,
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF84BD00),
                                   foregroundColor: Colors.black,
@@ -585,18 +677,19 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
                         width: double.infinity,
                         height: 56,
                         child: ElevatedButton(
-                          onPressed: _handleInvestClick,
+                          onPressed: _canInvest() ? _handleInvestClick : null,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF84BD00),
                             foregroundColor: Colors.black,
                             elevation: 0,
+                            disabledBackgroundColor: Colors.grey.withOpacity(0.3),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
                           ),
-                          child: const Text(
-                            'Invest',
-                            style: TextStyle(
+                          child: Text(
+                            _subscriptionPlan == null ? 'Subscribe to Invest' : 'Invest',
+                            style: const TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
                             ),

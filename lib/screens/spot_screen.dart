@@ -18,7 +18,15 @@ class SpotScreen extends StatefulWidget {
   State<SpotScreen> createState() => _SpotScreenState();
 }
 
-class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver {
+class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+  // Temporary flag for Coming Soon mode - set to false when feature goes live
+  final bool _isComingSoon = true;
+  
+  // Animation controllers for Coming Soon screen
+  late AnimationController _comingSoonController;
+  late Animation<double> _bounceAnimation;
+  late Animation<double> _fadeAnimation;
+  
   bool _isBuy = true;
   double _currentPrice = 92076.6;
   double _amount = 0.0;
@@ -66,6 +74,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver {
   StreamSubscription? _tradesSubscription;
   StreamSubscription? _ordersSubscription;
   StreamSubscription? _fillsSubscription;
+  StreamSubscription? _tickerSubscription;
   StreamSubscription? _connectionSubscription;
 
   Timer? _connectionCheckTimer;
@@ -78,6 +87,31 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    
+    // Initialize Coming Soon animations
+    _comingSoonController = AnimationController(
+      duration: const Duration(seconds: 2),
+      vsync: this,
+    )..repeat(reverse: true);
+
+    _bounceAnimation = Tween<double>(begin: 0, end: -20).animate(
+      CurvedAnimation(
+        parent: _comingSoonController,
+        curve: Curves.easeInOut,
+      ),
+    );
+
+    _fadeAnimation = Tween<double>(begin: 0.5, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _comingSoonController,
+        curve: Curves.easeInOut,
+      ),
+    );
+    
+    // If Coming Soon mode is enabled, skip the rest of initialization
+    if (_isComingSoon) {
+      return;
+    }
     
     // Use initial symbol if provided
     if (widget.initialSymbol != null && widget.initialSymbol!.isNotEmpty) {
@@ -358,6 +392,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _comingSoonController.dispose();
     _connectionCheckTimer?.cancel();
     _priceUpdateTimer?.cancel();
     _priceController.dispose();
@@ -367,6 +402,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver {
     _tradesSubscription?.cancel();
     _ordersSubscription?.cancel();
     _fillsSubscription?.cancel();
+    _tickerSubscription?.cancel();
     _connectionSubscription?.cancel();
     SpotSocketService.unsubscribe(_selectedSymbol);
     
@@ -385,10 +421,12 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver {
       // Subscribe to symbol for order book and trades
       SpotSocketService.subscribe(_selectedSymbol);
       
-      // Listen to order book updates from SpotSocketService
+      // Listen to order book updates (WebSocket event type: 'book')
       _orderbookSubscription?.cancel();
       _orderbookSubscription = SpotSocketService.orderbookStream.listen((data) {
-        if (mounted && data['type'] == 'book' && data['symbol'] == _selectedSymbol) {
+        final eventType = data['type'] ?? data['event'];
+        final symbol = data['symbol'] ?? data['data']?['symbol'];
+        if (mounted && eventType == 'book' && symbol == _selectedSymbol) {
           setState(() {
             final orderBookData = data['data'];
             
@@ -449,10 +487,12 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver {
         }
       });
 
-      // Listen to trade updates
+      // Listen to trade updates (WebSocket event type: 'trade')
       _tradesSubscription?.cancel();
       _tradesSubscription = SpotSocketService.tradesStream.listen((data) {
-        if (mounted && data['type'] == 'trade' && data['symbol'] == _selectedSymbol) {
+        final eventType = data['type'] ?? data['event'];
+        final symbol = data['symbol'] ?? data['data']?['symbol'];
+        if (mounted && eventType == 'trade' && symbol == _selectedSymbol) {
           setState(() {
             _recentTrades.insert(0, data['data']);
             if (_recentTrades.length > 50) {
@@ -472,35 +512,143 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver {
           });
           final orderData = data['data'];
           final status = orderData['status'];
-          
+          final symbol = orderData['symbol'] ?? _selectedSymbol;
+          final side = orderData['side'] ?? 'Buy';
+          final qty = orderData['qty'] ?? 0.0;
+
           switch (status) {
             case 'pending':
               _loadOpenOrders();
               break;
+            case 'partially_filled':
+              final filledQty = orderData['filled_qty'] ?? 0.0;
+              final remainingQty = qty - filledQty;
+              _loadOpenOrders();
+              _loadBalance(forceRefresh: true);
+              _showMessage(
+                '$symbol: Partially filled ${filledQty.toStringAsFixed(6)} / ${qty.toStringAsFixed(6)}. Remaining: ${remainingQty.toStringAsFixed(6)}',
+                isError: false,
+              );
+              break;
             case 'filled':
               _loadOpenOrders();
-              _showMessage('Order filled successfully!', isError: false);
+              _loadBalance(forceRefresh: true);
+              _showMessage('$symbol: Order fully filled ${qty.toStringAsFixed(6)}', isError: false);
               break;
             case 'cancelled':
               _loadOpenOrders();
+              _loadBalance(forceRefresh: true);
+              _showMessage('$symbol: Order cancelled', isError: false);
               break;
             case 'rejected':
               final reason = orderData['reason'] ?? 'Order rejected';
-              _showMessage('Order rejected: $reason', isError: true);
+              _loadBalance(forceRefresh: true);
+              _showMessage('$symbol: Order rejected - $reason', isError: true);
               break;
           }
         }
       });
-      
-      // Subscribe to fill events
+
+      // Subscribe to fill events - shows trade execution with fee details
       _fillsSubscription?.cancel();
       _fillsSubscription = SpotSocketService.fillsStream.listen((data) {
         if (mounted && data['type'] == 'fill') {
           setState(() {
             _isWebSocketConnected = true;
           });
-          final fillData = data['data'];
+          final fillData = data['data'] ?? data;
+          final symbol = fillData['symbol'] ?? _selectedSymbol;
+          final side = fillData['side'] ?? 'Buy';
+          final qty = fillData['qty'] ?? fillData['quantity'] ?? 0.0;
+          final price = fillData['price'] ?? 0.0;
+          final fee = fillData['fee'] ?? 0.0;
+          final feeAsset = fillData['fee_asset'] ?? 'USDT';
+          final isMaker = fillData['is_maker'] ?? false;
+
           debugPrint('Fill received: $fillData');
+
+          // Add to recent trades for visual feedback
+          final newTrade = {
+            'price': price,
+            'amount': qty,
+            'side': side,
+            'timestamp': DateTime.now().toIso8601String(),
+            'isMyOrder': true,
+            'isMaker': isMaker,
+            'fee': fee,
+            'feeAsset': feeAsset,
+          };
+
+          setState(() {
+            _recentTrades.insert(0, newTrade);
+            if (_recentTrades.length > 50) {
+              _recentTrades = _recentTrades.take(50).toList();
+            }
+          });
+
+          // Show fill notification with fee info
+          final total = qty * price;
+          _showMessage(
+            '$symbol: ${side.toUpperCase()} filled ${qty.toStringAsFixed(6)} @ \$${price.toStringAsFixed(2)} '
+            '(Total: \$${total.toStringAsFixed(2)}, Fee: ${fee.toStringAsFixed(4)} $feeAsset)',
+            isError: false,
+          );
+
+          // Refresh balance after fill
+          _loadBalance(forceRefresh: true);
+        }
+      });
+
+      // Subscribe to ticker updates from spot socket
+      _tickerSubscription?.cancel();
+      _tickerSubscription = SpotSocketService.tickerStream.listen((data) {
+        if (mounted) {
+          final tickerData = data['data'] ?? data;
+          final symbol = tickerData['symbol'] ?? data['symbol'];
+          
+          // Only update if it's for our selected symbol
+          if (symbol == _selectedSymbol) {
+            final newPrice = double.tryParse(tickerData['last_price']?.toString() ?? '');
+            final oldPrice = _currentPrice;
+            
+            if (newPrice != null && newPrice > 0) {
+              final isUp = newPrice > oldPrice;
+              
+              setState(() {
+                _currentPrice = newPrice;
+                _isPriceUp = isUp;
+                _isPriceFlashing = true;
+                _flashColor = isUp ? const Color(0xFF84BD00) : Colors.red;
+                
+                // Update ticker data from socket
+                _ticker = {
+                  'last_price': newPrice,
+                  'best_bid': tickerData['best_bid'],
+                  'best_ask': tickerData['best_ask'],
+                  'volume_24h': tickerData['volume_24h'],
+                  'high_24h': tickerData['high_24h'],
+                  'low_24h': tickerData['low_24h'],
+                  'price_change_24h': tickerData['change_24h'],
+                  'price_change_percent_24h': tickerData['change_pct_24h'],
+                  'trade_count': tickerData['trade_count'],
+                };
+                
+                // Update price controller if not manually entered
+                if (!_isManualPrice && _orderType == 'Market') {
+                  _priceController.text = newPrice.toStringAsFixed(2);
+                }
+              });
+              
+              // Stop flash after 500ms
+              Future.delayed(const Duration(milliseconds: 500), () {
+                if (mounted) {
+                  setState(() {
+                    _isPriceFlashing = false;
+                  });
+                }
+              });
+            }
+          }
         }
       });
     } catch (e) {
@@ -902,6 +1050,48 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver {
     }
   }
 
+  // Check if user has sufficient balance for the order
+  bool _hasSufficientBalance() {
+    final baseAsset = _selectedSymbol.endsWith('USDT')
+        ? _selectedSymbol.substring(0, _selectedSymbol.length - 4)
+        : _selectedSymbol.split('/').first;
+    final isBaseAsset = _selectedAmountCoin == baseAsset;
+    final effectivePrice = _orderType == 'Market' ? _currentPrice :
+                          (double.tryParse(_priceController.text) ?? _currentPrice);
+    
+    if (_isBuy) {
+      // Buying: need sufficient USDT
+      final requiredUsdt = isBaseAsset ? (_amount * effectivePrice) : _amount;
+      final availableUsdt = double.tryParse(_balance?['usdt_available']?.toString() ?? '0') ?? 0.0;
+      return availableUsdt >= requiredUsdt;
+    } else {
+      // Selling: need sufficient base asset (BTC)
+      final requiredBase = isBaseAsset ? _amount : (_amount / effectivePrice);
+      final availableBase = double.tryParse(_balance?['free']?.toString() ?? '0') ?? 0.0;
+      return availableBase >= requiredBase;
+    }
+  }
+
+  // Get required and available amounts for error messages
+  Map<String, double> _getBalanceInfo() {
+    final baseAsset = _selectedSymbol.endsWith('USDT')
+        ? _selectedSymbol.substring(0, _selectedSymbol.length - 4)
+        : _selectedSymbol.split('/').first;
+    final isBaseAsset = _selectedAmountCoin == baseAsset;
+    final effectivePrice = _orderType == 'Market' ? _currentPrice :
+                          (double.tryParse(_priceController.text) ?? _currentPrice);
+    
+    if (_isBuy) {
+      final requiredUsdt = isBaseAsset ? (_amount * effectivePrice) : _amount;
+      final availableUsdt = double.tryParse(_balance?['usdt_available']?.toString() ?? '0') ?? 0.0;
+      return {'required': requiredUsdt, 'available': availableUsdt};
+    } else {
+      final requiredBase = isBaseAsset ? _amount : (_amount / effectivePrice);
+      final availableBase = double.tryParse(_balance?['free']?.toString() ?? '0') ?? 0.0;
+      return {'required': requiredBase, 'available': availableBase};
+    }
+  }
+
   // Place order
   Future<void> _placeOrder() async {
     if (_amount <= 0) {
@@ -933,6 +1123,18 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver {
 
     if (currentQty < minQty) {
       _showMessage('Order quantity is below minimum ($minQty $baseAsset)', isError: true);
+      return;
+    }
+
+    // Check sufficient balance
+    if (!_hasSufficientBalance()) {
+      final balanceInfo = _getBalanceInfo();
+      final asset = _isBuy ? 'USDT' : baseAsset;
+      _showMessage(
+        'Insufficient balance. Required: ${balanceInfo['required']?.toStringAsFixed(4)} $asset, '
+        'Available: ${balanceInfo['available']?.toStringAsFixed(4)} $asset',
+        isError: true,
+      );
       return;
     }
 
@@ -978,6 +1180,26 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver {
       }
       
       
+      // Calculate total value
+      final total = isBaseAsset ? (qty * effectivePrice) : _amount;
+      
+      // Show order confirmation dialog
+      final confirmed = await _showOrderConfirmation(
+        side: apiSide,
+        orderType: _orderType,
+        qty: qty,
+        price: effectivePrice,
+        symbol: _selectedSymbol,
+        total: total,
+      );
+      
+      if (!confirmed) {
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+      
       print('=== ORDER PLACEMENT ===');
       print('Amount (input): $_amount $_selectedAmountCoin');
       print('Qty (Base Asset): $qty');
@@ -986,6 +1208,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver {
       print('Side (User): ${_isBuy ? 'Buy' : 'Sell'}');
       print('Side (API): $apiSide');
       print('Symbol: $_selectedSymbol');
+      print('Total: \$$total');
       print('====================');
       
       final result = await SpotService.placeOrder(
@@ -1083,16 +1306,162 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver {
           _sliderValue = 0.0;
         });
       } else {
-        _showMessage(result['error']?.toString() ?? 'Order placement failed', isError: true);
+        // Enhanced error handling with specific messages
+        final errorMsg = result['error']?.toString() ?? 'Order placement failed';
+        final errorLower = errorMsg.toLowerCase();
+        
+        String userFriendlyError;
+        if (errorLower.contains('insufficient') || errorLower.contains('balance')) {
+          userFriendlyError = 'Insufficient balance to place this order';
+        } else if (errorLower.contains('margin') || errorLower.contains('position')) {
+          userFriendlyError = 'Margin requirement not met. Please check your positions';
+        } else if (errorLower.contains('price') || errorLower.contains('range')) {
+          userFriendlyError = 'Invalid price. Please check current market price';
+        } else if (errorLower.contains('quantity') || errorLower.contains('min')) {
+          userFriendlyError = 'Order quantity is below minimum required';
+        } else if (errorLower.contains('market') && errorLower.contains('closed')) {
+          userFriendlyError = 'Trading is currently suspended for this pair';
+        } else if (errorLower.contains('rate') || errorLower.contains('limit')) {
+          userFriendlyError = 'Too many orders. Please wait a moment';
+        } else if (errorLower.contains('unauthorized') || errorLower.contains('auth')) {
+          userFriendlyError = 'Session expired. Please login again';
+        } else {
+          userFriendlyError = 'Order failed: $errorMsg';
+        }
+        
+        _showMessage(userFriendlyError, isError: true);
       }
     } catch (e) {
       print('Error placing order: $e');
-      _showMessage('Error placing order: $e', isError: true);
+      final errorStr = e.toString().toLowerCase();
+      if (errorStr.contains('timeout') || errorStr.contains('socket')) {
+        _showMessage('Network timeout. Please check your connection and try again', isError: true);
+      } else if (errorStr.contains('handshake') || errorStr.contains('ssl') || errorStr.contains('certificate')) {
+        _showMessage('Secure connection failed. Please try again later', isError: true);
+      } else {
+        _showMessage('Failed to place order. Please try again', isError: true);
+      }
     } finally {
       setState(() {
         _isLoading = false;
       });
     }
+  }
+
+  // Show order confirmation dialog
+  Future<bool> _showOrderConfirmation({
+    required String side,
+    required String orderType,
+    required double qty,
+    required double price,
+    required String symbol,
+    required double total,
+  }) async {
+    final baseAsset = symbol.endsWith('USDT') 
+        ? symbol.substring(0, symbol.length - 4) 
+        : symbol.split('/').first;
+    
+    return await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(
+              color: side == 'Buy' ? const Color(0xFF84BD00) : Colors.red,
+              width: 2,
+            ),
+          ),
+          title: Row(
+            children: [
+              Icon(
+                side == 'Buy' ? Icons.arrow_upward : Icons.arrow_downward,
+                color: side == 'Buy' ? const Color(0xFF84BD00) : Colors.red,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Confirm ${side == 'Buy' ? 'Buy' : 'Sell'} Order',
+                style: TextStyle(
+                  color: side == 'Buy' ? const Color(0xFF84BD00) : Colors.red,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildConfirmRow('Symbol', symbol),
+              const SizedBox(height: 8),
+              _buildConfirmRow('Type', orderType),
+              const SizedBox(height: 8),
+              _buildConfirmRow('Side', side, isHighlight: true, isBuy: side == 'Buy'),
+              const SizedBox(height: 8),
+              _buildConfirmRow('Quantity', '${qty.toStringAsFixed(6)} $baseAsset'),
+              const SizedBox(height: 8),
+              if (orderType == 'Limit') ...[
+                _buildConfirmRow('Price', '\$${price.toStringAsFixed(2)}'),
+                const SizedBox(height: 8),
+              ],
+              const Divider(color: Colors.white24),
+              const SizedBox(height: 8),
+              _buildConfirmRow(
+                'Total', 
+                '\$${total.toStringAsFixed(2)}',
+                isBold: true,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Colors.white70),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: side == 'Buy' ? const Color(0xFF84BD00) : Colors.red,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: Text('Confirm ${side == 'Buy' ? 'Buy' : 'Sell'}'),
+            ),
+          ],
+        );
+      },
+    ) ?? false;
+  }
+
+  Widget _buildConfirmRow(String label, String value, {bool isBold = false, bool isHighlight = false, bool isBuy = false}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 14,
+          ),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            color: isHighlight ? (isBuy ? const Color(0xFF84BD00) : Colors.red) : Colors.white,
+            fontSize: 14,
+            fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ],
+    );
   }
 
   // Cancel order
@@ -1322,6 +1691,11 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    // Show Coming Soon screen when feature is not yet live
+    if (_isComingSoon) {
+      return _buildComingSoonScreen();
+    }
+    
     return Scaffold(
       backgroundColor: const Color(0xFF0D0D0D),
       appBar: _buildAppBar(),
@@ -1343,6 +1717,117 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // Coming Soon screen - similar to FuturesScreen
+  Widget _buildComingSoonScreen() {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0D0D0D),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0D0D0D),
+        elevation: 0,
+        title: const Text(
+          'Spot Trading',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        centerTitle: true,
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AnimatedBuilder(
+              animation: _bounceAnimation,
+              builder: (context, child) {
+                return Transform.translate(
+                  offset: Offset(0, _bounceAnimation.value),
+                  child: AnimatedBuilder(
+                    animation: _fadeAnimation,
+                    builder: (context, child) {
+                      return Opacity(
+                        opacity: _fadeAnimation.value,
+                        child: Container(
+                          width: 120,
+                          height: 120,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF84BD00).withOpacity(0.1),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: const Color(0xFF84BD00).withOpacity(0.3),
+                              width: 2,
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.show_chart,
+                            size: 60,
+                            color: Color(0xFF84BD00),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 40),
+            const Text(
+              'Coming Soon',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 40),
+              child: Text(
+                'Spot trading is under development. Stay tuned for advanced trading features!',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white54,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+            const SizedBox(height: 40),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1C1C1E),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: const Color(0xFF84BD00).withOpacity(0.3),
+                ),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.schedule,
+                    color: Color(0xFF84BD00),
+                    size: 18,
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    'Launching Soon',
+                    style: TextStyle(
+                      color: Color(0xFF84BD00),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

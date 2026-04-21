@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -67,6 +68,9 @@ class _PaymentProofScreenState extends State<PaymentProofScreen> {
   Future<void> _pickImage() async {
     final XFile? image = await _picker.pickImage(
       source: ImageSource.gallery,
+      imageQuality: 85,
+      maxWidth: 1920,
+      maxHeight: 1080,
     );
     if (image != null) {
       setState(() {
@@ -244,10 +248,17 @@ class _PaymentProofScreenState extends State<PaymentProofScreen> {
                       )
                     : ClipRRect(
                         borderRadius: BorderRadius.circular(12),
-                        child: Image.network(
-                          _selectedImage!.path,
-                          fit: BoxFit.cover,
-                        ),
+                        child: kIsWeb
+                            ? Image.network(
+                                _selectedImage!.path,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) => _buildImageError(),
+                              )
+                            : Image.file(
+                                File(_selectedImage!.path),
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) => _buildImageError(),
+                              ),
                       ),
               ),
             ),
@@ -345,6 +356,30 @@ class _PaymentProofScreenState extends State<PaymentProofScreen> {
           ],
         ),
       ],
+    );
+  }
+
+  Widget _buildImageError() {
+    return Container(
+      color: const Color(0xFF2C2C2E),
+      child: const Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.broken_image,
+            color: Color(0xFF8E8E93),
+            size: 48,
+          ),
+          SizedBox(height: 8),
+          Text(
+            'Image Error',
+            style: TextStyle(
+              color: Color(0xFF8E8E93),
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -48,15 +48,17 @@ class SpotService {
   }
 
   /// Get L2 Order Book snapshot for a symbol.
+  /// GET /book/:symbol - Returns top 20 levels of bids and asks
   static Future<Map<String, dynamic>> getOrderBook(String symbol) async {
     try {
       final response = await http.get(
-        Uri.parse('https://api11.hathmetech.com/orderbook?symbol=$symbol'),
+        Uri.parse('$_baseUrl/book/$symbol'),
         headers: await _getHeaders(),
       ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
+        // API returns: { "success": true, "data": { "bids": [[price, qty], ...], "asks": [[price, qty], ...] } }
         return {'success': true, 'data': data['data'] ?? data};
       }
       return {'success': false, 'error': 'Order book unavailable'};

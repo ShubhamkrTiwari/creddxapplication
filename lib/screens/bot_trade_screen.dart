@@ -25,11 +25,79 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
   int _subscriptionDaysLeft = 0;
   bool _isLoadingSubscription = true;
 
+  // Bot balance data
+  Map<String, dynamic>? _botBalance;
+  double _totalBalance = 0.0;
+  double _availableBalance = 0.0;
+  double _investedBalance = 0.0;
+  bool _isLoadingBalance = true;
+
+  // Bot positions data
+  List<dynamic> _userPositions = [];
+  bool _isLoadingPositions = true;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     _fetchUserSubscription();
+    _fetchBotBalance();
+    _fetchUserPositions();
+  }
+
+  Future<void> _fetchBotBalance() async {
+    try {
+      setState(() => _isLoadingBalance = true);
+      final response = await BotService.getBotBalance();
+      if (mounted && response['success'] == true) {
+        final data = response['data'] ?? {};
+        setState(() {
+          _botBalance = data;
+          _totalBalance = double.tryParse(data['totalBalance']?.toString() ?? '0') ?? 0.0;
+          _availableBalance = double.tryParse(data['availableBalance']?.toString() ?? '0') ?? 0.0;
+          _investedBalance = double.tryParse(data['investedBalance']?.toString() ?? '0') ?? 0.0;
+          _isLoadingBalance = false;
+        });
+      } else {
+        setState(() => _isLoadingBalance = false);
+      }
+    } catch (e) {
+      debugPrint('Error fetching bot balance: $e');
+      setState(() => _isLoadingBalance = false);
+    }
+  }
+
+  Future<void> _fetchUserPositions() async {
+    try {
+      setState(() => _isLoadingPositions = true);
+      // Fetch positions for Omega strategy as default
+      final response = await BotService.getUserBotPositions(
+        strategy: 'Omega-3X',
+        symbol: 'BTC-USDT',
+      );
+      if (mounted && response['success'] == true) {
+        final data = response['data'] ?? {};
+        final positions = data['adjustedPositions'] ?? [];
+        setState(() {
+          _userPositions = positions;
+          _hasOpenPosition = positions.isNotEmpty;
+          _isLoadingPositions = false;
+        });
+      } else {
+        setState(() {
+          _userPositions = [];
+          _hasOpenPosition = false;
+          _isLoadingPositions = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching user positions: $e');
+      setState(() {
+        _userPositions = [];
+        _hasOpenPosition = false;
+        _isLoadingPositions = false;
+      });
+    }
   }
   
   Future<void> _fetchUserSubscription() async {
@@ -502,9 +570,9 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
                     ),
                   ),
                   const SizedBox(height: 12),
-                  const Text(
-                    'Your Investment: 50.00 USDT',
-                    style: TextStyle(
+                  Text(
+                    'Your Investment: ${_investedBalance.toStringAsFixed(2)} USDT',
+                    style: const TextStyle(
                       color: Color(0xFF84BD00),
                       fontSize: 16,
                       fontWeight: FontWeight.w500,
@@ -517,9 +585,11 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
                       color: Colors.black.withOpacity(0.3),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Text(
-                      'pos.symbol - pos.positionSide',
-                      style: TextStyle(
+                    child: Text(
+                      _userPositions.isNotEmpty
+                          ? '${_userPositions[0]['symbol'] ?? 'BTC-USDT'} - ${_userPositions[0]['positionSide'] ?? 'LONG'}'
+                          : 'No active position',
+                      style: const TextStyle(
                         color: Color(0xFF8E8E93),
                         fontSize: 14,
                       ),
@@ -528,41 +598,53 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
                   const SizedBox(height: 16),
                   
                   // Position Metrics List
-                  Column(
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(child: _buildMetricCard('Avg Entry', 'NaN')),
-                          const SizedBox(width: 10),
-                          Expanded(child: _buildMetricCard('Mark Price', 'NaN')),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(child: _buildMetricCard('Leverage', 'NaN')),
-                          const SizedBox(width: 10),
-                          Expanded(child: _buildMetricCard('User Margin', 'NaN')),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(child: _buildMetricCard('Liq. Price', 'NaN')),
-                          const SizedBox(width: 10),
-                          Expanded(child: _buildMetricCard('TP Price', 'NaN')),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(child: _buildMetricCard('SL Price', 'NaN')),
-                          const SizedBox(width: 10),
-                          Expanded(child: _buildMetricCard('PnL', 'NaN')),
-                        ],
-                      ),
-                    ],
-                  ),
+                  _isLoadingPositions
+                      ? const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)))
+                      : _userPositions.isEmpty
+                          ? const Center(
+                              child: Text(
+                                'No active positions',
+                                style: TextStyle(
+                                  color: Color(0xFF8E8E93),
+                                  fontSize: 14,
+                                ),
+                              ),
+                            )
+                          : Column(
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(child: _buildMetricCard('Avg Entry', _formatPositionValue(_userPositions[0]['avgPrice']))),
+                                    const SizedBox(width: 10),
+                                    Expanded(child: _buildMetricCard('Mark Price', _formatPositionValue(_userPositions[0]['markPrice']))),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    Expanded(child: _buildMetricCard('Leverage', '${_userPositions[0]['leverage'] ?? '0'}x')),
+                                    const SizedBox(width: 10),
+                                    Expanded(child: _buildMetricCard('User Margin', _formatPositionValue(_userPositions[0]['userMargin']))),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    Expanded(child: _buildMetricCard('Liq. Price', _formatPositionValue(_userPositions[0]['liqPrice']))),
+                                    const SizedBox(width: 10),
+                                    Expanded(child: _buildMetricCard('TP Price', '--')),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    Expanded(child: _buildMetricCard('SL Price', '--')),
+                                    const SizedBox(width: 10),
+                                    Expanded(child: _buildMetricCard('PnL', _formatPositionValue(_userPositions[0]['userUnrealizedProfit']))),
+                                  ],
+                                ),
+                              ],
+                            ),
                 ],
               ),
             ),
@@ -858,6 +940,14 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
         ),
       ],
     );
+  }
+
+  String _formatPositionValue(dynamic value) {
+    if (value == null) return '--';
+    final doubleValue = double.tryParse(value.toString());
+    if (doubleValue == null) return '--';
+    if (doubleValue == 0) return '0.00';
+    return doubleValue.toStringAsFixed(2);
   }
 
   Widget _buildPriceInfo(String label, String value) {

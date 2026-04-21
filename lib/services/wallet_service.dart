@@ -885,11 +885,11 @@ class WalletService {
       );
       debugPrint('Sub-admin Networks API Response Status: ${response.statusCode}');
       debugPrint('Sub-admin Networks API Response Body: ${response.body}');
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         debugPrint('Parsed sub-admin networks data: $data');
-        
+
         // Handle different response formats
         if (data is List) return List<Map<String, dynamic>>.from(data);
         if (data is Map) {
@@ -899,6 +899,13 @@ class WalletService {
             return List<Map<String, dynamic>>.from(list);
           }
         }
+      } else if (response.statusCode == 403) {
+        debugPrint('Sub-admin Networks API returned 403 - Forbidden. User may not have permission.');
+        // Return empty list to trigger fallback to coin networks
+        return [];
+      } else if (response.statusCode == 401) {
+        debugPrint('Sub-admin Networks API returned 401 - Unauthorized. Token may be invalid.');
+        return [];
       }
       debugPrint('No networks data found in API response');
       return [];
@@ -977,7 +984,55 @@ class WalletService {
   }
 
   static Future<Map<String, dynamic>?> getWithdrawalFees({required String coin, required String network, required double amount}) async {
-    return {'fee': '0.00'};
+    try {
+      debugPrint('Fetching withdrawal fees from: $baseUrl/wallet/v1/withdraw/withdraw-fees');
+      
+      final queryParams = {
+        'coin': coin,
+        'network': network,
+        'amount': amount.toString(),
+      };
+      
+      final uri = Uri.parse('$baseUrl/wallet/v1/withdraw/withdraw-fees')
+          .replace(queryParameters: queryParams);
+      
+      final response = await http.get(
+        uri,
+        headers: await _getHeaders(),
+      );
+      
+      debugPrint('Withdraw Fees API Response Status: ${response.statusCode}');
+      debugPrint('Withdraw Fees API Response Body: ${response.body}');
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        
+        if (data['success'] == true) {
+          return {
+            'success': true,
+            'fee': data['data']?['fee'] ?? data['fee'] ?? '0.00',
+            'data': data['data'],
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to fetch withdrawal fees',
+          };
+        }
+      } else {
+        debugPrint('Withdraw Fees API failed with status: ${response.statusCode}');
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching withdrawal fees: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
   }
 
   // Alias for withdrawCrypto to match the naming convention in withdraw_crypto_screen.dart
@@ -1104,7 +1159,8 @@ class WalletService {
     String? otp,
   }) async {
     try {
-      final withdrawType = paymentMode == 'bank' ? 'BANK' : paymentMode == 'upi' ? 'UPI' : paymentMode.toUpperCase();
+      // withdrawType: 1 for BANK, 2 for UPI
+      final withdrawType = paymentMode == 'bank' ? 1 : paymentMode == 'upi' ? 2 : 1;
       final requestBody = {
         'amount': amount,
         'withdrawType': withdrawType,
@@ -1145,9 +1201,9 @@ class WalletService {
       final requestBody = {'purpose': purpose};
       debugPrint('Sending OTP for purpose: $purpose');
       
-      // Use /v1/otp/send for auth/otp related endpoints
+      // Use /wallet/v1/otp/send for wallet OTP endpoints
       final response = await http.post(
-        Uri.parse('$baseUrl/v1/otp/send'),
+        Uri.parse('$baseUrl/wallet/v1/otp/send'),
         headers: await _getHeaders(),
         body: json.encode(requestBody),
       );
@@ -1287,16 +1343,16 @@ class WalletService {
     }
   }
 
-  // ==================== INR WITHDRAWAL APIs ====================
+  
 
   /// 1. Fetch Bank Details
-  /// GET /wallet/v1/wallet/deposit/inr-pay-details
+  /// GET /wallet/v1/wallet/deposit/bank-details
   /// Status values: 1 = Pending, 2 = Approved, 3 = Rejected
   static Future<Map<String, dynamic>> getINRBankDetails() async {
     try {
-      debugPrint('Fetching INR bank details from: $baseUrl/wallet/v1/wallet/deposit/inr-pay-details');
+      debugPrint('Fetching INR bank details from: $baseUrl/wallet/v1/wallet/deposit/bank-details');
       final response = await http.get(
-        Uri.parse('$baseUrl/wallet/v1/wallet/deposit/inr-pay-details'),
+        Uri.parse('$baseUrl/wallet/v1/wallet/deposit/bank-details'),
         headers: await _getHeaders(),
       );
 
@@ -1501,18 +1557,91 @@ class WalletService {
     }
   }
 
-  /// 5. Submit INR Withdrawal Request
+  /// 5. Submit INR Deposit Request
+  /// POST /wallet/v1/wallet/deposit/inr-request
+  static Future<Map<String, dynamic>> submitINRDepositRequest({
+    required String amount,
+    required String txid,
+    required String account,
+    required String senderAccountName,
+    String? screenshotPath,
+  }) async {
+    try {
+      final token = await AuthService.getToken();
+      
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/wallet/v1/wallet/deposit/inr-request'),
+      );
+      
+      // Add auth header
+      if (token != null && token.isNotEmpty) {
+        request.headers['Authorization'] = 'Bearer $token';
+      }
+      
+      request.fields['amount'] = amount;
+      request.fields['txid'] = txid;
+      request.fields['account'] = account;
+      request.fields['senderAccountName'] = senderAccountName;
+      
+      if (screenshotPath != null && screenshotPath.isNotEmpty) {
+        request.files.add(await http.MultipartFile.fromPath(
+          'screenshot',
+          screenshotPath,
+        ));
+      }
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      debugPrint('Deposit API Response Status: ${response.statusCode}');
+      debugPrint('Deposit API Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return {
+          'success': true,
+          'data': data,
+          'message': data['message'] ?? 'Deposit request submitted successfully',
+        };
+      } else {
+        return {
+          'success': false,
+          'error': 'Failed: ${response.body}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error submitting INR deposit: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  /// 6. Submit INR Withdrawal Request
   /// POST /wallet/v1/wallet/deposit/inr-withdraw-request
+  /// withdrawType: 1 for BANK, 2 for UPI
   static Future<Map<String, dynamic>> submitINRWithdrawal({
     required String otp,
     required double amount,
-    required String paymentMethodId,
+    required int withdrawType,
+    String? accountHolderName,
+    String? accountNumber,
+    String? ifscCode,
+    String? bankName,
+    String? upiId,
   }) async {
     try {
       final body = {
         'otp': otp,
         'amount': amount,
-        'paymentMethodId': paymentMethodId,
+        'withdrawType': withdrawType,
+        if (accountHolderName != null) 'accountHolderName': accountHolderName,
+        if (accountNumber != null) 'accountNumber': accountNumber,
+        if (ifscCode != null) 'ifscCode': ifscCode,
+        if (bankName != null) 'bankName': bankName,
+        if (upiId != null) 'upiId': upiId,
       };
 
       debugPrint('Submitting INR withdrawal with amount: $amount');

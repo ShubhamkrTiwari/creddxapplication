@@ -903,6 +903,93 @@ class BotService {
     }
   }
 
+  // Get subscription details from user API
+  static Future<Map<String, dynamic>> getSubscriptionDetails() async {
+    try {
+      debugPrint('=== FETCHING SUBSCRIPTION DETAILS ===');
+      final response = await http.get(
+        Uri.parse('$baseUrl/bot/v1/api/users/user'),
+        headers: await _getHeaders(),
+      );
+
+      debugPrint('Subscription API URL: $baseUrl/bot/v1/api/users/user');
+      debugPrint('Subscription API Response Status: ${response.statusCode}');
+      debugPrint('Subscription API Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final success = data['success'];
+        final isSuccess = success == true || success == 'true';
+
+        if (isSuccess) {
+          final userData = data['data'] ?? data;
+          final subscription = userData['subscription'];
+
+          // Process subscription data
+          bool isSubscribed = false;
+          String? planName;
+          double? planPrice;
+          int remainingDays = 0;
+
+          if (subscription != null) {
+            isSubscribed = true;
+            planName = subscription['plan']?.toString();
+            planPrice = double.tryParse(subscription['price']?.toString() ?? '0');
+
+            // Check expiry
+            final endDateStr = subscription['endDate']?.toString();
+            if (endDateStr != null && endDateStr.isNotEmpty) {
+              final endDate = DateTime.tryParse(endDateStr);
+              if (endDate != null) {
+                final currentDate = DateTime.now();
+                final difference = endDate.difference(currentDate).inDays;
+                remainingDays = difference;
+
+                // Expired case
+                if (remainingDays <= 0) {
+                  isSubscribed = false;
+                  planName = null;
+                  planPrice = null;
+                  remainingDays = 0;
+                }
+              }
+            }
+          }
+
+          debugPrint('Subscription processed: isSubscribed=$isSubscribed, planName=$planName, planPrice=$planPrice, remainingDays=$remainingDays');
+
+          return {
+            'success': true,
+            'isSubscribed': isSubscribed,
+            'planName': planName,
+            'planPrice': planPrice,
+            'remainingDays': remainingDays,
+            'rawSubscription': subscription,
+          };
+        } else {
+          debugPrint('Subscription API Failed: ${data['message'] ?? 'Unknown error'}');
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to fetch subscription details',
+          };
+        }
+      } else {
+        debugPrint('Subscription API Server Error: ${response.statusCode}');
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('=== SUBSCRIPTION DETAILS EXCEPTION ===');
+      debugPrint('Error fetching subscription details: $e');
+      return {
+        'success': false,
+        'error': 'Could not load subscription details',
+      };
+    }
+  }
+
   // Get user data
   static Future<Map<String, dynamic>> getUserData() async {
     try {
@@ -925,9 +1012,16 @@ class BotService {
         
         if (isSuccess) {
           debugPrint('User Data Success: ${data['data'] ?? data}');
+          // Merge root level fields (maxWithdrawOmega, maxWithdrawAlpha) with data object
+          final responseData = data['data'] ?? data;
+          final mergedData = {
+            ...responseData,
+            'maxWithdrawOmega': data['maxWithdrawOmega'] ?? 0.0,
+            'maxWithdrawAlpha': data['maxWithdrawAlpha'] ?? 0.0,
+          };
           return {
             'success': true,
-            'data': data['data'] ?? data,
+            'data': mergedData,
           };
         } else {
           debugPrint('User Data Failed: ${data['message'] ?? 'Unknown error'}');
@@ -955,13 +1049,72 @@ class BotService {
           'totalInvestment': _cachedTotalInvestment.toStringAsFixed(2),
           'totalProfit': '0.00',
           'activeBots': 0,
-          'subscription': 'None',
+          'subscription': null,
           'joinDate': DateTime.now().toIso8601String(),
           'lastLogin': DateTime.now().toIso8601String(),
         },
       };
       debugPrint('Returning Mock Data: $mockData');
       return mockData;
+    }
+  }
+
+  // Get max withdraw amounts for strategies from user API
+  static Future<Map<String, dynamic>> getUserMaxWithdrawAmounts() async {
+    try {
+      debugPrint('=== FETCHING MAX WITHDRAW AMOUNTS ===');
+      final response = await http.get(
+        Uri.parse('$baseUrl/bot/v1/api/users/user'),
+        headers: await _getHeaders(),
+      );
+
+      debugPrint('Max Withdraw API Response Status: ${response.statusCode}');
+      debugPrint('Max Withdraw API Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final success = data['success'];
+        final isSuccess = success == true || success == 'true';
+
+        if (isSuccess) {
+          // maxWithdrawOmega is at root level, outside of 'object'
+          final maxWithdrawOmega = data['maxWithdrawOmega'] ?? 0.0;
+          final maxWithdrawAlpha = data['maxWithdrawAlpha'] ?? 0.0;
+          debugPrint('maxWithdrawOmega from API (root): $maxWithdrawOmega');
+          debugPrint('maxWithdrawAlpha from API (root): $maxWithdrawAlpha');
+          return {
+            'success': true,
+            'maxWithdrawOmega': maxWithdrawOmega is double ? maxWithdrawOmega : double.tryParse(maxWithdrawOmega.toString()) ?? 0.0,
+            'maxWithdrawAlpha': maxWithdrawAlpha is double ? maxWithdrawAlpha : double.tryParse(maxWithdrawAlpha.toString()) ?? 0.0,
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to fetch max withdraw amounts',
+          };
+        }
+      } else if (response.statusCode == 404) {
+        // Endpoint doesn't exist - return mock data
+        return {
+          'success': true,
+          'maxWithdrawOmega': 0.0,
+          'maxWithdrawAlpha': 0.0,
+          'balance': 0.0,
+        };
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching max withdraw amounts: $e');
+      return {
+        'success': true,
+        'maxWithdrawOmega': 0.0,
+        'maxWithdrawAlpha': 0.0,
+        'balance': 0.0,
+      };
     }
   }
 
@@ -1088,6 +1241,57 @@ class BotService {
     };
   }
 
+  // Get admin bot user data - for fetching detailed bot balance and investment data
+  static Future<Map<String, dynamic>> getAdminBotUserData() async {
+    try {
+      debugPrint('=== FETCHING ADMIN BOT USER DATA ===');
+      final response = await http.get(
+        Uri.parse('$baseUrl/bot/admin/bot/user-data'),
+        headers: await _getHeaders(),
+      );
+
+      debugPrint('Admin Bot User Data API URL: $baseUrl/bot/admin/bot/user-data');
+      debugPrint('Admin Bot User Data API Response Status: ${response.statusCode}');
+      debugPrint('Admin Bot User Data API Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final success = data['success'];
+        final isSuccess = success == true || success == 'true';
+
+        if (isSuccess && data['data'] != null) {
+          return {
+            'success': true,
+            'data': data['data'],
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to fetch admin bot user data',
+          };
+        }
+      } else if (response.statusCode == 404 || response.statusCode == 403) {
+        // Endpoint not available or unauthorized - return empty data
+        debugPrint('Admin bot user-data endpoint not available');
+        return {
+          'success': true,
+          'data': {},
+        };
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching admin bot user data: $e');
+      return {
+        'success': true,
+        'data': {},
+      };
+    }
+  }
+
   // Get strategy performance data
   static Future<Map<String, dynamic>> getStrategyPerformance(String strategyName) async {
     try {
@@ -1187,58 +1391,135 @@ class BotService {
     };
   }
 
+  // Get all strategies performance (returns array format for Algo page)
+  static Future<Map<String, dynamic>> getStrategyPerformanceAll() async {
+    try {
+      debugPrint('=== FETCHING ALL STRATEGY PERFORMANCE ===');
+      final response = await http.get(
+        Uri.parse('$baseUrl/bot/v1/api/strategy/performance'),
+        headers: await _getHeaders(),
+      );
+
+      debugPrint('Strategy Performance API URL: $baseUrl/bot/v1/api/strategy/performance');
+      debugPrint('Strategy Performance API Response Status: ${response.statusCode}');
+      debugPrint('Strategy Performance API Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+
+        // Handle array response format: [{strategy, roi, volume, winRate, drawdown, trades, followers}]
+        if (data is List) {
+          debugPrint('Strategy Performance Array Response: $data');
+          return {
+            'success': true,
+            'data': data,
+          };
+        }
+        // Handle legacy object response format
+        else if (data is Map<String, dynamic>) {
+          final success = data['success'];
+          final isSuccess = success == true || success == 'true';
+
+          if (isSuccess && data['data'] != null) {
+            return {
+              'success': true,
+              'data': data['data'] is List ? data['data'] : [],
+            };
+          }
+        }
+
+        return {
+          'success': false,
+          'error': 'Invalid response format',
+        };
+      } else if (response.statusCode == 404 || response.statusCode == 500) {
+        debugPrint('Strategy performance endpoint not available');
+        return {
+          'success': false,
+          'error': 'Endpoint not available',
+        };
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('=== STRATEGY PERFORMANCE ALL EXCEPTION ===');
+      debugPrint('Error fetching all strategy performance: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
   // Get bot wallet balance
   static Future<Map<String, dynamic>> getBotBalance() async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/api/users/user'),
+        Uri.parse('$baseUrl/bot/v1/api/botwallet/balance'),
         headers: await _getHeaders(),
       );
-      
-      debugPrint('Bot Balance API URL: $baseUrl/bot/v1/api/users/user');
+
+      debugPrint('Bot Balance API URL: $baseUrl/bot/v1/api/botwallet/balance');
       debugPrint('Bot Balance API Response Status: ${response.statusCode}');
       debugPrint('Bot Balance API Response Body: ${response.body}');
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         // Handle success field as string or boolean
         final success = data['success'];
         final isSuccess = success == true || success == 'true';
-        
-        if (isSuccess && data['data'] != null) {
-          final userData = data['data'];
-          debugPrint('=== USER DATA DEBUG ===');
-          debugPrint('Balance: ${userData['balance']} (${userData['balance'].runtimeType})');
-          debugPrint('Max Withdraw Omega: ${userData['maxWithdrawOmega']} (${userData['maxWithdrawOmega'].runtimeType})');
-          debugPrint('Investments: ${userData['investments']} (${userData['investments'].runtimeType})');
+
+        if (isSuccess) {
+          debugPrint('=== BOT WALLET BALANCE DEBUG ===');
+          debugPrint('Response Data: $data');
+
+          // Handle format 1: {"success":true,"balance":27} (direct balance field)
+          if (data['balance'] != null && data['data'] == null) {
+            final balance = double.tryParse(data['balance'].toString()) ?? 0.0;
+            debugPrint('Parsed simple format - Balance: $balance');
+            return {
+              'success': true,
+              'data': {
+                'totalBalance': balance.toString(),
+                'availableBalance': balance.toString(),
+                'investedBalance': '0.0',
+                'currency': 'USDT',
+              },
+            };
+          }
           
-          // Handle balance - could be double, int, or string
-          final balanceValue = userData['balance'];
-          final balance = balanceValue?.toString() ?? '0.0';
-          
-          // Handle maxWithdrawOmega - could be double, int, or string  
-          final availableValue = userData['maxWithdrawOmega'];
-          final available = availableValue?.toString() ?? '0.0';
-          
-          // Calculate invested amount
-          final investments = userData['investments'] as Map<String, dynamic>? ?? {};
-          final totalInvested = investments.values.fold<double>(0.0, (sum, inv) => sum + (double.tryParse(inv.toString()) ?? 0.0));
-          
-          debugPrint('=== PARSED VALUES ===');
-          debugPrint('Balance: $balance');
-          debugPrint('Available: $available');
-          debugPrint('Invested: $totalInvested');
+          // Handle format 2: {"success":true,"data":{"totalBalance":"27"}} (nested data object)
+          if (data['data'] != null) {
+            final balanceData = data['data'];
+            debugPrint('Balance Data: $balanceData');
+
+            // Parse balance fields - handle different possible field names
+            final totalBalance = double.tryParse(balanceData['totalBalance']?.toString() ?? balanceData['balance']?.toString() ?? '0') ?? 0.0;
+            final availableBalance = double.tryParse(balanceData['availableBalance']?.toString() ?? balanceData['available']?.toString() ?? '0') ?? 0.0;
+            final investedBalance = double.tryParse(balanceData['investedBalance']?.toString() ?? balanceData['invested']?.toString() ?? '0') ?? 0.0;
+
+            debugPrint('=== PARSED VALUES ===');
+            debugPrint('Total Balance: $totalBalance');
+            debugPrint('Available Balance: $availableBalance');
+            debugPrint('Invested Balance: $investedBalance');
+
+            return {
+              'success': true,
+              'data': {
+                'totalBalance': totalBalance.toString(),
+                'availableBalance': availableBalance.toString(),
+                'investedBalance': investedBalance.toString(),
+                'currency': balanceData['currency']?.toString() ?? 'USDT',
+              },
+            };
+          }
           
           return {
-            'success': true,
-            'data': {
-              'totalBalance': balance,
-              'availableBalance': available,
-              'investedBalance': totalInvested.toString(),
-              'currency': 'USDT',
-              'maxWithdrawOmega': available,
-              'maxWithdrawAlpha': userData['maxWithdrawAplha']?.toString() ?? '0.0',
-            },
+            'success': false,
+            'error': 'Invalid response format from server',
           };
         } else {
           return {
@@ -1252,9 +1533,9 @@ class BotService {
         return {
           'success': true,
           'data': {
-            'totalBalance': 0.0,
-            'availableBalance': 0.0,
-            'investedBalance': 0.0,
+            'totalBalance': '0.0',
+            'availableBalance': '0.0',
+            'investedBalance': '0.0',
             'currency': 'USDT',
           },
         };
@@ -1270,9 +1551,9 @@ class BotService {
       return {
         'success': true,
         'data': {
-          'totalBalance': 0.0,
-          'availableBalance': 0.0,
-          'investedBalance': 0.0,
+          'totalBalance': '0.0',
+          'availableBalance': '0.0',
+          'investedBalance': '0.0',
           'currency': 'USDT',
         },
       };
@@ -1329,6 +1610,104 @@ class BotService {
       }
     } catch (e) {
       debugPrint('Error withdrawing: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  // Get max invest amount for a strategy
+  static Future<Map<String, dynamic>> getMaxInvestAmount({
+    required String strategy,
+  }) async {
+    try {
+      debugPrint('=== FETCHING MAX INVEST AMOUNT ===');
+      final response = await http.get(
+        Uri.parse('$baseUrl/bot/v1/api/investments/max-amount?strategy=$strategy'),
+        headers: await _getHeaders(),
+      );
+
+      debugPrint('Max Invest API URL: $baseUrl/bot/v1/api/investments/max-amount?strategy=$strategy');
+      debugPrint('Max Invest API Response Status: ${response.statusCode}');
+      debugPrint('Max Invest API Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          return {
+            'success': true,
+            'maxAmount': data['maxAmount'] ?? data['data']?['maxAmount'] ?? 0.0,
+          };
+        }
+        return {
+          'success': false,
+          'error': data['message'] ?? 'Failed to fetch max invest amount',
+        };
+      } else if (response.statusCode == 404) {
+        // API not available - return wallet balance as max
+        debugPrint('Max invest API not available, using wallet balance');
+        return {
+          'success': true,
+          'maxAmount': 0.0, // Will use wallet balance as fallback
+        };
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching max invest amount: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  // Get max withdraw amount for a strategy
+  static Future<Map<String, dynamic>> getMaxWithdrawAmount({
+    required String strategy,
+  }) async {
+    try {
+      debugPrint('=== FETCHING MAX WITHDRAW AMOUNT ===');
+      final response = await http.get(
+        Uri.parse('$baseUrl/bot/v1/api/investments/withdraw-max?strategy=$strategy'),
+        headers: await _getHeaders(),
+      );
+
+      debugPrint('Max Withdraw API URL: $baseUrl/bot/v1/api/investments/withdraw-max?strategy=$strategy');
+      debugPrint('Max Withdraw API Response Status: ${response.statusCode}');
+      debugPrint('Max Withdraw API Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          return {
+            'success': true,
+            'maxAmount': data['maxAmount'] ?? data['data']?['maxAmount'] ?? 0.0,
+          };
+        }
+        return {
+          'success': false,
+          'error': data['message'] ?? 'Failed to fetch max withdraw amount',
+        };
+      } else if (response.statusCode == 404) {
+        // API not available - will use invested amount as fallback
+        debugPrint('Max withdraw API not available, using invested amount');
+        return {
+          'success': true,
+          'maxAmount': 0.0, // Will use invested amount as fallback
+        };
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching max withdraw amount: $e');
       return {
         'success': false,
         'error': 'Network error: $e',

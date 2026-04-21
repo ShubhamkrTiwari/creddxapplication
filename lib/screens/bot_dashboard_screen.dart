@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../services/bot_service.dart';
+import 'bot_trade_detail_screen.dart';
 
 class BotDashboardScreen extends StatefulWidget {
   const BotDashboardScreen({super.key});
@@ -9,6 +11,52 @@ class BotDashboardScreen extends StatefulWidget {
 
 class _BotDashboardScreenState extends State<BotDashboardScreen> {
   String _selectedSort = 'Top';
+  bool _isLoadingPerformance = true;
+
+  // Performance data for each strategy
+  Map<String, Map<String, String>> _performanceData = {
+    'Omega': {'3M': '--', '6M': '--', '1Y': '--'},
+    'Alpha': {'3M': '--', '6M': '--', '1Y': '--'},
+    'Ranger': {'3M': '--', '6M': '--', '1Y': '--'},
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchAllStrategyPerformance();
+  }
+
+  Future<void> _fetchAllStrategyPerformance() async {
+    setState(() => _isLoadingPerformance = true);
+
+    final strategies = ['Omega', 'Alpha', 'Ranger'];
+    final newData = <String, Map<String, String>>{};
+
+    for (final strategy in strategies) {
+      try {
+        final response = await BotService.getStrategyPerformance(strategy);
+        if (response['success'] == true && response['data'] != null) {
+          final data = response['data'];
+          newData[strategy] = {
+            '3M': data['returns3m']?.toString() ?? data['roi3m']?.toString() ?? '--',
+            '6M': data['returns6m']?.toString() ?? data['roi6m']?.toString() ?? '--',
+            '1Y': data['returns1y']?.toString() ?? data['roi1y']?.toString() ?? '--',
+          };
+        } else {
+          newData[strategy] = {'3M': '--', '6M': '--', '1Y': '--'};
+        }
+      } catch (e) {
+        newData[strategy] = {'3M': '--', '6M': '--', '1Y': '--'};
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _performanceData = newData;
+        _isLoadingPerformance = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -314,14 +362,18 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
                 {'name': 'Ranger', 'multiplier': '5x', 'available': false},
               ];
               final strategy = strategies[index];
+              final name = strategy['name'] as String;
+              final performance = _performanceData[name] ?? {'3M': '--', '6M': '--', '1Y': '--'};
+
               return Padding(
                 padding: const EdgeInsets.only(right: 16),
                 child: SizedBox(
                   width: 200,
                   child: _buildStrategyCard(
-                    strategy['name'] as String,
+                    name,
                     strategy['multiplier'] as String,
                     strategy['available'] as bool,
+                    performance,
                   ),
                 ),
               );
@@ -354,7 +406,7 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
     );
   }
 
-  Widget _buildStrategyCard(String name, String multiplier, bool isAvailable) {
+  Widget _buildStrategyCard(String name, String multiplier, bool isAvailable, Map<String, String> performance) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -394,7 +446,7 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          
+
           // Mini Chart
           Container(
             height: 60,
@@ -411,22 +463,36 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
             ),
           ),
           const SizedBox(height: 12),
-          
-          // Returns
-          const Text(
-            'Returns',
-            style: TextStyle(
-              color: Color(0xFF8E8E93),
-              fontSize: 12,
-            ),
+
+          // Returns - Show loading indicator if fetching
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Returns',
+                style: TextStyle(
+                  color: Color(0xFF8E8E93),
+                  fontSize: 12,
+                ),
+              ),
+              if (_isLoadingPerformance)
+                const SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Color(0xFF84BD00),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 8),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _buildReturnItem('3M', '+12.5%'),
-              _buildReturnItem('6M', '+28.3%'),
-              _buildReturnItem('1Y', '+45.7%'),
+              _buildReturnItem('3M', performance['3M'] ?? '--'),
+              _buildReturnItem('6M', performance['6M'] ?? '--'),
+              _buildReturnItem('1Y', performance['1Y'] ?? '--'),
             ],
           ),
           const SizedBox(height: 16),
@@ -435,7 +501,19 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: isAvailable ? () {} : null,
+              onPressed: isAvailable
+                  ? () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => BotTradeDetailScreen(
+                            name: name,
+                            multiplier: multiplier,
+                          ),
+                        ),
+                      );
+                    }
+                  : null,
               style: ElevatedButton.styleFrom(
                 backgroundColor: isAvailable ? const Color(0xFF84BD00) : const Color(0xFF333333),
                 shape: RoundedRectangleBorder(
@@ -443,7 +521,7 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
                 ),
               ),
               child: Text(
-                isAvailable ? 'Subscribe' : 'Coming Soon',
+                isAvailable ? 'Invest' : 'Coming Soon',
                 style: TextStyle(
                   color: isAvailable ? Colors.black : const Color(0xFF8E8E93),
                   fontWeight: FontWeight.w600,

@@ -192,41 +192,52 @@ class _PayBankTransferScreenState extends State<PayBankTransferScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(
-          label,
-          style: const TextStyle(
-            color: Color(0xFF8E8E93),
-            fontSize: 14,
+        Expanded(
+          flex: 2,
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF8E8E93),
+              fontSize: 14,
+            ),
           ),
         ),
-        Row(
-          children: [
-            Text(
-              value,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: () {
-                Clipboard.setData(ClipboardData(text: value));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('$label copied'),
-                    backgroundColor: const Color(0xFF84BD00),
+        Expanded(
+          flex: 3,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Flexible(
+                child: Text(
+                  value,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
                   ),
-                );
-              },
-              child: const Icon(
-                Icons.copy,
-                color: Colors.white,
-                size: 18,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.end,
+                ),
               ),
-            ),
-          ],
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: value));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('$label copied'),
+                      backgroundColor: const Color(0xFF84BD00),
+                    ),
+                  );
+                },
+                child: const Icon(
+                  Icons.copy,
+                  color: Colors.white,
+                  size: 18,
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     );

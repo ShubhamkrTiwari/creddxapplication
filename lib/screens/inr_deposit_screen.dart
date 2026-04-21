@@ -14,7 +14,7 @@ class InrDepositScreen extends StatefulWidget {
 
 class _InrDepositScreenState extends State<InrDepositScreen> {
   final TextEditingController _amountController = TextEditingController();
-  String _selectedMethod = 'UPI Payment';
+  String _selectedMethod = 'Bank Transfer';
 
   @override
   void initState() {
@@ -50,53 +50,23 @@ class _InrDepositScreenState extends State<InrDepositScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // Step 1: Send OTP
-      final otpResult = await WalletService.sendOtp(purpose: 'inr_withdraw');
-
-      if (otpResult['success'] == true) {
-        if (!mounted) return;
-
-        // Step 2: Navigate to OTP Verification Screen
-        final bool? verified = await Navigator.push<bool>(
+      // Directly navigate to Bank or UPI details screen based on selection
+      if (_selectedMethod == 'UPI Payment') {
+        await Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => OtpVerificationScreen(
-              onVerify: (otp) async {
-                // Verify OTP before proceeding to payment details
-                final result = await WalletService.verifyOtp(otp: otp);
-                return {
-                  'success': result['success'],
-                  'message': result['error'] ?? result['message']
-                };
-              },
-              onResend: () => WalletService.sendOtp(purpose: 'inr_withdraw'),
+            builder: (context) => UpiDetailsScreen(amount: _amountController.text),
+          ),
+        );
+      } else if (_selectedMethod == 'Bank Transfer') {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => BankDetailsScreen(
+              amount: _amountController.text,
             ),
           ),
         );
-
-        if (verified == true) {
-          if (mounted) {
-            if (_selectedMethod == 'UPI Payment') {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => UpiDetailsScreen(amount: _amountController.text),
-                ),
-              );
-            } else if (_selectedMethod == 'Bank Transfer') {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => BankDetailsScreen(
-                    amount: _amountController.text,
-                  ),
-                ),
-              );
-            }
-          }
-        }
-      } else {
-        _showError(otpResult['error'] ?? 'Failed to send OTP');
       }
     } catch (e) {
       if (mounted) {
@@ -172,8 +142,6 @@ class _InrDepositScreenState extends State<InrDepositScreen> {
             ),
             const SizedBox(height: 12),
             _buildPaymentMethod('Bank Transfer'),
-            const SizedBox(height: 12),
-            _buildPaymentMethod('UPI Payment'),
           ],
         ),
       ),

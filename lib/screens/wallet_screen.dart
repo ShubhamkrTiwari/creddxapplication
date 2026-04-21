@@ -23,7 +23,6 @@ class WalletScreen extends StatefulWidget {
 
 class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMixin, WidgetsBindingObserver {
   late TabController _tabController;
-  late TabController _holdingsTabController;
   final NumberFormat _currencyFormat = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
   StreamSubscription? _walletSubscription;
   StreamSubscription? _coinSubscription;
@@ -39,17 +38,24 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
   List<Map<String, dynamic>> _transactionHistory = [];
   List<Map<String, dynamic>> _conversionHistory = [];
 
+  // Wallet balances from getWalletBalance API
+  Map<String, dynamic> _apiWalletBalances = {};
+  double _mainUSDT = 0.0;
+  double _spotUSDT = 0.0;
+  double _p2pUSDT = 0.0;
+  double _botUSDT = 0.0;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _tabController = TabController(length: 2, vsync: this);
-    _holdingsTabController = TabController(length: 2, vsync: this);
     
     _setupStreams();
     _fetchUserData();
     _fetchHistoryData();
-    
+    _fetchWalletBalances(); // Fetch from getWalletBalance API
+
     // Initial fetch if not already initialized
     unified.UnifiedWalletService.initialize();
   }
@@ -60,7 +66,6 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
     _walletSubscription?.cancel();
     _coinSubscription?.cancel();
     _tabController.dispose();
-    _holdingsTabController.dispose();
     super.dispose();
   }
 
@@ -167,7 +172,64 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
     await Future.wait([
       unified.UnifiedWalletService.refreshAllBalances(),
       _fetchHistoryData(),
+      _fetchWalletBalances(), // Refresh from API
     ]);
+  }
+
+  // Fetch wallet balances from getWalletBalance API
+  Future<void> _fetchWalletBalances() async {
+    try {
+      final result = await WalletService.getWalletBalance();
+      if (result['success'] == true && result['data'] != null) {
+        final data = result['data'];
+        setState(() {
+          _apiWalletBalances = data;
+          // Extract USDT balances from each wallet type
+          _mainUSDT = _extractUSDTFromWalletData(data['main']);
+          _spotUSDT = _extractUSDTFromWalletData(data['spot']);
+          _p2pUSDT = _extractUSDTFromWalletData(data['p2p']);
+          _botUSDT = _extractUSDTFromWalletData(data['bot'] ?? data['demo_bot']);
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching wallet balances: $e');
+    }
+  }
+
+  // Helper to extract USDT balance from wallet data
+  double _extractUSDTFromWalletData(dynamic walletData) {
+    if (walletData == null) return 0.0;
+
+    // Handle balances list format
+    if (walletData['balances'] is List) {
+      final balances = walletData['balances'] as List;
+      for (var balance in balances) {
+        if (balance['coin']?.toString().toUpperCase() == 'USDT') {
+          return double.tryParse(balance['total']?.toString() ?? balance['available']?.toString() ?? '0') ?? 0.0;
+        }
+      }
+    }
+
+    // Handle balances map format
+    if (walletData['balances'] is Map) {
+      final usdtData = walletData['balances']['USDT'] ?? walletData['balances']['usdt'];
+      if (usdtData is Map) {
+        return double.tryParse(usdtData['total']?.toString() ?? usdtData['available']?.toString() ?? '0') ?? 0.0;
+      } else if (usdtData is num) {
+        return usdtData.toDouble();
+      }
+    }
+
+    // Direct USDT fields
+    if (walletData['USDT'] != null) {
+      final usdt = walletData['USDT'];
+      if (usdt is num) return usdt.toDouble();
+      if (usdt is Map) {
+        return double.tryParse(usdt['total']?.toString() ?? usdt['available']?.toString() ?? '0') ?? 0.0;
+      }
+    }
+
+    return 0.0;
   }
 
   void _copyAddress() {
@@ -211,8 +273,6 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
                     _buildWalletBalancesSection(),
                     const SizedBox(height: 16),
                     _buildActionButtons(),
-                    const SizedBox(height: 16),
-                    _buildHoldingsSection(),
                     const SizedBox(height: 16),
                     _buildHistorySection(),
                   ],
@@ -466,387 +526,6 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
           },
         ),
       ],
-    );
-  }
-
-  Widget _buildHoldingsSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        TabBar(
-          controller: _holdingsTabController,
-          indicatorColor: const Color(0xFF84BD00),
-          indicatorSize: TabBarIndicatorSize.label,
-          labelColor: const Color(0xFF84BD00),
-          unselectedLabelColor: Colors.white60,
-          labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-          tabs: const [
-            Tab(text: 'Wallet'),
-            Tab(text: 'Coins'),
-          ],
-        ),
-        const SizedBox(height: 12),
-        SizedBox(
-          height: 400,
-          child: TabBarView(
-            controller: _holdingsTabController,
-            children: [
-              _buildWalletAssetsView(),
-              _buildCoinsView(),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildWalletAssetsView() {
-    List<Map<String, dynamic>> assets = [];
-    
-    // Main Wallet USDT only (not sum)
-    final mainUSDT = unified.UnifiedWalletService.mainUSDTBalance;
-    if (mainUSDT > 0) {
-      assets.add({
-        'symbol': 'USDT',
-        'name': 'Tether',
-        'amount': mainUSDT.toString(),
-        'available': mainUSDT.toString(),
-        'locked': '0.00',
-        'usdValue': mainUSDT,
-        'icon': '₮',
-        'color': const Color(0xFF26A17B),
-        'iconUrl': _getCoinIconUrl('USDT'),
-      });
-    }
-
-    // Total INR from all sources (main + spot + bot)
-    final totalINR = _inrBalance;
-    if (totalINR > 0) {
-      assets.add({
-        'symbol': 'INR',
-        'name': 'Indian Rupee',
-        'amount': totalINR.toString(),
-        'available': totalINR.toString(),
-        'locked': '0.00',
-        'usdValue': totalINR / 90.0,
-        'icon': '₹',
-        'color': const Color(0xFFE44134),
-        'iconUrl': '',
-      });
-    }
-
-    return ListView.builder(
-      padding: EdgeInsets.zero,
-      itemCount: assets.length,
-      itemBuilder: (context, index) => _cryptoListItem(assets[index]),
-    );
-  }
-
-  Widget _buildCoinsView() {
-    // Show all spot coins including zero balance
-    final coins = _coinBalances;
-    
-    if (coins.isEmpty) {
-      return const Center(
-        child: Text(
-          'No coins found',
-          style: TextStyle(color: Colors.white54, fontSize: 12),
-        ),
-      );
-    }
-
-    return ListView.builder(
-      padding: EdgeInsets.zero,
-      itemCount: coins.length,
-      itemBuilder: (context, index) {
-        final coin = coins[index];
-        return _buildSpotCoinItem(coin);
-      },
-    );
-  }
-
-  Widget _buildSpotHoldingsView() {
-    // Get all spot assets from wallet balance (including zero balance)
-    final spotAssets = _walletBalance?.spotAssets ?? {};
-    debugPrint('WalletScreen: spotAssets count: ${spotAssets.length}');
-    debugPrint('WalletScreen: spotAssets keys: ${spotAssets.keys.toList()}');
-    final allSpotAssets = spotAssets.entries.toList();
-    
-    // Calculate total spot value in USDT
-    final totalSpotUSDT = _walletBalance?.spotBalance ?? 0.0;
-    final usdtCoin = _coinBalances.where((c) => c.asset == 'USDT').firstOrNull;
-    final lockedUSDT = usdtCoin?.locked ?? 0.0;
-    final totalUSDT = usdtCoin?.total ?? totalSpotUSDT;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Spot Summary Card
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                const Color(0xFF627EEA).withValues(alpha: 0.15),
-                const Color(0xFF1E1E20),
-              ],
-            ),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFF627EEA).withValues(alpha: 0.2)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF627EEA).withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: const Icon(Icons.trending_up, color: Color(0xFF627EEA), size: 14),
-                  ),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'Spot Balance',
-                    style: TextStyle(color: Colors.white54, fontSize: 10),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '${totalUSDT.toStringAsFixed(2)} USDT',
-                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              if (lockedUSDT > 0)
-                Text(
-                  '${(totalUSDT - lockedUSDT).toStringAsFixed(2)} avail • ${lockedUSDT.toStringAsFixed(2)} locked',
-                  style: const TextStyle(color: Colors.orange, fontSize: 9),
-                ),
-              const SizedBox(height: 6),
-              Text(
-                '${allSpotAssets.length} Assets',
-                style: const TextStyle(color: Colors.white38, fontSize: 10),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        
-        // Spot Token List - Show all assets including zero balance
-        Expanded(
-          child: allSpotAssets.isEmpty
-              ? Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1E1E20),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Center(
-                    child: Text(
-                      'No spot holdings found',
-                      style: TextStyle(color: Colors.white54, fontSize: 12),
-                    ),
-                  ),
-                )
-              : ListView.builder(
-                  padding: EdgeInsets.zero,
-                  itemCount: allSpotAssets.length,
-                  itemBuilder: (context, index) => _buildSpotAssetItem(allSpotAssets[index]),
-                ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSpotCoinItem(unified.CoinBalance coin) {
-    final iconUrl = _getCoinIconUrl(coin.asset);
-    final color = _getCoinColor(coin.asset);
-    final symbol = _getCoinSymbol(coin.asset);
-    final name = _getCoinFullName(coin.asset);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E1E20),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.1),
-              shape: BoxShape.circle,
-            ),
-            child: iconUrl.isNotEmpty
-                ? ClipOval(
-                    child: Image.network(
-                      iconUrl,
-                      width: 40,
-                      height: 40,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Center(
-                        child: Text(
-                          symbol,
-                          style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16),
-                        ),
-                      ),
-                    ),
-                  )
-                : Center(
-                    child: Text(
-                      symbol,
-                      style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16),
-                    ),
-                  ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  coin.asset,
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  name,
-                  style: const TextStyle(color: Colors.white54, fontSize: 10),
-                ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                coin.total.toStringAsFixed(coinDecimals(coin.asset)),
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                '${coin.free.toStringAsFixed(coinDecimals(coin.asset))} avail',
-                style: const TextStyle(color: Colors.white54, fontSize: 9),
-              ),
-              if (coin.locked > 0)
-                Text(
-                  '${coin.locked.toStringAsFixed(coinDecimals(coin.asset))} locked',
-                  style: const TextStyle(color: Colors.orange, fontSize: 8),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSpotAssetItem(MapEntry<String, dynamic> assetEntry) {
-    final asset = assetEntry.key;
-    final assetData = assetEntry.value as Map<String, dynamic>? ?? {};
-    final free = double.tryParse(assetData['free']?.toString() ?? assetData['available']?.toString() ?? '0') ?? 0.0;
-    final locked = double.tryParse(assetData['locked']?.toString() ?? '0') ?? 0.0;
-    final total = free + locked;
-
-    final iconUrl = _getCoinIconUrl(asset);
-    final color = _getCoinColor(asset);
-    final symbol = _getCoinSymbol(asset);
-    final name = _getCoinFullName(asset);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E1E20),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.1),
-              shape: BoxShape.circle,
-            ),
-            child: iconUrl.isNotEmpty
-                ? ClipOval(
-                    child: Image.network(
-                      iconUrl,
-                      width: 40,
-                      height: 40,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Center(
-                        child: Text(
-                          symbol,
-                          style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16),
-                        ),
-                      ),
-                    ),
-                  )
-                : Center(
-                    child: Text(
-                      symbol,
-                      style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16),
-                    ),
-                  ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  asset,
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  name,
-                  style: const TextStyle(color: Colors.white54, fontSize: 10),
-                ),
-              ],
-            ),
-          ),
-          SizedBox(
-            width: 80,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  total.toStringAsFixed(coinDecimals(asset)),
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '${free.toStringAsFixed(coinDecimals(asset))} avail',
-                  style: const TextStyle(color: Colors.white54, fontSize: 9),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                ),
-                if (locked > 0)
-                  Text(
-                    '${locked.toStringAsFixed(coinDecimals(asset))} locked',
-                    style: const TextStyle(color: Colors.orange, fontSize: 8),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 

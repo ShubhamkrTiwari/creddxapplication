@@ -232,30 +232,41 @@ class _BankDetailsScreenState extends State<BankDetailsScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(
-          label,
-          style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 14),
+        Expanded(
+          flex: 2,
+          child: Text(
+            label,
+            style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 14),
+          ),
         ),
-        Row(
-          children: [
-            Text(
-              value,
-              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500),
-            ),
-            if (showCopy) ...[
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: () {
-                  // Copy to clipboard
-                },
-                child: const Icon(
-                  Icons.copy,
-                  color: Color(0xFF8E8E93),
-                  size: 16,
+        Expanded(
+          flex: 3,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Flexible(
+                child: Text(
+                  value,
+                  style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500),
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.end,
                 ),
               ),
+              if (showCopy) ...[
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () {
+                    // Copy to clipboard
+                  },
+                  child: const Icon(
+                    Icons.copy,
+                    color: Color(0xFF8E8E93),
+                    size: 16,
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ],
     );

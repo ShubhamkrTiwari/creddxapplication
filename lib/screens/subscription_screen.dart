@@ -12,10 +12,38 @@ class SubscriptionScreen extends StatefulWidget {
   State<SubscriptionScreen> createState() => _SubscriptionScreenState();
 }
 
-// Available packages with prices
+// Available packages with prices and features
 final List<Map<String, dynamic>> _packages = [
-  {'name': 'Free Plan', 'price': 0.0},
-  {'name': 'Basic Package', 'price': 25.0},
+  {
+    'name': 'Basic Package',
+    'price': 25.0,
+    'features': [
+      {
+        'title': 'Advanced Edge',
+        'description': 'AI-powered insights based on real-time market signals to improve trading decisions.',
+      },
+      {
+        'title': 'Trade Pro Tools',
+        'description': 'Access essential tools for smooth and efficient trade execution.',
+      },
+      {
+        'title': 'Annual Subscription',
+        'description': 'Get full access to all trading strategies with a \$25 yearly subscription, valid for 12 months.',
+      },
+      {
+        'title': 'Portfolio Range',
+        'description': 'Optimized for portfolios ranging from \$100 to \$2,000.',
+      },
+      {
+        'title': 'Platform Access',
+        'description': 'Get complete access to all trading tools and features while your subscription is active.',
+      },
+      {
+        'title': 'Profit Optimization',
+        'description': 'Smart strategy adjustments designed to enhance performance and maximize returns.',
+      },
+    ],
+  },
 ];
 
 class _SubscriptionScreenState extends State<SubscriptionScreen> {
@@ -26,6 +54,8 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   double? _planPrice;
   String? _errorMessage;
   Timer? _countdownTimer;
+  String _totalBalance = '0.00';
+  bool _isLoadingBalance = false;
   
   // Selected plan for subscription - gets values from _packages
   Map<String, dynamic> get _selectedPackage => _packages.firstWhere(
@@ -39,67 +69,89 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   void initState() {
     super.initState();
     _loadUserSubscription();
+    _loadBotBalance();
     _startCountdownTimer();
+  }
+
+  Future<void> _loadBotBalance() async {
+    if (!mounted) return;
+    setState(() => _isLoadingBalance = true);
+    try {
+      final result = await BotService.getBotBalance();
+      if (result['success'] == true && result['data'] != null) {
+        if (!mounted) return;
+        setState(() {
+          _totalBalance = result['data']['totalBalance'] ?? '0.00';
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading bot balance: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingBalance = false);
+      }
+    }
   }
 
   Future<void> _loadUserSubscription() async {
     try {
-      final response = await BotService.getUserData();
+      // 1. Call API and get response
+      final res = await BotService.getUserData();
 
-      if (response['success'] == true && response['data'] != null) {
-        final userData = response['data'];
+      if (res['success'] == true && res['data'] != null) {
+        final userData = res['data'];
         final subscription = userData['subscription'];
 
-        // Check subscription
-        if (subscription == null) {
-          setState(() {
-            _isSubscribed = false;
-            _planName = null;
-            _planPrice = null;
-            _daysLeft = 0;
-            _errorMessage = null;
-          });
-          BotTradeDetailScreen.hasPackage = false;
-          return;
-        }
-
-        // Extract subscription details
-        final planName = subscription['plan']?.toString();
-        final planPrice = double.tryParse(subscription['price']?.toString() ?? '');
-
-        // Check expiry
+        // 2. Check subscription
+        bool isSubscribed;
+        String? planName;
+        double? planPrice;
         int remainingDays = 0;
-        bool isActive = true;
 
-        if (subscription['endDate'] != null) {
-          final endDate = DateTime.tryParse(subscription['endDate'].toString());
-          if (endDate != null) {
-            final currentDate = DateTime.now();
-            remainingDays = endDate.difference(currentDate).inDays;
+        if (subscription == null) {
+          isSubscribed = false;
+        } else {
+          isSubscribed = true;
+          
+          // 3. If subscribed
+          planName = subscription['plan']?.toString();
+          planPrice = double.tryParse(subscription['price']?.toString() ?? '');
 
-            // Expired case
-            if (remainingDays <= 0) {
-              isActive = false;
-              remainingDays = 0;
+          // 4. Check expiry
+          if (subscription['endDate'] != null) {
+            final endDate = DateTime.tryParse(subscription['endDate'].toString());
+            if (endDate != null) {
+              final currentDate = DateTime.now();
+              remainingDays = endDate.difference(currentDate).inDays;
+
+              // 5. Expired case
+              if (remainingDays <= 0) {
+                isSubscribed = false;
+                planName = null;
+                planPrice = null;
+                remainingDays = 0;
+              }
             }
           }
         }
 
-        // Update state with final values
+        // 6. Final values to use
+        if (!mounted) return;
         setState(() {
-          _isSubscribed = isActive;
-          _planName = isActive ? planName : null;
-          _planPrice = isActive ? planPrice : null;
+          _isSubscribed = isSubscribed;
+          _planName = planName;
+          _planPrice = planPrice;
           _daysLeft = remainingDays;
           _errorMessage = null;
         });
 
-        BotTradeDetailScreen.hasPackage = isActive;
+        BotTradeDetailScreen.hasPackage = isSubscribed;
       } else {
-        // API returned error
-        final errorMsg = response['error']?.toString() ??
-                        response['message']?.toString() ??
+        // 7. Error handling
+        final errorMsg = res['error']?.toString() ??
+                        res['message']?.toString() ??
                         'Could not load subscription details';
+        if (!mounted) return;
         setState(() {
           _errorMessage = errorMsg;
           _isSubscribed = false;
@@ -111,6 +163,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
       }
     } catch (e) {
       debugPrint('Error loading user subscription: $e');
+      if (!mounted) return;
       setState(() {
         _errorMessage = 'Could not load subscription details';
         _isSubscribed = false;
@@ -171,6 +224,57 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
+            // Bot Balance Card
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1C1C1E),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: const Color(0xFF84BD00).withOpacity(0.2),
+                  width: 1,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Bot Wallet Balance',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.6),
+                          fontSize: 14,
+                        ),
+                      ),
+                      const Icon(Icons.account_balance_wallet_outlined, color: Color(0xFF84BD00), size: 20),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _isLoadingBalance 
+                    ? const SizedBox(
+                        height: 24, 
+                        width: 24, 
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF84BD00)),
+                        )
+                      )
+                    : Text(
+                        '\$$_totalBalance',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                ],
+              ),
+            ),
+
             // Basic Package Card
             Container(
               width: double.infinity,
@@ -237,12 +341,12 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                   const SizedBox(height: 24),
                   
                   // Features
-                  _buildFeature('Advanced Edge'),
-                  _buildFeature('Trade Pro'),
-                  _buildFeature('70-30 Ratio'),
-                  _buildFeature('Cap 100\$-2000\$'),
-                  _buildFeature('1 Year'),
-                  _buildFeature('Profit Master'),
+                  ..._selectedPackage['features'].map<Widget>((feature) {
+                    return _buildDetailedFeature(
+                      title: feature['title'] ?? '',
+                      description: feature['description'] ?? '',
+                    );
+                  }).toList(),
                   
                   const SizedBox(height: 32),
                   
@@ -353,6 +457,55 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 color: Colors.white.withOpacity(0.9),
                 fontSize: 16,
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailedFeature({required String title, required String description}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 24,
+            height: 24,
+            margin: const EdgeInsets.only(top: 2),
+            decoration: BoxDecoration(
+              color: const Color(0xFF84BD00),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(
+              Icons.check,
+              color: Colors.black,
+              size: 16,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  description,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.6),
+                    fontSize: 13,
+                  ),
+                ),
+              ],
             ),
           ),
         ],

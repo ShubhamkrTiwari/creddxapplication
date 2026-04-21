@@ -7,6 +7,7 @@ import '../services/socket_service.dart';
 import '../services/user_service.dart';
 import '../services/wallet_service.dart';
 import '../services/auth_service.dart';
+import '../services/unified_wallet_service.dart';
 
 class ConversionScreen extends StatefulWidget {
   const ConversionScreen({super.key});
@@ -48,30 +49,20 @@ class _ConversionScreenState extends State<ConversionScreen> {
   }
   
   void _subscribeToBalanceUpdates() {
-    _balanceSubscription = SocketService.balanceStream.listen((data) {
-      if (mounted && data['type'] == 'balance_update') {
-        debugPrint('ConversionScreen: Received balance update via Socket');
-        final payload = data['data'] ?? data;
+    // Use UnifiedWalletService which properly handles mainBalance from socket
+    _balanceSubscription = UnifiedWalletService.walletBalanceStream.listen((walletBalance) {
+      if (!mounted || walletBalance == null) return;
+      
+      setState(() {
+        // Get INR from mainBalance via UnifiedWalletService
+        _inrBalance = UnifiedWalletService.mainINRBalance;
+        debugPrint('ConversionScreen: INR from UnifiedWalletService: $_inrBalance');
         
-        setState(() {
-          // If it's a spot balance update or has USDT info
-          if (payload['wallet_type'] == 'spot' || payload['usdt_available'] != null) {
-            _usdtBalance = double.tryParse(payload['usdt_available']?.toString() ?? 
-                           payload['available']?.toString() ?? '0') ?? _usdtBalance;
-            
-            // Re-calculate total USDT balance if spot updated
-            // Note: In a real app, you'd want to keep track of other wallets too
-            // for now we'll just update this one as it's the most frequent
-            _totalUsdtBalance = _usdtBalance; 
-          }
-          
-          // If it's an INR balance update (if supported by socket)
-          if (payload['asset']?.toString().toUpperCase() == 'INR' || payload['inr_available'] != null) {
-             _inrBalance = double.tryParse(payload['inr_available']?.toString() ?? 
-                           payload['available']?.toString() ?? '0') ?? _inrBalance;
-          }
-        });
-      }
+        // Get USDT from mainBalance
+        _usdtBalance = UnifiedWalletService.mainUSDTBalance;
+        _totalUsdtBalance = UnifiedWalletService.totalUSDTBalance;
+        debugPrint('ConversionScreen: USDT from UnifiedWalletService: $_usdtBalance');
+      });
     });
   }
   

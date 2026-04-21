@@ -5,9 +5,11 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:intl/intl.dart';
 import '../services/socket_service.dart';
 import '../services/spot_service.dart';
 import '../services/wallet_service.dart';
+import '../services/unified_wallet_service.dart' as unified;
 import 'invite_friends_screen.dart';
 import 'login_screen.dart';
 import 'update_profile_screen.dart';
@@ -43,6 +45,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   StreamSubscription<Map<String, dynamic>>? _balanceSubscription;
   Map<String, dynamic> _walletBalances = {};
   bool _isLoadingWallet = true;
+
+  // Wallet balance data from getWalletBalance API
+  Map<String, dynamic> _apiWalletBalances = {};
+  double _mainUSDT = 0.0;
+  double _spotUSDT = 0.0;
+  double _p2pUSDT = 0.0;
+  double _botUSDT = 0.0;
+  double _holdingUSDT = 0.0;
   
   // Asset prices - will be updated dynamically
   Map<String, double> _assetPrices = {'ETH': 2450.00, 'USDT': 1.00, 'USDC': 1.00, 'BTC': 45000.00};
@@ -67,6 +77,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     _loadAllWalletData();
     _loadAssetPrices();
     _loadConversionRate();
+    _fetchWalletBalances();
     
     // Refresh portfolio calculation periodically to ensure updated conversion rates
     Timer.periodic(const Duration(seconds: 30), (timer) {
@@ -89,41 +100,151 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     super.dispose();
   }
 
+  // Fetch wallet balances from getWalletBalance API
+  Future<void> _fetchWalletBalances() async {
+    try {
+      debugPrint('========== FETCHING WALLET BALANCES ==========');
+      final result = await WalletService.getWalletBalance();
+      debugPrint('API Result: $result');
+
+      if (result['success'] == true && result['data'] != null) {
+        final data = result['data'];
+        debugPrint('API Data keys: ${data.keys}');
+        debugPrint('Main data: ${data['main']}');
+        debugPrint('Spot data: ${data['spot']}');
+        debugPrint('P2P data: ${data['p2p']}');
+        debugPrint('Bot data: ${data['bot'] ?? data['demo_bot']}');
+        debugPrint('Holding data: ${data['holding']}');
+
+        setState(() {
+          _apiWalletBalances = data;
+          // Extract USDT balances from each wallet type
+          _mainUSDT = _extractUSDTFromWalletData(data['main']);
+          _spotUSDT = _extractUSDTFromWalletData(data['spot']);
+          _p2pUSDT = _extractUSDTFromWalletData(data['p2p']);
+          _botUSDT = _extractUSDTFromWalletData(data['bot'] ?? data['demo_bot']);
+          _holdingUSDT = _extractUSDTFromWalletData(data['holding']);
+          _isLoadingWallet = false;
+
+          debugPrint('========== EXTRACTED BALANCES ==========');
+          debugPrint('Main: $_mainUSDT');
+          debugPrint('Spot: $_spotUSDT');
+          debugPrint('P2P: $_p2pUSDT');
+          debugPrint('Bot: $_botUSDT');
+          debugPrint('Holding: $_holdingUSDT');
+        });
+      } else {
+        debugPrint('API call failed or no data: $result');
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Error fetching wallet balances: $e');
+      debugPrint('Stack trace: $stackTrace');
+    }
+  }
+
+  // Helper to extract USDT balance from wallet data
+  double _extractUSDTFromWalletData(dynamic walletData) {
+    if (walletData == null) return 0.0;
+
+    // Handle balances list format
+    if (walletData['balances'] is List) {
+      final balances = walletData['balances'] as List;
+      for (var balance in balances) {
+        if (balance['coin']?.toString().toUpperCase() == 'USDT') {
+          return double.tryParse(balance['total']?.toString() ?? balance['available']?.toString() ?? '0') ?? 0.0;
+        }
+      }
+    }
+
+    // Handle balances map format
+    if (walletData['balances'] is Map) {
+      final usdtData = walletData['balances']['USDT'] ?? walletData['balances']['usdt'];
+      if (usdtData is Map) {
+        return double.tryParse(usdtData['total']?.toString() ?? usdtData['available']?.toString() ?? '0') ?? 0.0;
+      } else if (usdtData is num) {
+        return usdtData.toDouble();
+      }
+    }
+
+    // Direct USDT fields
+    if (walletData['USDT'] != null) {
+      final usdt = walletData['USDT'];
+      if (usdt is num) return usdt.toDouble();
+      if (usdt is Map) {
+        return double.tryParse(usdt['total']?.toString() ?? usdt['available']?.toString() ?? '0') ?? 0.0;
+      }
+    }
+
+    return 0.0;
+  }
+
   void _subscribeToBalance() {
     _balanceSubscription = SocketService.balanceStream.listen((data) {
-      if (data['type'] == 'balance_update' && data['assets'] != null) {
+      if (data['type'] == 'balance_update') {
         debugPrint('UserProfileScreen: Balance update received via SocketService');
-        final assets = data['assets'] as List<dynamic>?;
-        if (assets == null) return;
+        debugPrint('Raw data: $data');
 
-        // Map 'asset' to 'coin' to match UserProfileScreen expectations
-        final mappedAssets = assets.map((a) => {
-          'coin': a['asset'],
-          'available': a['available'],
-          'locked': a['locked'],
-        }).toList();
+        // Extract payload from wrapped data
+        final payload = data['data'] ?? data;
 
-        if (mounted) {
-          setState(() {
-            // Update spot wallet specifically if that's what the update represents
-            // or merge it into the existing _walletBalances.
-            // For simplicity and to maintain compatibility with existing UI logic:
-            _walletBalances['spot'] = {'balances': mappedAssets};
-            _walletBalances['spotBalance'] = mappedAssets; // Alternative format
-            
-            // Also update top-level for 'Coin View'
-            for (var asset in assets) {
-              final symbol = asset['asset']?.toString().toLowerCase();
-              if (symbol != null) {
-                _walletBalances[symbol] = asset['available'];
-                _walletBalances['${symbol}_available'] = asset['available'];
-                _walletBalances['${symbol}_total'] = (double.tryParse(asset['available']?.toString() ?? '0') ?? 0.0) + 
-                                                     (double.tryParse(asset['locked']?.toString() ?? '0') ?? 0.0);
-              }
+        // Handle assets array format
+        if (payload['assets'] != null) {
+          final assets = payload['assets'] as List<dynamic>?;
+          if (assets != null && assets.isNotEmpty) {
+            // Map 'asset' to 'coin' to match UserProfileScreen expectations
+            final mappedAssets = assets.map((a) => {
+              'coin': a['asset'],
+              'available': a['available'],
+              'locked': a['locked'],
+            }).toList();
+
+            if (mounted) {
+              setState(() {
+                _walletBalances['spot'] = {'balances': mappedAssets};
+                _walletBalances['spotBalance'] = mappedAssets;
+
+                // Also update top-level for 'Coin View'
+                for (var asset in assets) {
+                  final symbol = asset['asset']?.toString().toLowerCase();
+                  if (symbol != null) {
+                    _walletBalances[symbol] = asset['available'];
+                    _walletBalances['${symbol}_available'] = asset['available'];
+                    _walletBalances['${symbol}_total'] = (double.tryParse(asset['available']?.toString() ?? '0') ?? 0.0) +
+                                                         (double.tryParse(asset['locked']?.toString() ?? '0') ?? 0.0);
+                  }
+                }
+
+                _isLoadingWallet = false;
+              });
             }
-            
-            _isLoadingWallet = false;
-          });
+          }
+        }
+
+        // Handle single INR balance update format
+        if (payload['asset']?.toString().toUpperCase() == 'INR' ||
+            payload['inr_available'] != null ||
+            payload['inr'] != null) {
+          final inrAvailable = double.tryParse(
+            payload['inr_available']?.toString() ??
+            payload['available']?.toString() ??
+            payload['inr']?.toString() ?? '0'
+          ) ?? 0.0;
+
+          final inrLocked = double.tryParse(
+            payload['locked']?.toString() ?? '0'
+          ) ?? 0.0;
+
+          debugPrint('UserProfileScreen: INR balance from socket: available=$inrAvailable, locked=$inrLocked');
+
+          if (mounted) {
+            setState(() {
+              _walletBalances['inr'] = inrAvailable;
+              _walletBalances['inr_available'] = inrAvailable;
+              _walletBalances['inr_total'] = inrAvailable + inrLocked;
+              _walletBalances['INR'] = inrAvailable;
+              _isLoadingWallet = false;
+            });
+          }
         }
       }
     });
@@ -632,12 +753,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   _buildPartnerProgramTile(),
                   const SizedBox(height: 24),
                   _buildInviteFriendsTile(),
-                  const SizedBox(height: 24),
-                  _buildSupportTile(),
-                  const SizedBox(height: 24),
-                  _buildSettingsTile(),
-                  const SizedBox(height: 24),
-                  _buildLogoutTile(),
                 ],
               ),
             ),
@@ -650,13 +765,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             ),
             const Divider(color: Colors.white10, height: 1),
             _buildUSMESection(),
-            const Divider(color: Colors.white10, height: 1),
-            const SizedBox(height: 16),
-            // Logout button at bottom
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-              child: _buildLogoutButton(),
-            ),
             const SizedBox(height: 24),
           ],
         ),
@@ -1057,177 +1165,29 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   String _getWalletBalance(String walletType) {
     if (_isLoadingWallet) return '...';
 
-    debugPrint('Getting wallet balance for: $walletType');
-    debugPrint('Current wallet balances data: $_walletBalances');
-
-    // If no data from API, show 0.00
-    if (_walletBalances.isEmpty) {
-      debugPrint('No wallet balance data available from API');
-      final currency = walletType == 'INR' ? 'INR' : 'USDT';
-      if (_isWalletHidden) return '*** $currency';
-      return '0.00 $currency';
-    }
-
-    final data = _walletBalances;
+    // Use UnifiedWalletService like wallet screen
     double total = 0.0;
     String currency = 'USDT';
 
-    // Special handling for INR wallet
-    if (walletType == 'INR') {
-      currency = 'INR';
-
-      // Try flat format first (like wallet screen)
-      if (data['mainBalance'] is Map) {
-        final mainBalance = data['mainBalance'] as Map<dynamic, dynamic>?;
-        if (mainBalance != null && mainBalance['INR'] != null) {
-          total = double.tryParse(mainBalance['INR'].toString()) ?? 0.0;
-          debugPrint('Found INR balance from flat format: $total');
-        }
-      }
-
-      // Check for INR in main wallet balances list
-      if (total == 0.0 && data['main'] != null) {
-        final main = data['main'];
-        if (main is Map && main['balances'] is List) {
-          for (final bal in main['balances']) {
-            if (bal is Map && bal['coin']?.toString().toUpperCase() == 'INR') {
-              total = double.tryParse(bal['total']?.toString() ?? bal['available']?.toString() ?? '0') ?? 0.0;
-              debugPrint('Found INR balance in main wallet balances: $total');
-              break;
-            }
-          }
-        }
-      }
-
-      // Check in spot_assets (from SpotService)
-      if (total == 0.0 && data['spot_assets'] is Map) {
-        final spotAssets = data['spot_assets'] as Map;
-        if (spotAssets['INR'] != null) {
-          total = double.tryParse(spotAssets['INR']['available']?.toString() ?? spotAssets['INR']['total']?.toString() ?? '0') ?? 0.0;
-          debugPrint('Found INR in spot_assets: $total');
-        }
-      }
-
-      // Check in raw_assets or spot_raw (from SpotService)
-      final rawAssets = data['spot_raw'] ?? data['raw_assets'];
-      if (total == 0.0 && rawAssets is List) {
-        for (final asset in rawAssets) {
-          if (asset is Map && asset['asset']?.toString().toUpperCase() == 'INR') {
-            total = double.tryParse(asset['available']?.toString() ?? asset['total']?.toString() ?? '0') ?? 0.0;
-            debugPrint('Found INR in raw assets: $total');
-            break;
-          }
-        }
-      }
-
-      // Direct keys fallback
-      if (total == 0.0 && data['inr'] != null) {
-        total = double.tryParse(data['inr'].toString()) ?? 0.0;
-      } else if (total == 0.0 && data['inr_total'] != null) {
-        total = double.tryParse(data['inr_total'].toString()) ?? 0.0;
-      } else if (total == 0.0 && data['inr_available'] != null) {
-        total = double.tryParse(data['inr_available'].toString()) ?? 0.0;
-      }
-
-      // Check inside "assets" or "balances" map if present at top level
-      if (total == 0.0 && data['assets'] is Map) {
-        final assets = data['assets'] as Map;
-        if (assets['INR'] != null) {
-          final val = assets['INR'];
-          if (val is Map) {
-            total = double.tryParse(val['available']?.toString() ?? val['total']?.toString() ?? '0') ?? 0.0;
-          } else {
-            total = double.tryParse(val.toString()) ?? 0.0;
-          }
-        }
-      }
-
-      // Nested data structure
-      if (total == 0.0 && data['data'] != null) {
-        final nestedData = data['data'];
-        if (nestedData is Map) {
-          total = double.tryParse(nestedData['inr']?.toString() ?? nestedData['inr_total']?.toString() ?? nestedData['inr_available']?.toString() ?? '0') ?? 0.0;
-        }
-      }
-    } else {
-      // Handle other wallets (Main, SPOT, P2P, Bot)
-      final typeKey = walletType.toLowerCase();
-
-      // Map wallet type to flat format field names (like wallet screen)
-      final flatFieldMap = {
-        'main': 'mainBalance',
-        'spot': 'spotBalance',
-        'p2p': 'p2pBalance',
-        'bot': 'botBalance',
-      };
-
-      // Try flat format first (like wallet screen does)
-      final fieldName = flatFieldMap[typeKey];
-      if (fieldName != null && data[fieldName] != null) {
-        final walletData = data[fieldName];
-        debugPrint('Found flat format wallet data for $typeKey: $walletData');
-
-        if (walletData is Map) {
-          // Format: {USDT: Y, INR: X}
-          if (walletData['USDT'] != null) {
-            total = double.tryParse(walletData['USDT'].toString()) ?? 0.0;
-            debugPrint('Found USDT in flat format for $typeKey: $total');
-          }
-        } else if (walletData is num) {
-          // Format: spotBalance: 0 (direct number)
-          total = walletData.toDouble();
-          debugPrint('Found USDT as direct number for $typeKey: $total');
-        }
-      }
-
-      // Try nested format (balances array)
-      if (total == 0.0 && data[typeKey] != null) {
-        final wallet = data[typeKey];
-        debugPrint('Found nested wallet data for $typeKey: $wallet');
-
-        if (wallet is Map) {
-          final balances = wallet['balances'];
-          if (balances is List) {
-            debugPrint('Found balances list: $balances');
-            for (final bal in balances) {
-              if (bal is Map && (bal['coin']?.toString().toUpperCase() == 'USDT' || bal['asset']?.toString().toUpperCase() == 'USDT')) {
-                final available = double.tryParse(bal['available']?.toString() ?? '0') ?? 0.0;
-                final locked = double.tryParse(bal['locked']?.toString() ?? '0') ?? 0.0;
-                total = double.tryParse(bal['total']?.toString() ?? '0') ?? (available + locked);
-                debugPrint('Found USDT balance in balances array: available=$available, locked=$locked, total=$total');
-                break;
-              }
-            }
-          } else if (wallet['usdt_total'] != null) {
-            total = double.tryParse(wallet['usdt_total'].toString()) ?? 0.0;
-          } else if (wallet['total'] != null) {
-            total = double.tryParse(wallet['total'].toString()) ?? 0.0;
-          }
-        } else if (wallet is num) {
-          total = wallet.toDouble();
-        }
-      }
-
-      // Check nested data structure fallback
-      if (total == 0.0 && data['data'] != null) {
-        final nestedData = data['data'];
-        if (nestedData is Map && nestedData[typeKey] != null) {
-          final wallet = nestedData[typeKey];
-          if (wallet is Map && wallet['balances'] is List) {
-            for (final bal in wallet['balances']) {
-              if (bal is Map && (bal['coin']?.toString().toUpperCase() == 'USDT' || bal['asset']?.toString().toUpperCase() == 'USDT')) {
-                final available = double.tryParse(bal['available']?.toString() ?? '0') ?? 0.0;
-                final locked = double.tryParse(bal['locked']?.toString() ?? '0') ?? 0.0;
-                total = double.tryParse(bal['total']?.toString() ?? '0') ?? (available + locked);
-                break;
-              }
-            }
-          }
-        }
-      }
+    switch (walletType.toUpperCase()) {
+      case 'MAIN':
+        total = unified.UnifiedWalletService.mainUSDTBalance;
+        break;
+      case 'SPOT':
+        total = unified.UnifiedWalletService.spotUSDTBalance;
+        break;
+      case 'P2P':
+        total = unified.UnifiedWalletService.p2pUSDTBalance;
+        break;
+      case 'BOT':
+        total = unified.UnifiedWalletService.botUSDTBalance;
+        break;
+      case 'INR':
+        currency = 'INR';
+        total = unified.UnifiedWalletService.mainINRBalance;
+        break;
     }
 
-    debugPrint('Final calculated balance for $walletType: $total $currency');
     if (_isWalletHidden) return '*** $currency';
     return '${total.toStringAsFixed(2)} $currency';
   }
@@ -1606,6 +1566,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         return Icons.swap_horiz;
       case 'MAIN':
         return Icons.account_balance;
+
       default:
         return Icons.wallet;
     }
@@ -1629,6 +1590,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         return const Color(0xFF10B981);
       case 'MAIN':
         return const Color(0xFF3B82F6);
+
       default:
         return Colors.grey;
     }
@@ -1652,6 +1614,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         return 'Peer-to-Peer';
       case 'MAIN':
         return 'Main Wallet';
+
       default:
         return 'Digital Asset';
     }
