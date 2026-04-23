@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import '../services/p2p_service.dart';
+import '../services/auth_service.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 import 'feedback_screen.dart';
 import 'blocked_users_screen.dart';
 import 'saved_payment_methods_screen.dart';
+import 'login_screen.dart';
 
 class P2PUserProfileScreen extends StatefulWidget {
   final String userId;
@@ -84,6 +86,12 @@ class _P2PUserProfileScreenState extends State<P2PUserProfileScreen> {
         ),
         title: const Text('User Profile', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
         centerTitle: true,
+        actions: [
+          IconButton(
+            onPressed: () => _showLogoutConfirmDialog(),
+            icon: const Icon(Icons.logout, color: Colors.white),
+          ),
+        ],
       ),
       body: _isLoading
           ? const Center(child: BitcoinLoadingIndicator(size: 40))
@@ -520,6 +528,65 @@ class _P2PUserProfileScreenState extends State<P2PUserProfileScreen> {
         ),
       ),
     );
+  }
+
+  void _showLogoutConfirmDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1C1C1E),
+          title: const Text(
+            'Logout',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: const Text(
+            'Are you sure you want to logout?',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await _handleLogout();
+              },
+              child: const Text(
+                'Logout',
+                style: TextStyle(color: Color(0xFFFF3B30)),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _handleLogout() async {
+    final result = await AuthService.logout();
+    if (result['success'] == true) {
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => LoginScreen()),
+          (route) => false,
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result['message'] ?? 'Logout failed'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildStatsGrid(Map stats) {

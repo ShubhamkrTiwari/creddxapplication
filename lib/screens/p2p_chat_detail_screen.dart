@@ -328,12 +328,17 @@ class _P2PChatDetailScreenState extends State<P2PChatDetailScreen> {
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           TextButton(
             onPressed: () async {
-              final success = await P2PService.blockUser(widget.userId, remarkController.text);
+              final result = await P2PService.blockUser(
+                blockedUserId: widget.userId,
+                reason: remarkController.text,
+              );
+              final bool success = result['success'] == true;
+              
               if (mounted) {
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text(success ? 'User blocked' : 'Failed to block user'),
+                    content: Text(success ? 'User blocked' : (result['message'] ?? 'Failed to block user')),
                     backgroundColor: success ? const Color(0xFF84BD00) : Colors.red,
                   ),
                 );

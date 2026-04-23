@@ -26,34 +26,13 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
   DateTime? _startDate;
   DateTime? _endDate;
 
-  // Balance history data
-  Map<String, dynamic>? _balanceHistory;
-  double _investedAmount = 0.0;
-  double _balance = 0.0;
-
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 2, vsync: this);
     _loadTradeHistory();
     _loadTransactions();
     _loadAvailablePairs();
-    _loadBalanceHistory();
-  }
-  
-  Future<void> _loadBalanceHistory() async {
-    try {
-      final result = await BotService.getUserBalanceHistory();
-      if (mounted && result['success'] == true) {
-        setState(() {
-          _balanceHistory = result['data'];
-          _investedAmount = result['investedAmount']?.toDouble() ?? 0.0;
-          _balance = result['balance']?.toDouble() ?? 0.0;
-        });
-      }
-    } catch (e) {
-      debugPrint('Error loading balance history: $e');
-    }
   }
 
   @override
@@ -67,8 +46,8 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
     if (mounted) {
       setState(() {
         _availablePairs = pairs;
-        if (_availablePairs.isNotEmpty && !_availablePairs.contains(_selectedHistoryPair)) {
-          _selectedHistoryPair = _availablePairs.first;
+        if (!_availablePairs.contains(_selectedHistoryPair)) {
+          _selectedHistoryPair = pairs.isNotEmpty ? pairs.first : 'BTC-USDT';
         }
       });
     }
@@ -87,48 +66,62 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
       String? strategy;
       String? symbol;
       
+      // Define all pair mappings - using Omega-3X for all as requested
+      final pairMappings = {
+        'BTC-USDT': {'strategy': 'Omega-3X', 'symbol': 'BTC-USDT'},
+        'ETH-USDT': {'strategy': 'Omega-3X', 'symbol': 'ETH-USDT'},
+        'SOL-USDT': {'strategy': 'Omega-3X', 'symbol': 'SOL-USDT'},
+      };
+      
       // Map pairs to their strategies and symbols
-      switch (_selectedHistoryPair) {
-        case 'BTC-USDT':
-          strategy = 'Omega';
-          symbol = 'BTCUSDT';
-          break;
-        case 'ETH-USDT':
-          strategy = 'Alpha';
-          symbol = 'ETHUSDT';
-          break;
-        case 'SOL-USDT':
-          strategy = 'Ranger';
-          symbol = 'SOLUSDT';
-          break;
-        default:
-          strategy = 'Omega';
-          symbol = 'BTCUSDT';
+      final mapping = pairMappings[_selectedHistoryPair];
+      if (mapping != null) {
+        strategy = mapping['strategy'];
+        symbol = mapping['symbol'];
+      } else {
+        strategy = 'Omega-3X';
+        symbol = 'BTC-USDT';
       }
 
+      List<BotTrade> allTrades = [];
+      bool hasError = false;
+      String? errorMessage;
+
+      // Fetch trades for selected pair only
       final result = await BotService.getUserBotTrades(
         strategy: strategy,
         symbol: symbol,
+        startDate: _startDate?.toIso8601String(),
+        endDate: _endDate?.toIso8601String(),
       );
-
+      
+      if (result['success'] == true) {
+        final data = result['data'];
+        final List<dynamic> tradesList = data is List
+            ? data
+            : (data['userTrades'] ?? data['trades'] ?? []);
+        // Get strategy from parent data object
+        final parentStrategy = data['strategy']?.toString();
+        allTrades = tradesList.map((trade) => BotTrade.fromJson(trade, strategy: parentStrategy)).toList();
+      } else if (result['error']?.toString().toLowerCase().contains('no investment') != true &&
+                 result['error']?.toString().toLowerCase().contains('no trades') != true) {
+        hasError = true;
+        errorMessage = result['error'];
+      }
+      
+      // Update state with results
       if (mounted) {
-        if (result['success'] == true) {
-          final data = result['data'];
-          final List<dynamic> tradesList = data['userTrades'] ?? data['trades'] ?? data ?? [];
+        if (hasError && allTrades.isEmpty) {
           setState(() {
-            _trades = tradesList.map((trade) => BotTrade.fromJson(trade)).toList();
+            _errorMessage = errorMessage ?? 'Failed to load trade history';
             _isLoading = false;
-          });
-        } else if (result['error']?.contains('No investment found') == true) {
-          setState(() {
-            _errorMessage = 'No investments found. Start investing in strategies to see your trade history.';
-            _isLoading = false;
-            _trades = []; // Ensure empty list
+            _trades = [];
           });
         } else {
           setState(() {
-            _errorMessage = result['error'] ?? 'Failed to load trade history';
+            _trades = allTrades;
             _isLoading = false;
+            _errorMessage = null;
           });
         }
       }
@@ -228,7 +221,6 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
               tabs: const [
                 Tab(text: 'Trades'),
                 Tab(text: 'Transactions'),
-                Tab(text: 'Balance'),
               ],
             ),
           ),
@@ -240,7 +232,6 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
               children: [
                 _buildTradesContent(),
                 _buildTransactionsContent(),
-                _buildBalanceContent(),
               ],
             ),
           ),
@@ -249,7 +240,7 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
     );
   }
 
-  Widget _buildHistoryMetric(String label, String value) {
+  Widget _buildHistoryMetric(String label, String value, {Color? valueColor}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
@@ -264,8 +255,8 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
           ),
           Text(
             value,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: valueColor ?? Colors.white,
               fontSize: 14,
               fontWeight: FontWeight.w500,
             ),
@@ -291,49 +282,69 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
             children: [
               Row(
                 children: [
-                  Text(
-                    trade.pair,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        trade.pair,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      if (trade.botName.isNotEmpty)
+                        Text(
+                          trade.botName,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.4),
+                            fontSize: 12,
+                          ),
+                        ),
+                    ],
                   ),
-                  const SizedBox(width: 10),
-                  Text(
-                    trade.formattedDate,
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.35),
-                      fontSize: 12,
+                  const SizedBox(width: 12),
+                  if (trade.status.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: (trade.status.toUpperCase() == 'LONG' || trade.status.toUpperCase() == 'BUY') 
+                            ? Colors.green.withOpacity(0.1) 
+                            : Colors.red.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        trade.status.toUpperCase(),
+                        style: TextStyle(
+                          color: (trade.status.toUpperCase() == 'LONG' || trade.status.toUpperCase() == 'BUY') 
+                              ? Colors.green 
+                              : Colors.red,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
-                  ),
                 ],
               ),
-              GestureDetector(
-                onTap: () => _viewTradeDetails(trade),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF84BD00),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Text(
-                    'View',
-                    style: TextStyle(
-                      color: Colors.black,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+              Text(
+                trade.formattedTime,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.35),
+                  fontSize: 12,
                 ),
               ),
             ],
           ),
           const SizedBox(height: 20),
-          _buildHistoryMetric('Open Price:', trade.formattedOpenPrice),
-          _buildHistoryMetric('Close Price:', trade.formattedClosePrice),
-          _buildHistoryMetric('Total PnL:', trade.formattedTotalPnl),
-          _buildHistoryMetric('Your PnL:', trade.formattedUserPnl),
+          _buildHistoryMetric('Entry Price:', trade.formattedOpenPrice),
+          _buildHistoryMetric('Exit Price:', trade.formattedClosePrice),
+          if (trade.userSimulatedMargin != null && trade.userSimulatedMargin! > 0)
+            _buildHistoryMetric('Margin:', '${trade.userSimulatedMargin!.toStringAsFixed(2)} USDT'),
+          _buildHistoryMetric(
+            'PnL:', 
+            '${trade.isProfit ? '+' : ''}${trade.userPnl.toStringAsFixed(2)} USDT',
+            valueColor: trade.isProfit ? Colors.green : Colors.red,
+          ),
         ],
       ),
     );
@@ -913,80 +924,4 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
     );
   }
 
-  Widget _buildBalanceContent() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        children: [
-          // Total Invested Card
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF84BD00), Color(0xFF5A8A00)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Total Invested',
-                  style: TextStyle(
-                    color: Colors.black87,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  '${_investedAmount.toStringAsFixed(2)} USDT',
-                  style: const TextStyle(
-                    color: Colors.black,
-                    fontSize: 32,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Balance: ${_balance.toStringAsFixed(2)} USDT',
-                  style: TextStyle(
-                    color: Colors.black.withOpacity(0.7),
-                    fontSize: 14,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-          // Refresh Button
-          SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: ElevatedButton.icon(
-              onPressed: _loadBalanceHistory,
-              icon: const Icon(Icons.refresh, color: Colors.black),
-              label: const Text(
-                'Refresh Balance',
-                style: TextStyle(
-                  color: Colors.black,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF84BD00),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }

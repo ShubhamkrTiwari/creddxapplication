@@ -277,7 +277,7 @@ class _AddBankAccountScreenState extends State<AddBankAccountScreen> {
                   if (isSuccess) {
                     // Finally save the payment method after OTP verification
                     // First get payment modes to find Bank mode ID
-                    final modesResponse = await P2PService.getPaymentModes(widget.country);
+                    final modesResponse = await P2PService.getPaymentModes(country: widget.country);
                     String? bankModeId;
                     if (modesResponse != null && modesResponse['data'] != null) {
                       final modes = modesResponse['data'] as List<dynamic>;

@@ -4,11 +4,11 @@ import 'package:flutter/foundation.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'auth_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../constants/api_config.dart';
 
 class SocketService {
-  // NEXT_PUBLIC_SOCKET_URL=https://api11.hathmetech.com
-  static const String _baseUrl = 'https://api11.hathmetech.com';
-  static const String _socketPath = '/wallet-socket.io';
+  static final String _baseUrl = ApiConfig.socketUrl;
+  static final String _socketPath = ApiConfig.socketPath;
   static IO.Socket? _socket;
   static final StreamController<Map<String, dynamic>> _balanceController = StreamController<Map<String, dynamic>>.broadcast();
   static final StreamController<Map<String, dynamic>> _orderbookController = StreamController<Map<String, dynamic>>.broadcast();
@@ -22,9 +22,17 @@ class SocketService {
   static Stream<Map<String, dynamic>> get tradesStream => _tradesController.stream;
   static Stream<Map<String, dynamic>> get ordersStream => _ordersController.stream;
   static Stream<Map<String, dynamic>> get fillsStream => _fillsController.stream;
+  
+  static bool get isConnected => _socket?.connected ?? false;
+  static bool get isConnecting => _isConnecting;
 
   static Future<void> connect() async {
-    if (_socket != null && _socket!.connected || _isConnecting) return;
+    if (_socket != null && _socket!.connected) {
+      debugPrint('SocketService: Already connected, emitting join');
+      await _joinWalletRoom();
+      return;
+    }
+    if (_isConnecting) return;
     _isConnecting = true;
 
     try {
@@ -40,35 +48,56 @@ class SocketService {
       _socket = IO.io(
         _baseUrl,
         IO.OptionBuilder()
-            .setTransports(['websocket'])
+            .setTransports(['websocket', 'polling'])
             .setPath(_socketPath)
-            .disableAutoConnect()
-
+            .enableAutoConnect()
+            .setReconnectionDelay(5000)
+            .setReconnectionDelayMax(30000)
+            .setTimeout(10000)
+            .setExtraHeaders({'Authorization': 'Bearer $token'})
             .build(),
       );
 
       _socket!.onConnect((_) {
         debugPrint('SocketService: Connected to server');
         _isConnecting = false;
-        _authenticate();
+        _joinWalletRoom();
       });
 
-      _socket!.onDisconnect((_) {
-        debugPrint('SocketService: Disconnected from server');
+      _socket!.onDisconnect((reason) {
+        debugPrint('SocketService: Disconnected from server - reason: $reason');
+        _isConnecting = false;
         _reconnect();
       });
 
       _socket!.onConnectError((error) {
         debugPrint('SocketService Connection Error: $error');
         _isConnecting = false;
-        _reconnect();
+        // Don't reconnect immediately on connection error, wait a bit
+        Future.delayed(const Duration(seconds: 10), () => _reconnect());
       });
 
       _socket!.onError((error) {
         debugPrint('SocketService Error: $error');
       });
 
+      _socket!.onConnectTimeout((_) {
+        debugPrint('SocketService: Connection timeout');
+        _isConnecting = false;
+        _reconnect();
+      });
+
       // Handle incoming events
+      _socket!.on('wallet summary update socket', (data) {
+        debugPrint('SocketService: wallet summary update socket received: $data');
+        _balanceController.add({'type': 'wallet_summary', 'data': data});
+      });
+
+      _socket!.on('wallet_summary', (data) {
+        debugPrint('SocketService: wallet_summary received: $data');
+        _balanceController.add({'type': 'wallet_summary', 'data': data});
+      });
+
       _socket!.on('balance_update', (data) {
         debugPrint('SocketService: Balance update received: $data');
         _balanceController.add({'type': 'balance_update', 'data': data});
@@ -104,10 +133,12 @@ class SocketService {
     }
   }
 
-  static Future<void> _authenticate() async {
+  static Future<void> _joinWalletRoom() async {
     final userId = await _getUserId();
-    _socket?.emit('auth', {'user_id': userId});
-    debugPrint('SocketService: Auth sent for user $userId');
+    final token = await AuthService.getToken();
+    // Emit 'join' like web app does
+    _socket?.emit('join', {'user_id': userId, 'token': token});
+    debugPrint('SocketService: Join emitted for user $userId');
   }
 
   static Map<String, dynamic> _ensureSymbol(dynamic data, String type) {

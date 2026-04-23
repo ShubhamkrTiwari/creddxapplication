@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'auth_service.dart';
 import 'package:flutter/foundation.dart';
 import '../utils/error_handler.dart';
@@ -344,36 +346,28 @@ class P2PService {
         return [];
       }
 
-      // 1. Try with all filters
+      // 1. Try with coin symbol first (API expects coin symbol like 'USDT', not coinId)
       final queryParams = <String, String>{
-        if (coin != null && coin.isNotEmpty) 'coinId': coin,
+        if (coin != null && coin.isNotEmpty) 'coin': coin,  // Use 'coin' not 'coinId'
         if (direction != null) 'direction': direction.toString(),
         if (currency != null) 'currency': currency,
         if (amount != null) 'amount': amount.toString(),
         if (payMode != null) 'payMode': payMode,
       };
       
+      debugPrint('Query params: $queryParams');
       List<dynamic> ads = await fetchAds(queryParams);
       
-      // 2. Fallback: Try with coinSymbol if coinId was used and returned nothing
-      // Many P2P systems use symbols like 'USDT' instead of MongoDB IDs
-      if (ads.isEmpty && coin != null && coin.length > 10) {
-        debugPrint('Empty results with ID, trying with coin symbol: $_selectedCrypto');
+      // 2. Fallback: Try without coin if empty
+      if (ads.isEmpty && coin != null) {
+        debugPrint('Empty results with coin, trying without coin (direction only)');
         final params = <String, String>{
-          'coin': coin,  // Try with 'coin' parameter instead of 'coinId'
           if (direction != null) 'direction': direction.toString(),
         };
         ads = await fetchAds(params);
       }
 
-      // 3. Fallback: Try without coinId if still empty
-      if (ads.isEmpty && queryParams.containsKey('coinId')) {
-        debugPrint('Empty results with coinId, trying without coinId (direction only)');
-        final params = {'direction': direction?.toString() ?? '2'};
-        ads = await fetchAds(params);
-      }
-
-      // 4. Fallback: Try without any filters if still empty (Absolute fallback)
+      // 3. Fallback: Try without any filters if still empty (Absolute fallback)
       if (ads.isEmpty) {
         debugPrint('Still empty, trying absolute fallback (no filters)');
         ads = await fetchAds({});
@@ -762,14 +756,6 @@ class P2PService {
     return [];
   }
 
-  static Future<Map<String, dynamic>?> getChatDetails(String appealId) async {
-    try {
-      final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/p2p/chat/details?appealId=$appealId'), headers: await _getHeaders());
-      if (response.statusCode == 200) return json.decode(response.body);
-    } catch (e) { return null; }
-    return null;
-  }
-
   static Future<List<dynamic>> getChatMessagesByOrderId(String orderId) async {
     try {
       final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/p2p/chat/messages?orderId=$orderId'), headers: await _getHeaders());
@@ -779,34 +765,6 @@ class P2PService {
       }
     } catch (e) { debugPrint('Chat messages error: $e'); }
     return [];
-  }
-
-  static Future<String?> uploadChatImage(dynamic imageFile) async {
-    try {
-      final token = await AuthService.getToken();
-      var request = http.MultipartRequest('POST', Uri.parse('$_baseUrl/p2p/v1/p2p/chat/image-upload'));
-      request.headers.addAll({if (token != null) 'Authorization': 'Bearer $token'});
-      if (kIsWeb) {
-         // Handle web upload if needed, or skip
-         return null;
-      }
-      request.files.add(await http.MultipartFile.fromPath('image', imageFile.path));
-      var streamedResponse = await request.send();
-      var response = await http.Response.fromStream(streamedResponse);
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        return data['imageUrl'] ?? data['data']?['url'];
-      }
-    } catch (e) { return null; }
-    return null;
-  }
-
-  static Future<bool> blockUser(String blockUserId, String remark) async {
-    try {
-      final response = await http.post(Uri.parse('$_baseUrl/p2p/v1/p2p/block/create'), headers: await _getHeaders(), 
-        body: json.encode({'blockUserId': blockUserId, 'remark': remark}));
-      return response.statusCode == 200 || response.statusCode == 201;
-    } catch (e) { return false; }
   }
 
   // --- P2P User Profile Details ---
@@ -1048,14 +1006,6 @@ class P2PService {
     return [];
   }
 
-  static Future<bool> reportUser(Map<String, dynamic> reportData) async {
-    try {
-      final response = await http.post(Uri.parse('$_baseUrl/p2p/v1/user/report'), headers: await _getHeaders(), 
-        body: json.encode(reportData));
-      return response.statusCode == 200 || response.statusCode == 201;
-    } catch (e) { return false; }
-  }
-
   static Future<Map<String, dynamic>> checkPaymentMethodEligibility() async {
     try {
       final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/payment/eligibility'), headers: await _getHeaders());
@@ -1143,14 +1093,971 @@ class P2PService {
     return [];
   }
 
-  static Future<Map<String, dynamic>?> getPaymentModes(String country) async {
+  static Future<Map<String, dynamic>?> getPaymentModes({String? country}) async {
     try {
-      final response = await http.get(Uri.parse('$_baseUrl/p2p/v1/p2p/payment/modes?country=$country'), headers: await _getHeaders());
+      final uri = country != null 
+          ? Uri.parse('$_baseUrl/p2p/v1/p2p/payment/modes?country=$country')
+          : Uri.parse('$_baseUrl/p2p/v1/p2p/payment/modes');
+      final response = await http.get(uri, headers: await _getHeaders());
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         return data;
       }
     } catch (e) { debugPrint('Payment modes error: $e'); }
     return null;
+  }
+
+  // ============================================================================
+  // AUTHENTICATION APIs
+  // ============================================================================
+
+  /// Get the latest login activity for a user by login activity ID
+  static Future<Map<String, dynamic>> getLoginActivity(String id) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/loginactivity/$id'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get login activity'};
+    } catch (e) {
+      debugPrint('Get login activity error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  // ============================================================================
+  // COINS APIs
+  // ============================================================================
+
+  /// Get coin details along with ticker data and user wallet balance
+  static Future<Map<String, dynamic>> getCoinDetails(String coinIdOrSymbol) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/p2p/v1/coin/get/$coinIdOrSymbol'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get coin details'};
+    } catch (e) {
+      debugPrint('Get coin details error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  // ============================================================================
+  // P2P ADVERTISEMENT APIs (Additional)
+  // ============================================================================
+
+  /// Get all active P2P ads of a specific user
+  static Future<Map<String, dynamic>> getUserAds(String userId, {int? limit, int? page}) async {
+    try {
+      final queryParams = <String, String>{
+        if (limit != null) 'limit': limit.toString(),
+        if (page != null) 'page': page.toString(),
+      };
+      final uri = Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/user-ads/$userId')
+          .replace(queryParameters: queryParams);
+      final response = await http.get(uri, headers: await _getHeaders());
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get user ads'};
+    } catch (e) {
+      debugPrint('Get user ads error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get logged-in user's P2P advertisements (with filters)
+  static Future<Map<String, dynamic>> getMyAdsWithFilters({
+    String? status,
+    int? direction,
+    String? coin,
+    int? limit,
+    int? page,
+  }) async {
+    try {
+      final queryParams = <String, String>{
+        if (status != null) 'status': status,
+        if (direction != null) 'direction': direction.toString(),
+        if (coin != null) 'coin': coin,
+        if (limit != null) 'limit': limit.toString(),
+        if (page != null) 'page': page.toString(),
+      };
+      final uri = Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/my-ads')
+          .replace(queryParameters: queryParams);
+      final response = await http.get(uri, headers: await _getHeaders());
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get my ads'};
+    } catch (e) {
+      debugPrint('Get my ads with filters error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Close P2P ad
+  static Future<Map<String, dynamic>> closeAdvertisement(String adId) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/my-ads/close'),
+        headers: await _getHeaders(),
+        body: json.encode({'id': adId}),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to close advertisement'};
+    } catch (e) {
+      debugPrint('Close advertisement error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Open a closed P2P advertisement
+  static Future<Map<String, dynamic>> openAdvertisement(String adId) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/advertise/my-ads/open'),
+        headers: await _getHeaders(),
+        body: json.encode({'id': adId}),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to open advertisement'};
+    } catch (e) {
+      debugPrint('Open advertisement error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  // ============================================================================
+  // P2P ORDER APIs (Additional)
+  // ============================================================================
+
+  /// Fetch the highest or lowest bid based on direction
+  static Future<Map<String, dynamic>> getBestBid({
+    required int direction,
+    required String currency,
+  }) async {
+    try {
+      final uri = Uri.parse('$_baseUrl/p2p/v1/p2p/order/bid').replace(queryParameters: {
+        'direction': direction.toString(),
+        'currency': currency,
+      });
+      final response = await http.get(uri, headers: await _getHeaders());
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get best bid'};
+    } catch (e) {
+      debugPrint('Get best bid error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Fetch completed (status = 5) P2P orders
+  static Future<Map<String, dynamic>> getOrderHistory() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/order/history'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get order history'};
+    } catch (e) {
+      debugPrint('Get order history error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get OTP to verify release coin
+  static Future<Map<String, dynamic>> sendCoinOTP(String orderId) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/order/send-coin-otp'),
+        headers: await _getHeaders(),
+        body: json.encode({'orderId': orderId}),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to send coin OTP'};
+    } catch (e) {
+      debugPrint('Send coin OTP error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Verify OTP and allow seller to release coin
+  static Future<Map<String, dynamic>> verifyCoinOTP({
+    required String orderId,
+    required String otp,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/order/verify-coin-otp'),
+        headers: await _getHeaders(),
+        body: json.encode({'orderId': orderId, 'otp': otp}),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to verify coin OTP'};
+    } catch (e) {
+      debugPrint('Verify coin OTP error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Submit rating and review for completed P2P order
+  static Future<Map<String, dynamic>> rateOrder({
+    required String orderId,
+    required int rating,
+    required String reviewNote,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/order/rating'),
+        headers: await _getHeaders(),
+        body: json.encode({
+          'orderId': orderId,
+          'rating': rating,
+          'reviewNote': reviewNote,
+        }),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to rate order'};
+    } catch (e) {
+      debugPrint('Rate order error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get rating details and statistics of logged-in user
+  static Future<Map<String, dynamic>> getUserRated({String? feedback}) async {
+    try {
+      final queryParams = <String, String>{
+        if (feedback != null) 'feedback': feedback,
+      };
+      final uri = Uri.parse('$_baseUrl/p2p/v1/p2p/order/user-rated')
+          .replace(queryParameters: queryParams);
+      final response = await http.get(uri, headers: await _getHeaders());
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get user ratings'};
+    } catch (e) {
+      debugPrint('Get user rated error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  // ============================================================================
+  // P2P CHAT APIs (Additional)
+  // ============================================================================
+
+  /// Find existing chat by orderId or create new conversation
+  static Future<Map<String, dynamic>> createOrGetChatConversation({
+    required String receiverId,
+    required String senderId,
+    required String orderId,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/chat/chat-users'),
+        headers: await _getHeaders(),
+        body: json.encode({
+          'receiverId': receiverId,
+          'senderId': senderId,
+          'orderId': orderId,
+        }),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to create/get chat'};
+    } catch (e) {
+      debugPrint('Create/get chat conversation error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get chat details by chatId
+  static Future<Map<String, dynamic>> getChatDetails(String chatId) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/chat/details'),
+        headers: await _getHeaders(),
+        body: json.encode({'chatId': chatId}),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get chat details'};
+    } catch (e) {
+      debugPrint('Get chat details error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get paginated chat messages
+  static Future<Map<String, dynamic>> getPaginatedChatMessages({
+    required String chatId,
+    int? limit,
+    int? page,
+  }) async {
+    try {
+      final body = {
+        'chatId': chatId,
+        if (limit != null) 'limit': limit,
+        if (page != null) 'page': page,
+      };
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/chat/messages'),
+        headers: await _getHeaders(),
+        body: json.encode(body),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get chat messages'};
+    } catch (e) {
+      debugPrint('Get paginated chat messages error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Store a chat message in a conversation
+  static Future<Map<String, dynamic>> storeChatMessage({
+    required String senderId,
+    required String conversationId,
+    required String text,
+    String? messageStatus,
+  }) async {
+    try {
+      final body = {
+        'senderId': senderId,
+        'conversationId': conversationId,
+        'text': text,
+        if (messageStatus != null) 'messageStatus': messageStatus,
+      };
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/chat/p2p-last-chat'),
+        headers: await _getHeaders(),
+        body: json.encode(body),
+      );
+      if (response.statusCode == 200) return {'success': true, 'data': json.decode(response.body)};
+      return {'success': false, 'message': 'Failed to store chat message'};
+    } catch (e) {
+      debugPrint('Store chat message error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  // ============================================================================
+  // P2P APPEAL APIs (Additional)
+  // ============================================================================
+
+  /// Create an appeal for an existing P2P order
+  static Future<Map<String, dynamic>> createAppeal({
+    required String orderNum,
+    required String email,
+    String? reason,
+    String? description,
+    File? image,
+  }) async {
+    try {
+      final token = await AuthService.getToken();
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$_baseUrl/p2p/v1/p2p/p2p-appeal/create'),
+      );
+      request.headers['Authorization'] = 'Bearer $token';
+      request.fields['orderNum'] = orderNum;
+      request.fields['email'] = email;
+      if (reason != null) request.fields['reason'] = reason;
+      if (description != null) request.fields['description'] = description;
+      if (image != null) {
+        request.files.add(await http.MultipartFile.fromPath('image', image.path));
+      }
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to create appeal'};
+    } catch (e) {
+      debugPrint('Create appeal error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Approve a P2P appeal (Sub-admin only)
+  static Future<Map<String, dynamic>> approveAppeal({
+    required String appealId,
+    required String reason,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/sub-admin/v1/p2p-appeal/approve-appeal'),
+        headers: await _getHeaders(),
+        body: json.encode({'_id': appealId, 'reason': reason}),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to approve appeal'};
+    } catch (e) {
+      debugPrint('Approve appeal error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Cancel a P2P appeal (Admin only)
+  static Future<Map<String, dynamic>> cancelAppeal({
+    required String appealId,
+    required String reason,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/admin/p2p-appeal/cancel-appeal'),
+        headers: await _getHeaders(),
+        body: json.encode({'_id': appealId, 'reason': reason}),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to cancel appeal'};
+    } catch (e) {
+      debugPrint('Cancel appeal error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get appeal details by order number
+  static Future<Map<String, dynamic>> getAppealDetailsByOrder(String orderNumber) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/p2p/admin/p2p-appeal/p2p-appeal/p2p-get-ss/$orderNumber'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get appeal details'};
+    } catch (e) {
+      debugPrint('Get appeal details error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get P2P appeals with optional filters
+  static Future<Map<String, dynamic>> getP2PAppeals({
+    String? orderNum,
+    String? startDate,
+    String? endDate,
+    bool? appealStatus,
+  }) async {
+    try {
+      final queryParams = <String, String>{
+        if (orderNum != null) 'orderNum': orderNum,
+        if (startDate != null) 'startDate': startDate,
+        if (endDate != null) 'endDate': endDate,
+        if (appealStatus != null) 'appealStatus': appealStatus.toString(),
+      };
+      final uri = Uri.parse('$_baseUrl/p2p/admin/p2p-appeal/all').replace(queryParameters: queryParams);
+      final response = await http.get(uri, headers: await _getHeaders());
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get appeals'};
+    } catch (e) {
+      debugPrint('Get P2P appeals error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get P2P transaction history
+  static Future<Map<String, dynamic>> getTransactionHistory({
+    String? status,
+    String? txnType,
+  }) async {
+    try {
+      final queryParams = <String, String>{
+        if (status != null) 'status': status,
+        if (txnType != null) 'txnType': txnType,
+      };
+      final uri = Uri.parse('$_baseUrl/p2p/admin/p2pOrder/transaction-history')
+          .replace(queryParameters: queryParams);
+      final response = await http.get(uri, headers: await _getHeaders());
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get transaction history'};
+    } catch (e) {
+      debugPrint('Get transaction history error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// View P2P appeal details
+  static Future<Map<String, dynamic>> viewAppeal(String orderId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/p2p/admin/p2p-appeal/view-appeal/$orderId'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to view appeal'};
+    } catch (e) {
+      debugPrint('View appeal error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Store appeal chat message (Admin)
+  static Future<Map<String, dynamic>> storeAppealChatMessage({
+    required String conversationId,
+    required String senderId,
+    required String text,
+    String? messageStatus,
+  }) async {
+    try {
+      final body = {
+        'conversationId': conversationId,
+        'senderId': senderId,
+        'text': text,
+        if (messageStatus != null) 'messageStatus': messageStatus,
+      };
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/admin/p2p-appeal/p2p-last-chat'),
+        headers: await _getHeaders(),
+        body: json.encode(body),
+      );
+      if (response.statusCode == 200) return {'success': true, 'data': json.decode(response.body)};
+      return {'success': false, 'message': 'Failed to store appeal chat'};
+    } catch (e) {
+      debugPrint('Store appeal chat error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get appeal chat messages (Admin)
+  static Future<Map<String, dynamic>> getAppealChatMessages({
+    required String conversationId,
+    required String currentUserId,
+  }) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/p2p/admin/p2p-appeal/p2p-get-chats/$conversationId/$currentUserId'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get appeal chat messages'};
+    } catch (e) {
+      debugPrint('Get appeal chat messages error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  // ============================================================================
+  // P2P TRADE APIs (Additional)
+  // ============================================================================
+
+  /// Get average buyer payment time
+  static Future<Map<String, dynamic>> getAveragePayTime(String buyerId) async {
+    try {
+      final uri = Uri.parse('$_baseUrl/p2p/v1/p2p/user/average-pay-time')
+          .replace(queryParameters: {'buyerId': buyerId});
+      final response = await http.get(uri, headers: await _getHeaders());
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get average pay time'};
+    } catch (e) {
+      debugPrint('Get average pay time error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get average seller release time
+  static Future<Map<String, dynamic>> getAverageReleaseTime(String sellerId) async {
+    try {
+      final uri = Uri.parse('$_baseUrl/p2p/v1/p2p/user/average-release-time')
+          .replace(queryParameters: {'sellerId': sellerId});
+      final response = await http.get(uri, headers: await _getHeaders());
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get average release time'};
+    } catch (e) {
+      debugPrint('Get average release time error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  // ============================================================================
+  // P2P USER APIs (Additional)
+  // ============================================================================
+
+  /// Block a user
+  static Future<Map<String, dynamic>> blockUser({
+    required String blockedUserId,
+    String? reason,
+    String? message,
+  }) async {
+    try {
+      final body = {
+        'blockedUserId': blockedUserId,
+        if (reason != null) 'reason': reason,
+        if (message != null) 'message': message,
+      };
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/user/block-user'),
+        headers: await _getHeaders(),
+        body: json.encode(body),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to block user'};
+    } catch (e) {
+      debugPrint('Block user error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Unblock a user
+  static Future<Map<String, dynamic>> unblockUser(String userId) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/user/unblock-user'),
+        headers: await _getHeaders(),
+        body: json.encode({'userId': userId}),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to unblock user'};
+    } catch (e) {
+      debugPrint('Unblock user error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get blocked users list
+  static Future<Map<String, dynamic>> getBlockedUsers() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/user/list/blocked-user'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get blocked users'};
+    } catch (e) {
+      debugPrint('Get blocked users error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get user all trades summary
+  static Future<Map<String, dynamic>> getUserAllTradesSummary() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/user/all-trades'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get trades summary'};
+    } catch (e) {
+      debugPrint('Get all trades summary error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get user feedback statistics
+  static Future<Map<String, dynamic>> getUserFeedbackStatistics({String? userId}) async {
+    try {
+      final queryParams = <String, String>{
+        if (userId != null) '_id': userId,
+      };
+      final uri = Uri.parse('$_baseUrl/p2p/v1/p2p/user/feedback')
+          .replace(queryParameters: queryParams);
+      final response = await http.get(uri, headers: await _getHeaders());
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get feedback statistics'};
+    } catch (e) {
+      debugPrint('Get feedback statistics error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get user registration days
+  static Future<Map<String, dynamic>> getUserRegistrationDays(String userId) async {
+    try {
+      final uri = Uri.parse('$_baseUrl/p2p/v1/p2p/user/user-registration')
+          .replace(queryParameters: {'userId': userId});
+      final response = await http.get(uri, headers: await _getHeaders());
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get registration days'};
+    } catch (e) {
+      debugPrint('Get registration days error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Report a user
+  static Future<Map<String, dynamic>> reportUser({
+    required String blockedUserId,
+    String? reason,
+    String? description,
+  }) async {
+    try {
+      final body = {
+        'blockedUserId': blockedUserId,
+        if (reason != null) 'reason': reason,
+        if (description != null) 'description': description,
+      };
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/user/report-user'),
+        headers: await _getHeaders(),
+        body: json.encode(body),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to report user'};
+    } catch (e) {
+      debugPrint('Report user error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  // ============================================================================
+  // USER ADMIN APIs
+  // ============================================================================
+
+  /// Enable or disable P2P trading for a specific user
+  static Future<Map<String, dynamic>> changeP2PTradeStatus({
+    required String userId,
+    String? reason,
+  }) async {
+    try {
+      final body = {
+        '_id': userId,
+        if (reason != null) 'reason': reason,
+      };
+      final response = await http.post(
+        Uri.parse('$_baseUrl/admin/user/change/p2p-trade-status'),
+        headers: await _getHeaders(),
+        body: json.encode(body),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to change P2P trade status'};
+    } catch (e) {
+      debugPrint('Change P2P trade status error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get P2P trade disable reason
+  static Future<Map<String, dynamic>> getP2PTradeDisableReason(String userId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/admin/user/p2p/trade/disable-reason/$userId'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get disable reason'};
+    } catch (e) {
+      debugPrint('Get P2P trade disable reason error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get average P2P rating of a specific user
+  static Future<Map<String, dynamic>> getUserP2PRating(String userId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/admin/user/user-rating/$userId'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get user rating'};
+    } catch (e) {
+      debugPrint('Get user P2P rating error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get user pay details (Admin)
+  static Future<Map<String, dynamic>> getUserPayDetails(String userId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/admin/user/pay-detail/$userId'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get user pay details'};
+    } catch (e) {
+      debugPrint('Get user pay details error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  // ============================================================================
+  // USERS APIs
+  // ============================================================================
+
+  /// Retrieve a P2P user snapshot by user ID
+  static Future<Map<String, dynamic>> getUserById(String userId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/user-data/$userId'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get user data'};
+    } catch (e) {
+      debugPrint('Get user by ID error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  // ============================================================================
+  // WALLET APIs
+  // ============================================================================
+
+  /// Get all P2P wallets for the authenticated user
+  static Future<Map<String, dynamic>> getP2PWallets() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/v1/p2p/p2pwallet'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get P2P wallets'};
+    } catch (e) {
+      debugPrint('Get P2P wallets error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  // ============================================================================
+  // P2P TRADE ADMIN APIs
+  // ============================================================================
+
+  /// Block P2P trades of all users (Admin)
+  static Future<Map<String, dynamic>> blockAllP2PTrades() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/admin/user/block-trades'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to block trades'};
+    } catch (e) {
+      debugPrint('Block all P2P trades error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Unblock P2P trades of all users (Admin)
+  static Future<Map<String, dynamic>> unblockAllP2PTrades() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/p2p/admin/user/unblock-trades'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to unblock trades'};
+    } catch (e) {
+      debugPrint('Unblock all P2P trades error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Cancel order (Sub-admin)
+  static Future<Map<String, dynamic>> adminCancelOrder({
+    File? image,
+    String? link,
+    String? marque,
+  }) async {
+    try {
+      final token = await AuthService.getToken();
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$_baseUrl/sub-admin/v1/p2p/cancel-order'),
+      );
+      request.headers['Authorization'] = 'Bearer $token';
+      if (image != null) {
+        request.files.add(await http.MultipartFile.fromPath('image', image.path));
+      }
+      if (link != null) request.fields['link'] = link;
+      if (marque != null) request.fields['marque'] = marque;
+      
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to cancel order'};
+    } catch (e) {
+      debugPrint('Admin cancel order error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Get list of all P2P reported users (Sub-admin)
+  static Future<Map<String, dynamic>> getReportList() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/sub-admin/v1/p2p/report-list'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to get report list'};
+    } catch (e) {
+      debugPrint('Get report list error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Release coin after payment received (Admin)
+  static Future<Map<String, dynamic>> adminReleaseCoin(String orderId) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/admin/v1/p2p/release-coin'),
+        headers: await _getHeaders(),
+        body: json.encode({'orderId': orderId}),
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to release coin'};
+    } catch (e) {
+      debugPrint('Admin release coin error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  // ============================================================================
+  // IMAGE UPLOAD APIs
+  // ============================================================================
+
+  /// Upload appeal image (Admin)
+  static Future<Map<String, dynamic>> uploadAppealImage({
+    required File file,
+    required String conversationId,
+    required String senderId,
+    required String receiverId,
+    String? messageStatus,
+  }) async {
+    try {
+      final token = await AuthService.getToken();
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$_baseUrl/p2p/admin/p2p-appeal/image-upload'),
+      );
+      request.headers['Authorization'] = 'Bearer $token';
+      request.files.add(await http.MultipartFile.fromPath('file', file.path));
+      request.fields['conversationId'] = conversationId;
+      request.fields['senderId'] = senderId;
+      request.fields['receiverId'] = receiverId;
+      if (messageStatus != null) request.fields['messageStatus'] = messageStatus;
+      
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to upload appeal image'};
+    } catch (e) {
+      debugPrint('Upload appeal image error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  /// Upload chat image
+  static Future<Map<String, dynamic>> uploadChatImage({
+    required File file,
+    required String conversationId,
+    required String senderId,
+    String? messageStatus,
+  }) async {
+    try {
+      final token = await AuthService.getToken();
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$_baseUrl/p2p/v1/p2p/chat/image-upload'),
+      );
+      request.headers['Authorization'] = 'Bearer $token';
+      request.files.add(await http.MultipartFile.fromPath('file', file.path));
+      request.fields['conversationId'] = conversationId;
+      request.fields['senderId'] = senderId;
+      if (messageStatus != null) request.fields['messageStatus'] = messageStatus;
+      
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
+      if (response.statusCode == 200) return json.decode(response.body);
+      return {'success': false, 'message': 'Failed to upload chat image'};
+    } catch (e) {
+      debugPrint('Upload chat image error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
   }
 }

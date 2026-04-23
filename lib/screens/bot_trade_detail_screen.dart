@@ -3,7 +3,8 @@ import 'package:flutter/foundation.dart';
 import '../services/bot_service.dart';
 import '../services/unified_wallet_service.dart';
 import 'package_program_screen.dart';
-import 'bot_invest_withdraw_screen.dart';
+import 'bot_invest_screen.dart';
+import 'bot_withdraw_screen.dart';
 
 class BotTradeDetailScreen extends StatefulWidget {
   static bool hasPackage = false;
@@ -91,7 +92,8 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
           }
         }
 
-        // 5. Set Investments (Strategy-wise)
+        // 5. Set Investments (Strategy-wise) - Use correct keys matching widget.name format
+        final strategyKey = '${widget.name}-${widget.multiplier}X';
         final inv = {
           "Alpha-2X": double.tryParse(data['maxWithdrawAplha']?.toString() ?? '0') ?? 0.0,
           "Omega-3X": double.tryParse(data['maxWithdrawOmega']?.toString() ?? '0') ?? 0.0,
@@ -103,9 +105,9 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
           _subscriptionPlan = plan;
           _investments = inv;
           _hasPackage = plan != null;
-          
-          // Current strategy investment
-          _investedAmount = inv[widget.name] ?? 0.0;
+
+          // Current strategy investment - show max withdrawable amount (what user can withdraw)
+          _investedAmount = inv[strategyKey] ?? 0.0;
           _isInvested = _investedAmount > 0;
           
           _errorMessage = null;
@@ -186,31 +188,11 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
           mappedStrategyKey = 'Delta';
         }
 
-        // Get invested amount for this specific bot from user data
-        final userDataResult = await BotService.getUserData();
-        if (userDataResult['success'] == true) {
-          final userData = userDataResult['data'] ?? {};
-          final investments = userData['investments'] as Map<String, dynamic>? ?? {};
-
-          double specificInvestment = 0.0;
-          investments.forEach((key, value) {
-            if (key.toLowerCase().contains(mappedStrategyKey.toLowerCase())) {
-              specificInvestment += double.tryParse(value.toString()) ?? 0.0;
-            }
-          });
-
-          setState(() {
-            _walletBalance = availableBalance;
-
-            if (specificInvestment > 0) {
-              _investedAmount = specificInvestment;
-              _isInvested = true;
-            } else {
-              _investedAmount = 0.0;
-              _isInvested = false;
-            }
-          });
-        }
+        // Note: _investedAmount is already set correctly from _fetchUserData using maxWithdrawOmega/maxWithdrawAlpha
+        // We only update wallet balance here, not the invested amount
+        setState(() {
+          _walletBalance = availableBalance;
+        });
       }
     } catch (e) {
       debugPrint('Error fetching bot balance: $e');
@@ -357,8 +339,8 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
 
   void _handleInvestClick() {
     if (_subscriptionPlan != null) {
-      // Open combined Invest/Withdraw screen when subscribed
-      _openInvestWithdrawScreen(index: 0);
+      // Open separate Invest screen
+      _openInvestScreen();
     } else {
       Navigator.push(
         context,
@@ -369,23 +351,42 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
     }
   }
 
-  void _openInvestWithdrawScreen({int index = 0}) {
+  void _openInvestScreen() {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => BotInvestWithdrawScreen(
+        builder: (context) => BotInvestScreen(
           strategy: {
             'name': widget.name,
             'multiplier': widget.multiplier,
             'annualizedROI': _performanceData?['annualizedROI'] ?? '0%',
           },
           walletBalance: _walletBalance,
-          investedAmount: _investedAmount,
-          initialTabIndex: index,
         ),
       ),
     ).then((result) {
-      // Refresh data when returning from invest/withdraw screen
+      // Refresh data when returning from invest screen
+      if (result == true) {
+        _fetchUserData();
+      }
+    });
+  }
+
+  void _openWithdrawScreen() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => BotWithdrawScreen(
+          strategy: {
+            'name': widget.name,
+            'multiplier': widget.multiplier,
+            'annualizedROI': _performanceData?['annualizedROI'] ?? '0%',
+          },
+          investedAmount: _investedAmount,
+        ),
+      ),
+    ).then((result) {
+      // Refresh data when returning from withdraw screen
       if (result == true) {
         _fetchUserData();
       }
@@ -627,7 +628,7 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
                             child: SizedBox(
                               height: 56,
                               child: ElevatedButton(
-                                onPressed: _canInvest() ? _openInvestWithdrawScreen : null,
+                                onPressed: _canInvest() ? _openInvestScreen : null,
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF84BD00),
                                   foregroundColor: Colors.black,
@@ -652,7 +653,7 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
                             child: SizedBox(
                               height: 56,
                               child: ElevatedButton(
-                                onPressed: _btnDisable ? null : _openInvestWithdrawScreen,
+                                onPressed: _btnDisable ? null : _openWithdrawScreen,
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF84BD00),
                                   foregroundColor: Colors.black,

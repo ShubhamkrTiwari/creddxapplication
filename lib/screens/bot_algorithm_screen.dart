@@ -4,6 +4,7 @@ import 'bot_trade_detail_screen.dart';
 import '../main_navigation.dart';
 import 'bot_invest_screen.dart';
 import 'bot_withdraw_screen.dart';
+import 'package_program_screen.dart';
 
 class BotAlgorithmScreen extends StatefulWidget {
   const BotAlgorithmScreen({super.key});

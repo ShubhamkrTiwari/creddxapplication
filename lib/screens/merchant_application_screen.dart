@@ -510,7 +510,7 @@ class _MerchantApplicationScreenState extends State<MerchantApplicationScreen> w
       
       // Try to get additional payment modes from API
       try {
-        final response = await P2PService.getPaymentModes(countryName);
+        final response = await P2PService.getPaymentModes(country: countryName);
         
         if (response != null && response['success'] == true) {
           final data = response['data'] ?? {};

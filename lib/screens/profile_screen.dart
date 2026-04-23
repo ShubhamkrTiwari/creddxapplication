@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import '../services/auth_service.dart';
+import '../services/p2p_service.dart';
+import 'login_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  final String? userId; // Added userId parameter
+  const ProfileScreen({super.key, this.userId});
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -12,11 +16,62 @@ class _ProfileScreenState extends State<ProfileScreen>
   late TabController _tabController;
   int _selectedTabIndex = 0;
   int _selectedAdsTabIndex = 1; // 0 for Buy, 1 for Sell
+  
+  bool _isLoading = true;
+  Map<String, dynamic>? _userDetails;
+  Map<String, dynamic>? _tradesSummary;
+  Map<String, dynamic>? _feedbackStats;
+  List<dynamic> _myAds = [];
+  String _avgPayTime = 'N/A';
+  String _avgReleaseTime = 'N/A';
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _fetchProfileData();
+  }
+
+  Future<void> _fetchProfileData() async {
+    setState(() => _isLoading = true);
+    try {
+      final String? targetUserId = widget.userId;
+      
+      // If we have a userId, fetch that user's details, otherwise use logged-in user
+      final results = await Future.wait([
+        P2PService.getP2PUserDetails(userId: targetUserId ?? ''),
+        P2PService.getUserAllTradesSummary(),
+        P2PService.getUserFeedbackStatistics(userId: targetUserId),
+        P2PService.getMyAdsWithFilters(),
+      ]);
+
+      _userDetails = results[0];
+      _tradesSummary = results[1];
+      _feedbackStats = results[2];
+      _myAds = results[3]['docs']?['docs'] ?? []; // Based on common response structure
+
+      // Fetch average times if we have a userId
+      if (targetUserId != null) {
+        final payTimeResult = await P2PService.getAveragePayTime(targetUserId);
+        final releaseTimeResult = await P2PService.getAverageReleaseTime(targetUserId);
+        
+        if (payTimeResult['success'] == true) {
+          _avgPayTime = payTimeResult['averagePayTime'] ?? 'N/A';
+        }
+        if (releaseTimeResult['success'] == true) {
+          _avgReleaseTime = releaseTimeResult['averagePayTime'] ?? 'N/A'; // API doc says 'averagePayTime' for release too
+        }
+      }
+
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      debugPrint('Error fetching profile data: $e');
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   @override
@@ -27,6 +82,15 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF161618),
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFF84BD00)),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFF161618),
       body: Stack(
@@ -59,11 +123,20 @@ class _ProfileScreenState extends State<ProfileScreen>
         color: const Color(0xFF161618),
         padding: const EdgeInsets.symmetric(horizontal: 16),
         child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             GestureDetector(
               onTap: () => Navigator.of(context).pop(),
               child: const Icon(
                 Icons.arrow_back_ios,
+                color: Colors.white,
+                size: 20,
+              ),
+            ),
+            GestureDetector(
+              onTap: () => _showLogoutConfirmDialog(),
+              child: const Icon(
+                Icons.logout,
                 color: Colors.white,
                 size: 20,
               ),
@@ -74,7 +147,71 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
+  void _showLogoutConfirmDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1C1C1E),
+          title: const Text(
+            'Logout',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: const Text(
+            'Are you sure you want to logout?',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await _handleLogout();
+              },
+              child: const Text(
+                'Logout',
+                style: TextStyle(color: Color(0xFFFF3B30)),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _handleLogout() async {
+    final result = await AuthService.logout();
+    if (result['success'] == true) {
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => LoginScreen()),
+          (route) => false,
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result['message'] ?? 'Logout failed'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   Widget _buildUserInfo() {
+    final user = _userDetails?['userDetails'] ?? {};
+    final name = user['fullName'] ?? 'User';
+    final registrationDays = _tradesSummary?['firstTradeDaysAgo'] ?? 'N/A';
+    final isKycVerified = user['isKycVerified'] ?? false;
+
     return Container(
       color: const Color(0xFF161618),
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
@@ -92,10 +229,10 @@ class _ProfileScreenState extends State<ProfileScreen>
                       color: const Color(0xFF84BD00),
                       shape: BoxShape.circle,
                     ),
-                    child: const Center(
+                    child: Center(
                       child: Text(
-                        'R',
-                        style: TextStyle(
+                        name.isNotEmpty ? name[0].toUpperCase() : 'U',
+                        style: const TextStyle(
                           color: Colors.white,
                           fontSize: 22,
                           fontWeight: FontWeight.bold,
@@ -125,28 +262,30 @@ class _ProfileScreenState extends State<ProfileScreen>
                   children: [
                     Row(
                       children: [
-                        const Text(
-                          'Ravindersingh1023',
-                          style: TextStyle(
+                        Text(
+                          name,
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        const SizedBox(width: 6),
-                        Container(
-                          width: 16,
-                          height: 16,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF84BD00),
-                            shape: BoxShape.circle,
+                        if (isKycVerified) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            width: 16,
+                            height: 16,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF84BD00),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.verified,
+                              color: Colors.white,
+                              size: 12,
+                            ),
                           ),
-                          child: const Icon(
-                            Icons.verified,
-                            color: Colors.white,
-                            size: 12,
-                          ),
-                        ),
+                        ],
                       ],
                     ),
                     const SizedBox(height: 4),
@@ -166,28 +305,21 @@ class _ProfileScreenState extends State<ProfileScreen>
           const SizedBox(height: 16),
           Row(
             children: [
-              _buildStatusItem('Email', 'Pending', const Color(0xFF8E8E93)),
+              _buildStatusItem('Email', user['isEmailVerified'] == true ? 'Done' : 'Pending', 
+                  user['isEmailVerified'] == true ? const Color(0xFF00C851) : const Color(0xFF8E8E93)),
               const SizedBox(width: 24),
-              _buildStatusItem('Phone', 'Done', const Color(0xFF00C851)),
+              _buildStatusItem('Phone', 'Done', const Color(0xFF00C851)), // Assume phone is verified if logged in
               const SizedBox(width: 24),
-              _buildStatusItem('KYC', 'Done', const Color(0xFF00C851)),
+              _buildStatusItem('KYC', isKycVerified ? 'Done' : 'Pending', 
+                  isKycVerified ? const Color(0xFF00C851) : const Color(0xFFFF3B30)),
             ],
           ),
           const SizedBox(height: 12),
-          const Text(
-            '577 days since the first trade',
-            style: TextStyle(
+          Text(
+            registrationDays.contains('Ago') ? '$registrationDays since the first trade' : 'New User',
+            style: const TextStyle(
               color: Color(0xFF8E8E93),
               fontSize: 14,
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Security Deposit 500.00 USDT',
-            style: TextStyle(
-              color: Color(0xFF84BD00),
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
             ),
           ),
         ],
@@ -258,19 +390,26 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   Widget _buildDetailTab() {
+    final user = _userDetails?['userDetails'] ?? {};
+    final trades30d = user['total30dBuySell'] ?? 0;
+    final counterparties = user['uniqueCounterpartiesCount'] ?? 0;
+    final totalTrades = user['totalOrdersCount'] ?? 0;
+    final buyTrades = user['buyOrdersCount'] ?? 0;
+    final sellTrades = user['sellOrdersCount'] ?? 0;
+
     return Container(
       color: const Color(0xFF161618),
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
       child: SingleChildScrollView(
         child: Column(
           children: [
-            _buildDetailItem('30D Trades', '55'),
-            _buildDetailItem('Trade Counterparties', '1198'),
-            _buildDetailItem('Total Completed Trades', '1468'),
-            _buildDetailItem('Buy', '455', color: const Color(0xFF00C851)),
-            _buildDetailItem('Sell', '1013', color: const Color(0xFFFF3B30)),
-            _buildDetailItem('Avg. Release Time', '00:41:08'),
-            _buildDetailItem('Avg. Pay Time', '00:05:51'),
+            _buildDetailItem('30D Trades', trades30d.toString()),
+            _buildDetailItem('Trade Counterparties', counterparties.toString()),
+            _buildDetailItem('Total Completed Trades', totalTrades.toString()),
+            _buildDetailItem('Buy', buyTrades.toString(), color: const Color(0xFF00C851)),
+            _buildDetailItem('Sell', sellTrades.toString(), color: const Color(0xFFFF3B30)),
+            _buildDetailItem('Avg. Release Time', _avgReleaseTime),
+            _buildDetailItem('Avg. Pay Time', _avgPayTime),
           ],
         ),
       ),
@@ -312,6 +451,14 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   Widget _buildAdsTab() {
+    final filteredAds = _myAds.where((ad) {
+      if (_selectedAdsTabIndex == 0) {
+        return ad['direction'] == 1; // Buy
+      } else {
+        return ad['direction'] == 2; // Sell
+      }
+    }).toList();
+
     return Container(
       color: const Color(0xFF161618),
       padding: const EdgeInsets.fromLTRB(20, 40, 20, 20),
@@ -331,16 +478,139 @@ class _ProfileScreenState extends State<ProfileScreen>
               ),
             ),
             const SizedBox(height: 20),
-            // Content based on selected tab
-            if (_selectedAdsTabIndex == 0) ...[
-              _buildAdCard(),
-            ] else ...[
-              _buildSellAdCard(),
-            ],
+            if (filteredAds.isEmpty)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.only(top: 40),
+                  child: Text(
+                    'No advertisements found',
+                    style: TextStyle(color: Colors.white54, fontSize: 16),
+                  ),
+                ),
+              )
+            else
+              ...filteredAds.map((ad) => Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: _buildRealAdCard(ad),
+              )).toList(),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildRealAdCard(dynamic ad) {
+    final bool isBuy = ad['direction'] == 1;
+    final price = ad['price'] ?? 0;
+    final coin = ad['coinSymbol'] ?? 'USDT';
+    final currency = ad['currency'] ?? 'INR';
+    final minLimit = ad['minOrder'] ?? 0;
+    final maxLimit = ad['maxOrder'] ?? 0;
+    final available = ad['quantity'] ?? 0;
+    final payModes = ad['payModes'] ?? [];
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '₹$price',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    '/$coin',
+                    style: const TextStyle(
+                      color: Color(0xFF8E8E93),
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  ...payModes.map((mode) => Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 4,
+                          height: 16,
+                          color: _getPayModeColor(mode.toString()),
+                          margin: const EdgeInsets.only(right: 8),
+                        ),
+                        Text(
+                          mode.toString(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )).toList(),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: isBuy ? const Color(0xFF84BD00) : Colors.red,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      isBuy ? 'Buy' : 'Sell',
+                      style: TextStyle(
+                        color: isBuy ? Colors.black : Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Limit: ₹$minLimit - ₹$maxLimit',
+            style: const TextStyle(
+              color: Color(0xFF8E8E93),
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Available: $available $coin',
+            style: const TextStyle(
+              color: Color(0xFF8E8E93),
+              fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _getPayModeColor(String mode) {
+    if (mode.contains('UPI')) return Colors.deepPurpleAccent;
+    if (mode.contains('Bank')) return Colors.orangeAccent;
+    return Colors.blueAccent;
   }
 
   Widget _buildSellAdCard() {

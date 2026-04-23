@@ -351,16 +351,25 @@ class BotService {
   static Future<Map<String, dynamic>> getUserBotTrades({
     String? strategy,
     String? symbol,
+    String? startDate,
+    String? endDate,
+    int? page,
+    int? limit,
   }) async {
     try {
       final queryParams = <String, String>{
         if (strategy != null) 'strategy': strategy,
         if (symbol != null) 'symbol': symbol,
+        if (startDate != null) 'startDate': startDate,
+        if (endDate != null) 'endDate': endDate,
+        if (page != null) 'page': page.toString(),
+        if (limit != null) 'limit': limit.toString(),
       };
       
       final uri = Uri.parse('$baseUrl/bot/v1/bingxTrade/user-trades')
           .replace(queryParameters: queryParams);
       
+      debugPrint('Fetching user bot trades from: $uri');
       final response = await http.get(
         uri,
         headers: await _getHeaders(),
@@ -368,6 +377,18 @@ class BotService {
       
       debugPrint('User Bot Trades API Response Status: ${response.statusCode}');
       debugPrint('User Bot Trades API Response Body: ${response.body}');
+      
+      // Log first trade's time if available
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true && data['data'] != null) {
+          final userTrades = data['data']['userTrades'];
+          if (userTrades != null && userTrades is List && userTrades.isNotEmpty) {
+            final firstTrade = userTrades[0];
+            debugPrint('First trade time from API: ${firstTrade['time']}');
+          }
+        }
+      }
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -382,26 +403,38 @@ class BotService {
             'error': data['message'] ?? 'Failed to fetch user bot trades',
           };
         }
-      } else if (response.statusCode == 500) {
-        // Handle 500 error - check if it's "No investment found" (empty state)
-        final data = json.decode(response.body);
-        final message = data['message']?.toString() ?? '';
-        if (message.toLowerCase().contains('no investment found')) {
-          // Return empty trades as success (user has no investments yet)
+      } else if (response.statusCode == 400 || response.statusCode == 500) {
+        // Handle 400/500 errors - check if it's "No investment found" (empty state)
+        try {
+          final data = json.decode(response.body);
+          final message = data['message']?.toString() ?? '';
+          // Only return empty trades if message explicitly says no investment/trades found
+          if (message.toLowerCase().contains('no investment found') ||
+              message.toLowerCase().contains('investment not found') ||
+              message.toLowerCase().contains('no trades')) {
+            // Return empty trades as success (user has no investments yet)
+            return {
+              'success': true,
+              'data': {
+                'strategy': strategy,
+                'symbol': symbol,
+                'userInvestment': 0,
+                'userTrades': [],
+              },
+            };
+          }
+          // For other 400/500 errors, return the actual error
           return {
-            'success': true,
-            'data': {
-              'strategy': strategy,
-              'symbol': symbol,
-              'userInvestment': 0,
-              'userTrades': [],
-            },
+            'success': false,
+            'error': message.isNotEmpty ? message : 'Server error: ${response.statusCode}',
+          };
+        } catch (_) {
+          // If can't parse response, return the error instead of empty trades
+          return {
+            'success': false,
+            'error': 'Server error: ${response.statusCode}',
           };
         }
-        return {
-          'success': false,
-          'error': message,
-        };
       } else {
         return {
           'success': false,
@@ -473,6 +506,7 @@ class BotService {
   }
 
   static Future<Map<String, dynamic>> getMockTradeHistory({
+    int? limit,
     String? pair,
     String? sortBy,
     String? sortOrder,
@@ -1821,21 +1855,63 @@ class BotTrade {
     this.distribution,
   });
 
-  factory BotTrade.fromJson(Map<String, dynamic> json) {
+  factory BotTrade.fromJson(Map<String, dynamic> json, {String? strategy}) {
     // Handle new API structure
     if (json.containsKey('positionId')) {
       // New API format
+      // Strategy comes from parent data object, not trade object
+      final strategyName = strategy ?? json['strategy']?.toString() ?? '';
+      final symbol = json['symbol']?.toString() ?? '';
+      
+      // Extract multiplier from strategy name (e.g., "Omega-3X" -> "3x")
+      String multiplier = '2x'; // Default
+      if (strategyName.contains('3X')) multiplier = '3x';
+      else if (strategyName.contains('2X')) multiplier = '2x';
+      else if (strategyName.contains('5X')) multiplier = '5x';
+      else if (strategyName.contains('10X')) multiplier = '10x';
+      
+      // Extract bot name from strategy (e.g., "Omega-3X" -> "Omega")
+      String botName = strategyName;
+      if (strategyName.contains('-')) {
+        botName = strategyName.split('-')[0];
+      }
+      
+      // Parse time from API with better error handling
+      DateTime? parsedDate;
+      
+      // Try different possible field names for time
+      final timeFields = ['time', 'date', 'timestamp', 'created_at', 'updatedAt', 'updateTime'];
+      String? usedField;
+      
+      for (final field in timeFields) {
+        final timeString = json[field]?.toString();
+        if (timeString != null && timeString.isNotEmpty) {
+          parsedDate = DateTime.tryParse(timeString);
+          if (parsedDate != null) {
+            usedField = field;
+            debugPrint('Parsing $field: "$timeString" -> $parsedDate');
+            break;
+          }
+        }
+      }
+      
+      if (parsedDate == null) {
+        debugPrint('Failed to parse time from any field, using current time');
+        debugPrint('Available fields: ${json.keys.join(", ")}');
+        parsedDate = DateTime.now();
+      }
+
       return BotTrade(
         id: json['positionId']?.toString() ?? '',
-        pair: json['symbol']?.toString() ?? '',
+        pair: symbol,
         openPrice: double.tryParse(json['avgPrice']?.toString() ?? '0') ?? 0.0,
         closePrice: double.tryParse(json['avgClosePrice']?.toString() ?? '0') ?? 0.0,
         totalPnl: double.tryParse(json['pnl']?.toString() ?? '0') ?? 0.0,
         userPnl: double.tryParse(json['pnl']?.toString() ?? '0') ?? 0.0,
-        date: DateTime.tryParse(json['time']?.toString() ?? '') ?? DateTime.now(),
+        date: parsedDate,
         status: json['positionSide']?.toString() ?? '',
-        botName: json['strategy']?.toString() ?? '',
-        multiplier: '2x', // Default, can be extracted from strategy name
+        botName: botName,
+        multiplier: multiplier,
         investment: double.tryParse(json['userInvestment']?.toString() ?? '0') ?? 0.0,
         positionId: json['positionId']?.toString(),
         positionSide: json['positionSide']?.toString(),
@@ -1843,7 +1919,7 @@ class BotTrade {
         avgClosePrice: double.tryParse(json['avgClosePrice']?.toString() ?? '0'),
         userSimulatedMargin: double.tryParse(json['userSimulatedMargin']?.toString() ?? '0'),
         uplineShare: double.tryParse(json['uplineShare']?.toString() ?? '0'),
-        distribution: json['distribution'] != null 
+        distribution: json['distribution'] != null
             ? List<Map<String, dynamic>>.from(json['distribution'])
             : null,
       );
@@ -1883,6 +1959,11 @@ class BotTrade {
 
   String get formattedDate {
     return '${date.day} ${_getMonthName(date.month)} ${date.year}';
+  }
+
+  String get formattedTime {
+    // Format: DD MMM YYYY, HH:MM
+    return '${date.day.toString().padLeft(2, '0')} ${_getMonthName(date.month)} ${date.year}, ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
   }
 
   String _getMonthName(int month) {

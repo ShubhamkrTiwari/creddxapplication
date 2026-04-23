@@ -12,6 +12,7 @@ class BotDashboardScreen extends StatefulWidget {
 class _BotDashboardScreenState extends State<BotDashboardScreen> {
   String _selectedSort = 'Top';
   bool _isLoadingPerformance = true;
+  bool _isLoadingTradeHistory = true;
 
   // Performance data for each strategy
   Map<String, Map<String, String>> _performanceData = {
@@ -20,10 +21,77 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
     'Ranger': {'3M': '--', '6M': '--', '1Y': '--'},
   };
 
+  // Trade history data
+  List<Map<String, dynamic>> _tradeHistory = [];
+
   @override
   void initState() {
     super.initState();
     _fetchAllStrategyPerformance();
+    _fetchTradeHistory();
+  }
+
+  Future<void> _fetchTradeHistory() async {
+    setState(() => _isLoadingTradeHistory = true);
+
+    try {
+      // Fetch trades from all strategies since API requires strategy and symbol
+      final pairMappings = [
+        {'strategy': 'Omega-3X', 'symbol': 'BTC-USDT'},
+        {'strategy': 'Alpha-2X', 'symbol': 'ETH-USDT'},
+        {'strategy': 'Ranger-5X', 'symbol': 'SOL-USDT'},
+      ];
+      
+      List<Map<String, dynamic>> allTrades = [];
+      
+      for (final mapping in pairMappings) {
+        final response = await BotService.getUserBotTrades(
+          strategy: mapping['strategy'],
+          symbol: mapping['symbol'],
+          limit: 10,
+        );
+        
+        if (response['success'] == true && response['data'] != null) {
+          final data = response['data'];
+          final trades = data['userTrades'] as List<dynamic>? ?? [];
+          allTrades.addAll(trades.cast<Map<String, dynamic>>());
+        }
+      }
+      
+      // Sort by date (newest first) and take top 10
+      allTrades.sort((a, b) {
+        final dateA = DateTime.tryParse(a['time']?.toString() ?? '') ?? DateTime.now();
+        final dateB = DateTime.tryParse(b['time']?.toString() ?? '') ?? DateTime.now();
+        return dateB.compareTo(dateA);
+      });
+      
+      if (allTrades.isNotEmpty && mounted) {
+        setState(() {
+          _tradeHistory = allTrades.take(10).toList();
+          _isLoadingTradeHistory = false;
+        });
+      } else if (mounted) {
+        // If no trades, use mock data
+        final mockResponse = await BotService.getMockTradeHistory(
+          limit: 10,
+          sortBy: 'date',
+          sortOrder: 'desc',
+        );
+        
+        if (mockResponse['success'] == true) {
+          final data = mockResponse['data'];
+          final trades = data['trades'] as List<dynamic>? ?? [];
+          setState(() {
+            _tradeHistory = trades.cast<Map<String, dynamic>>();
+            _isLoadingTradeHistory = false;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingTradeHistory = false);
+      }
+    }
   }
 
   Future<void> _fetchAllStrategyPerformance() async {
@@ -91,6 +159,10 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
             
             // Top Strategies Section
             _buildTopStrategies(),
+            const SizedBox(height: 24),
+
+            // Trade History Section
+            _buildTradeHistorySection(),
           ],
         ),
       ),
@@ -554,6 +626,196 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildTradeHistorySection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF2C2C2E)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Trade History',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              if (_isLoadingTradeHistory)
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Color(0xFF84BD00),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (_tradeHistory.isEmpty && !_isLoadingTradeHistory)
+            const Center(
+              child: Text(
+                'No trades yet',
+                style: TextStyle(
+                  color: Color(0xFF8E8E93),
+                  fontSize: 14,
+                ),
+              ),
+            )
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _tradeHistory.length > 5 ? 5 : _tradeHistory.length,
+              separatorBuilder: (context, index) => const Divider(
+                color: Color(0xFF2C2C2E),
+                height: 1,
+              ),
+              itemBuilder: (context, index) {
+                final trade = _tradeHistory[index];
+                return _buildTradeHistoryItem(trade);
+              },
+            ),
+          if (_tradeHistory.length > 5)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Center(
+                child: TextButton(
+                  onPressed: () {
+                    // Navigate to full trade history
+                  },
+                  child: const Text(
+                    'View All',
+                    style: TextStyle(
+                      color: Color(0xFF84BD00),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTradeHistoryItem(Map<String, dynamic> trade) {
+    final pair = trade['pair']?.toString() ?? 'Unknown';
+    final botName = trade['botName']?.toString() ?? '-';
+    final multiplier = trade['multiplier']?.toString() ?? '';
+    final userPnl = double.tryParse(trade['userPnl']?.toString() ?? '0') ?? 0.0;
+    final dateStr = trade['date']?.toString() ?? '';
+    final status = trade['status']?.toString() ?? 'completed';
+
+    DateTime? date;
+    if (dateStr.isNotEmpty) {
+      date = DateTime.tryParse(dateStr);
+    }
+
+    final isProfit = userPnl >= 0;
+    final pnlColor = isProfit ? const Color(0xFF84BD00) : const Color(0xFFFF3B30);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: const Color(0xFF2C2C2E),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Center(
+              child: Text(
+                pair.split('-').first,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '$botName ${multiplier.isNotEmpty ? "($multiplier)" : ""}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  pair,
+                  style: const TextStyle(
+                    color: Color(0xFF8E8E93),
+                    fontSize: 12,
+                  ),
+                ),
+                if (date != null)
+                  Text(
+                    '${date.day}/${date.month}/${date.year}',
+                    style: const TextStyle(
+                      color: Color(0xFF8E8E93),
+                      fontSize: 11,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${isProfit ? "+" : ""}${userPnl.toStringAsFixed(2)}',
+                style: TextStyle(
+                  color: pnlColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: status == 'completed'
+                      ? const Color(0xFF84BD00).withValues(alpha: 0.2)
+                      : const Color(0xFFFF9500).withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  status.toUpperCase(),
+                  style: TextStyle(
+                    color: status == 'completed'
+                        ? const Color(0xFF84BD00)
+                        : const Color(0xFFFF9500),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

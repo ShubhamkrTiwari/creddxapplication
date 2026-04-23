@@ -141,7 +141,7 @@ class _SavedPaymentMethodsScreenState extends State<SavedPaymentMethodsScreen> {
       
       // Try to get additional payment modes from API
       try {
-        final response = await P2PService.getPaymentModes(_selectedCountry);
+        final response = await P2PService.getPaymentModes(country: _selectedCountry);
         
         if (response != null && response['success'] == true) {
           final data = response['data'] ?? {};

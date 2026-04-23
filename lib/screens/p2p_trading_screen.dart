@@ -1,5 +1,35 @@
 import 'package:flutter/material.dart';
-import 'package:gif/gif.dart';
+import '../services/p2p_service.dart';
+import '../services/auth_service.dart';
+import 'login_screen.dart';
+import 'order_history_screen.dart';
+import 'p2p_chat_list_screen.dart';
+import 'dispute_management_screen.dart';
+import 'user_profile_screen.dart';
+import 'p2p_place_order_screen.dart';
+import 'p2p_buy_screen.dart';
+import 'p2p_sell_screen.dart';
+import 'p2p_trading_orders_screen.dart';
+
+// Refresh Status Enum for UI state management
+enum RefreshStatus { idle, loading, success, error }
+
+// API Response State for tracking each section
+class ApiSectionState {
+  final String name;
+  RefreshStatus status;
+  dynamic data;
+  String? errorMessage;
+  DateTime? lastUpdated;
+
+  ApiSectionState({
+    required this.name,
+    this.status = RefreshStatus.idle,
+    this.data,
+    this.errorMessage,
+    this.lastUpdated,
+  });
+}
 
 class P2PTradingScreen extends StatefulWidget {
   const P2PTradingScreen({super.key});
@@ -8,19 +38,194 @@ class P2PTradingScreen extends StatefulWidget {
   State<P2PTradingScreen> createState() => _P2PTradingScreenState();
 }
 
-class _P2PTradingScreenState extends State<P2PTradingScreen> with TickerProviderStateMixin {
-  late GifController _gifController;
+class _P2PTradingScreenState extends State<P2PTradingScreen> {
+  bool _isBuySelected = true;
+  String _selectedCrypto = 'USDT';
+  List<dynamic> _cryptoList = [];
+  List<dynamic> _offers = [];
+  bool _isLoading = true;
+  bool _isRefreshing = false;
+  bool _isLoggedIn = false;
+  bool _showAllAds = false; // Bypass filtering and show all ads
+  
+  // API Section States for granular refresh UI
+  final Map<String, ApiSectionState> _apiStates = {
+    'coins': ApiSectionState(name: 'Coins'),
+    'advertisements': ApiSectionState(name: 'Advertisements'),
+    'wallet': ApiSectionState(name: 'Wallet'),
+  };
+  
+  // Pull to refresh controller
+  final GlobalKey<RefreshIndicatorState> _refreshIndicatorKey = GlobalKey<RefreshIndicatorState>();
 
   @override
   void initState() {
     super.initState();
-    _gifController = GifController(vsync: this);
+    _checkAuthAndFetchData();
   }
 
-  @override
-  void dispose() {
-    _gifController.dispose();
-    super.dispose();
+  Future<void> _checkAuthAndFetchData() async {
+    setState(() {
+      _isLoading = true;
+      _showAllAds = false; // Reset filter bypass on refresh
+    });
+    
+    final token = await AuthService.getToken();
+    _isLoggedIn = token != null && token.isNotEmpty;
+    
+    // Fetch all data in parallel for better performance
+    await Future.wait([
+      _fetchCryptoList(),
+      _fetchAdvertisements(),
+    ]);
+    
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  // Enhanced refresh method with individual section tracking
+  Future<void> _refreshData() async {
+    setState(() => _isRefreshing = true);
+    
+    try {
+      // Refresh all sections in parallel
+      await Future.wait([
+        _refreshCryptoList(),
+        _refreshAdvertisements(),
+      ]);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Data refreshed successfully'),
+            backgroundColor: Color(0xFF84BD00),
+            duration: Duration(seconds: 1),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Refresh failed: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isRefreshing = false);
+      }
+    }
+  }
+
+  Future<void> _refreshCryptoList() async {
+    _apiStates['coins']!.status = RefreshStatus.loading;
+    setState(() {});
+    
+    try {
+      final coins = await P2PService.getP2PCoins();
+      if (mounted) {
+        setState(() {
+          _cryptoList = coins;
+          if (coins.isNotEmpty && !_cryptoList.any((c) => c['coinSymbol'] == _selectedCrypto)) {
+            _selectedCrypto = coins[0]['coinSymbol'] ?? 'USDT';
+          }
+          _apiStates['coins']!.status = RefreshStatus.success;
+          _apiStates['coins']!.data = coins;
+          _apiStates['coins']!.lastUpdated = DateTime.now();
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _apiStates['coins']!.status = RefreshStatus.error;
+          _apiStates['coins']!.errorMessage = e.toString();
+        });
+      }
+    }
+  }
+
+  Future<void> _refreshAdvertisements() async {
+    _apiStates['advertisements']!.status = RefreshStatus.loading;
+    setState(() {});
+    
+    try {
+      final ads = await P2PService.getAllAdvertisements(
+        coin: _selectedCrypto,
+        direction: _isBuySelected ? 2 : 1,
+      );
+      if (mounted) {
+        setState(() {
+          _offers = ads;
+          _apiStates['advertisements']!.status = RefreshStatus.success;
+          _apiStates['advertisements']!.data = ads;
+          _apiStates['advertisements']!.lastUpdated = DateTime.now();
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _apiStates['advertisements']!.status = RefreshStatus.error;
+          _apiStates['advertisements']!.errorMessage = e.toString();
+        });
+      }
+    }
+  }
+
+  Future<void> _fetchCryptoList() async {
+    _apiStates['coins']!.status = RefreshStatus.loading;
+    
+    try {
+      final coins = await P2PService.getP2PCoins();
+      if (mounted) {
+        setState(() {
+          _cryptoList = coins;
+          if (coins.isNotEmpty && !_cryptoList.any((c) => c['coinSymbol'] == _selectedCrypto)) {
+            _selectedCrypto = coins[0]['coinSymbol'] ?? 'USDT';
+          }
+          _apiStates['coins']!.status = RefreshStatus.success;
+          _apiStates['coins']!.data = coins;
+          _apiStates['coins']!.lastUpdated = DateTime.now();
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching crypto list: $e');
+      if (mounted) {
+        setState(() {
+          _apiStates['coins']!.status = RefreshStatus.error;
+          _apiStates['coins']!.errorMessage = e.toString();
+        });
+      }
+    }
+  }
+
+  Future<void> _fetchAdvertisements() async {
+    _apiStates['advertisements']!.status = RefreshStatus.loading;
+    
+    try {
+      final ads = await P2PService.getAllAdvertisements(
+        coin: _selectedCrypto,
+        direction: _isBuySelected ? 2 : 1, // 2 = buy, 1 = sell
+      );
+      if (mounted) {
+        setState(() {
+          _offers = ads;
+          _apiStates['advertisements']!.status = RefreshStatus.success;
+          _apiStates['advertisements']!.data = ads;
+          _apiStates['advertisements']!.lastUpdated = DateTime.now();
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching advertisements: $e');
+      if (mounted) {
+        setState(() {
+          _apiStates['advertisements']!.status = RefreshStatus.error;
+          _apiStates['advertisements']!.errorMessage = e.toString();
+        });
+      }
+    }
   }
 
   @override
@@ -32,28 +237,103 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with TickerProvider
         elevation: 0,
         title: const Text('P2P Trading', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
         centerTitle: true,
-      ),
-      body: Center(
-        child: Gif(
-          controller: _gifController,
-          image: const AssetImage('assets/images/comingsoon.gif'),
-          autostart: Autostart.loop,
-          placeholder: (context) => const Text(
-            'Coming Soon',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
+        actions: [
+          // Refresh indicator icon
+          if (_isRefreshing)
+            const Padding(
+              padding: EdgeInsets.all(8.0),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  color: Color(0xFF84BD00),
+                  strokeWidth: 2,
+                ),
+              ),
+          )
+          else
+            IconButton(
+              icon: const Icon(Icons.refresh, color: Color(0xFF84BD00)),
+              onPressed: _refreshData,
+              tooltip: 'Refresh Data',
             ),
+          IconButton(
+            icon: const Icon(Icons.add_circle_outline, color: Color(0xFF84BD00)),
+            onPressed: _showCreateAdDialog,
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          _buildApiStatusBar(),
+          _buildTypeToggle(),
+          _buildCryptoSelector(),
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)))
+                : _buildAdsList(),
+          ),
+        ],
+      ),
+      bottomNavigationBar: _buildBottomNav(),
+    );
+  }
+
+  // Build API status indicator bar at the top
+  Widget _buildApiStatusBar() {
+    final hasErrors = _apiStates.values.any((state) => state.status == RefreshStatus.error);
+    final isLoading = _apiStates.values.any((state) => state.status == RefreshStatus.loading);
+    
+    if (!hasErrors && !isLoading) return const SizedBox.shrink();
+    
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: hasErrors ? Colors.redAccent.withOpacity(0.1) : const Color(0xFF84BD00).withOpacity(0.1),
+        border: Border(
+          bottom: BorderSide(
+            color: hasErrors ? Colors.redAccent : const Color(0xFF84BD00),
+            width: 1,
           ),
         ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            hasErrors ? Icons.error_outline : Icons.sync,
+            color: hasErrors ? Colors.redAccent : const Color(0xFF84BD00),
+            size: 16,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              hasErrors
+                  ? 'Some data failed to load. Pull down to retry.'
+                  : 'Updating data...',
+              style: TextStyle(
+                color: hasErrors ? Colors.redAccent : const Color(0xFF84BD00),
+                fontSize: 12,
+              ),
+            ),
+          ),
+          if (hasErrors)
+            TextButton(
+              onPressed: _refreshData,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text(
+                'RETRY',
+                style: TextStyle(color: Colors.redAccent, fontSize: 12),
+              ),
+            ),
+        ],
       ),
     );
   }
 
-/*
-  // All original methods preserved below for future reference when re-enabling P2P
-  
   Widget _buildTypeToggle() {
     return Container(
       margin: const EdgeInsets.all(16),
@@ -61,8 +341,14 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with TickerProvider
       decoration: BoxDecoration(color: const Color(0xFF1C1C1E), borderRadius: BorderRadius.circular(12)),
       child: Row(
         children: [
-          _buildToggleButton('Buy', _isBuySelected, () => setState(() => _isBuySelected = true)),
-          _buildToggleButton('Sell', !_isBuySelected, () => setState(() => _isBuySelected = false)),
+          _buildToggleButton('Buy', _isBuySelected, () => setState(() {
+            _isBuySelected = true;
+            _fetchAdvertisements();
+          })),
+          _buildToggleButton('Sell', !_isBuySelected, () => setState(() {
+            _isBuySelected = false;
+            _fetchAdvertisements();
+          })),
         ],
       ),
     );
@@ -89,6 +375,43 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with TickerProvider
   }
 
   Widget _buildCryptoSelector() {
+    if (_cryptoList.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            if (_apiStates['coins']?.status == RefreshStatus.loading)
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  color: Color(0xFF84BD00),
+                  strokeWidth: 2,
+                ),
+              )
+            else if (_apiStates['coins']?.status == RefreshStatus.error)
+              IconButton(
+                icon: const Icon(Icons.refresh, color: Colors.redAccent, size: 18),
+                onPressed: _refreshCryptoList,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              )
+            else
+              const Icon(Icons.monetization_on, color: Colors.white54, size: 16),
+            const SizedBox(width: 8),
+            Text(
+              _apiStates['coins']?.status == RefreshStatus.loading
+                  ? 'Loading coins...'
+                  : _apiStates['coins']?.status == RefreshStatus.error
+                      ? 'Failed to load coins'
+                      : 'No coins available',
+              style: const TextStyle(color: Colors.white54, fontSize: 14),
+            ),
+          ],
+        ),
+      );
+    }
+    
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -97,14 +420,40 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with TickerProvider
           final symbol = coin['coinSymbol'] ?? 'USDT';
           final isSelected = _selectedCrypto == symbol;
           return GestureDetector(
-            onTap: () => setState(() => _selectedCrypto = symbol),
+            onTap: () {
+              setState(() => _selectedCrypto = symbol);
+              _fetchAdvertisements();
+            },
             child: Container(
               margin: const EdgeInsets.only(right: 12),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
                 border: Border(bottom: BorderSide(color: isSelected ? const Color(0xFF84BD00) : Colors.transparent, width: 2)),
               ),
-              child: Text(symbol, style: TextStyle(color: isSelected ? const Color(0xFF84BD00) : Colors.white54, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    symbol,
+                    style: TextStyle(
+                      color: isSelected ? const Color(0xFF84BD00) : Colors.white54,
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  if (isSelected && _apiStates['advertisements']?.status == RefreshStatus.loading)
+                    const Padding(
+                      padding: EdgeInsets.only(left: 6),
+                      child: SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(
+                          color: Color(0xFF84BD00),
+                          strokeWidth: 2,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           );
         }).toList(),
@@ -113,19 +462,23 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with TickerProvider
   }
 
   Widget _buildAdsList() {
-    print('DEBUG: Building ads list with ${_offers.length} offers');
-    print('DEBUG: Is buy selected: $_isBuySelected');
-    print('DEBUG: Selected crypto: $_selectedCrypto');
+    debugPrint('=== BUILDING ADS LIST ===');
+    debugPrint('Total offers from API: ${_offers.length}');
+    debugPrint('Buy selected: $_isBuySelected (looking for ${_isBuySelected ? "sell" : "buy"} ads)');
+    debugPrint('Selected crypto: $_selectedCrypto');
     
-    // API logic based filtering
-    final type = _isBuySelected ? 'sell' : 'buy'; // If I want to BUY, I look for ads of people who want to SELL
+    // Print first offer structure for debugging
+    if (_offers.isNotEmpty) {
+      debugPrint('First offer structure: ${_offers.first}');
+    }
+    
+    final type = _isBuySelected ? 'sell' : 'buy';
     
     List<dynamic> filteredAds = [];
+    List<dynamic> sameTypeAds = []; // Same type but different coin
+    List<dynamic> sameCoinAds = []; // Same coin but different type
     
     for (var ad in _offers) {
-      print('DEBUG: Processing ad: ${ad}');
-      
-      // Handle different field names for type
       String adType = '';
       if (ad['type'] != null) {
         adType = ad['type'].toString().toLowerCase();
@@ -133,9 +486,12 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with TickerProvider
         adType = ad['tradeType'].toString().toLowerCase();
       } else if (ad['advertisementType'] != null) {
         adType = ad['advertisementType'].toString().toLowerCase();
+      } else if (ad['direction'] != null) {
+        // Handle numeric direction: 1 = buy, 2 = sell
+        final direction = ad['direction'];
+        adType = (direction == 1 || direction == '1') ? 'buy' : 'sell';
       }
       
-      // Handle different field names for coin
       String adCoin = '';
       if (ad['coin'] != null) {
         adCoin = ad['coin'].toString().toUpperCase();
@@ -143,36 +499,122 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with TickerProvider
         adCoin = ad['coinSymbol'].toString().toUpperCase();
       } else if (ad['cryptocurrency'] != null) {
         adCoin = ad['cryptocurrency'].toString().toUpperCase();
+      } else if (ad['coinId'] != null) {
+        adCoin = ad['coinId'].toString().toUpperCase();
       }
       
-      print('DEBUG: Ad type: $adType, expected: $type');
-      print('DEBUG: Ad coin: $adCoin, expected: $_selectedCrypto');
+      // Debug each ad
+      debugPrint('Ad: type=$adType, coin=$adCoin, looking for type=$type, coin=$_selectedCrypto');
       
-      if (adType == type && adCoin == _selectedCrypto.toUpperCase()) {
+      final typeMatches = adType == type;
+      final coinMatches = adCoin == _selectedCrypto.toUpperCase() || 
+                         adCoin.contains(_selectedCrypto.toUpperCase()) ||
+                         _selectedCrypto.toUpperCase().contains(adCoin);
+      
+      if (typeMatches && coinMatches) {
         filteredAds.add(ad);
+      } else if (typeMatches) {
+        sameTypeAds.add(ad);
+      } else if (coinMatches) {
+        sameCoinAds.add(ad);
       }
     }
     
-    print('DEBUG: Filtered ads count: ${filteredAds.length}');
+    debugPrint('Filtered ads count: ${filteredAds.length}');
+    debugPrint('Same type (different coin): ${sameTypeAds.length}');
+    debugPrint('Same coin (different type): ${sameCoinAds.length}');
+    
+    // Fallback: if no exact match but we have same type ads, show those
+    if (filteredAds.isEmpty && sameTypeAds.isNotEmpty && !_showAllAds) {
+      debugPrint('Showing ads with matching type but different coin');
+      filteredAds = sameTypeAds;
+    }
+    
+    // If user wants to see all ads, bypass all filtering
+    if (_showAllAds && _offers.isNotEmpty) {
+      debugPrint('Showing all ads (filter bypassed)');
+      filteredAds = List.from(_offers);
+    }
 
-    if (filteredAds.isEmpty) {
-      String message = 'No active advertisements found';
-      
-      // Check if authentication might be the issue
-      if (!_isLoggedIn) {
-        message = 'Please log in to view advertisements';
-      } else if (_offers.isEmpty) {
-        message = 'No advertisements available. Try refreshing or create a new ad.';
-      } else {
-        message = 'No $type advertisements found for $_selectedCrypto. Try different filters.';
-      }
-      
+    // Show loading state for advertisements
+    if (_apiStates['advertisements']?.status == RefreshStatus.loading && _offers.isEmpty) {
       return RefreshIndicator(
-        onRefresh: _checkAuthAndFetchData,
+        key: _refreshIndicatorKey,
+        onRefresh: _refreshData,
+        color: const Color(0xFF84BD00),
+        backgroundColor: const Color(0xFF1C1C1E),
         child: ListView(
           children: [
             SizedBox(height: MediaQuery.of(context).size.height * 0.2),
-            Center(child: Text(message, style: const TextStyle(color: Colors.white54))),
+            const Center(
+              child: Column(
+                children: [
+                  CircularProgressIndicator(color: Color(0xFF84BD00)),
+                  SizedBox(height: 16),
+                  Text('Loading advertisements...', style: TextStyle(color: Colors.white54)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (filteredAds.isEmpty) {
+      String message = 'No active advertisements found';
+      String subMessage = '';
+      
+      if (!_isLoggedIn) {
+        message = 'Please log in to view advertisements';
+      } else if (_offers.isEmpty) {
+        if (_apiStates['advertisements']?.status == RefreshStatus.error) {
+          message = 'Failed to load advertisements';
+          subMessage = _apiStates['advertisements']?.errorMessage ?? 'Pull down to retry';
+        } else {
+          message = 'No advertisements available';
+          subMessage = 'Be the first to create an ad!';
+        }
+      } else {
+        message = 'No $type advertisements for $_selectedCrypto';
+        subMessage = 'Try switching to ${_isBuySelected ? 'Sell' : 'Buy'} tab or select different coin';
+      }
+      
+      return RefreshIndicator(
+        key: _refreshIndicatorKey,
+        onRefresh: _refreshData,
+        color: const Color(0xFF84BD00),
+        backgroundColor: const Color(0xFF1C1C1E),
+        child: ListView(
+          children: [
+            SizedBox(height: MediaQuery.of(context).size.height * 0.15),
+            Center(
+              child: Column(
+                children: [
+                  Icon(
+                    _apiStates['advertisements']?.status == RefreshStatus.error
+                        ? Icons.error_outline
+                        : Icons.inbox_outlined,
+                    color: Colors.white54,
+                    size: 48,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    message,
+                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500),
+                    textAlign: TextAlign.center,
+                  ),
+                  if (subMessage.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8, left: 32, right: 32),
+                      child: Text(
+                        subMessage,
+                        style: const TextStyle(color: Colors.white54, fontSize: 14),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                ],
+              ),
+            ),
             if (!_isLoggedIn)
               Padding(
                 padding: const EdgeInsets.all(16.0),
@@ -181,18 +623,44 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with TickerProvider
                     Navigator.push(
                       context,
                       MaterialPageRoute(builder: (context) => const LoginScreen()),
-                    ).then((_) {
-                      _checkAuthAndFetchData();
+                    ).then((_) => _checkAuthAndFetchData());
+                  },
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
+                  child: const Text('Login to View Ads', style: TextStyle(color: Colors.black)),
+                ),
+              ),
+            if (_apiStates['advertisements']?.status == RefreshStatus.error)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: ElevatedButton.icon(
+                  onPressed: _refreshData,
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                  icon: const Icon(Icons.refresh, color: Colors.white),
+                  label: const Text('Retry', style: TextStyle(color: Colors.white)),
+                ),
+              ),
+            // Show All Ads button when we have offers but filtered is empty
+            if (_offers.isNotEmpty && filteredAds.isEmpty && !_showAllAds)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8),
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    // Show all ads without filtering
+                    setState(() {
+                      _showAllAds = true;
                     });
                   },
-                  child: const Text('Login to View Ads'),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                  icon: const Icon(Icons.visibility, color: Colors.white),
+                  label: Text('Show All ${_offers.length} Ads', style: const TextStyle(color: Colors.white)),
                 ),
               ),
             const SizedBox(height: 20),
             Center(
-              child: ElevatedButton(
-                onPressed: _checkAuthAndFetchData,
-                child: const Text('Refresh'),
+              child: TextButton.icon(
+                onPressed: _refreshData,
+                icon: const Icon(Icons.refresh, color: Color(0xFF84BD00), size: 18),
+                label: const Text('Pull to refresh', style: TextStyle(color: Color(0xFF84BD00))),
               ),
             ),
           ],
@@ -201,19 +669,49 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with TickerProvider
     }
 
     return RefreshIndicator(
-      onRefresh: _checkAuthAndFetchData,
+      key: _refreshIndicatorKey,
+      onRefresh: _refreshData,
+      color: const Color(0xFF84BD00),
+      backgroundColor: const Color(0xFF1C1C1E),
+      displacement: 40,
+      strokeWidth: 3,
       child: ListView.builder(
         padding: const EdgeInsets.all(16),
-        itemCount: filteredAds.length,
-        itemBuilder: (context, index) => _buildAdCard(filteredAds[index]),
+        itemCount: filteredAds.length + 1, // +1 for last updated text
+        itemBuilder: (context, index) {
+          if (index == filteredAds.length) {
+            // Last item - show last updated timestamp
+            final lastUpdated = _apiStates['advertisements']?.lastUpdated;
+            if (lastUpdated != null) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Center(
+                  child: Text(
+                    'Last updated: ${_formatLastUpdated(lastUpdated)}',
+                    style: const TextStyle(color: Colors.white38, fontSize: 12),
+                  ),
+                ),
+              );
+            }
+            return const SizedBox.shrink();
+          }
+          return _buildAdCard(filteredAds[index]);
+        },
       ),
     );
   }
 
-  Widget _buildAdCard(dynamic ad) {
-    print('DEBUG: Building ad card for: ${ad}');
+  String _formatLastUpdated(DateTime dateTime) {
+    final now = DateTime.now();
+    final diff = now.difference(dateTime);
     
-    // Handle different field names for user/advertiser info
+    if (diff.inSeconds < 60) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
+  }
+
+  Widget _buildAdCard(dynamic ad) {
     final advertiser = ad['advertiser'] ?? {};
     final userName = ad['advertiserName'] ?? 
                      ad['userName'] ?? 
@@ -224,40 +722,15 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with TickerProvider
                      advertiser['name'] ?? 
                      'Trader';
     
-    // Handle different field names for price
-    final price = ad['price'] ?? 
-                  ad['rate'] ?? 
-                  ad['pricePerUnit'] ?? 
-                  ad['unitPrice'] ?? 0;
+    final price = ad['price'] ?? ad['rate'] ?? ad['pricePerUnit'] ?? ad['unitPrice'] ?? 0;
+    final minLimit = ad['min'] ?? ad['minAmount'] ?? ad['minimumLimit'] ?? ad['minLimit'] ?? 0;
+    final maxLimit = ad['max'] ?? ad['maxAmount'] ?? ad['maximumLimit'] ?? ad['maxLimit'] ?? 0;
+    final available = ad['amount'] ?? ad['availableAmount'] ?? ad['quantity'] ?? ad['available'] ?? 0;
     
-    // Handle different field names for limits
-    final minLimit = ad['min'] ?? 
-                     ad['minAmount'] ?? 
-                     ad['minimumLimit'] ?? 
-                     ad['minLimit'] ?? 0;
-    final maxLimit = ad['max'] ?? 
-                     ad['maxAmount'] ?? 
-                     ad['maximumLimit'] ?? 
-                     ad['maxLimit'] ?? 0;
-    
-    // Handle different field names for available amount
-    final available = ad['amount'] ?? 
-                      ad['availableAmount'] ?? 
-                      ad['quantity'] ?? 
-                      ad['available'] ?? 0;
-    
-    // Handle different field names for payment methods
-    var paymentModes = ad['paymentMode'] ?? 
-                      ad['paymentMethods'] ?? 
-                      ad['paymentMethodsList'] ?? 
-                      ad['paymentOptions'] ?? 
-                      ['Bank Transfer'];
-    
+    var paymentModes = ad['paymentMode'] ?? ad['paymentMethods'] ?? ad['paymentMethodsList'] ?? ad['paymentOptions'] ?? ['Bank Transfer'];
     if (paymentModes is! List) {
       paymentModes = [paymentModes.toString()];
     }
-
-    print('DEBUG: Parsed ad data - User: $userName, Price: $price, Available: $available');
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -299,10 +772,11 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with TickerProvider
           Row(
             children: [
               Expanded(
-                child: Row(
+                child: Wrap(
+                  spacing: 8,
                   children: paymentModes.map<Widget>((mode) {
                     return Container(
-                      margin: const EdgeInsets.only(right: 8),
+                      margin: const EdgeInsets.only(bottom: 4),
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(4)),
                       child: Text(mode.toString(), style: const TextStyle(color: Colors.white70, fontSize: 10)),
@@ -322,8 +796,8 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with TickerProvider
                         price: price.toString(),
                         available: available.toString(),
                         paymentMethods: paymentModes.map<String>((e) => e.toString()).toList(),
-                        minLimit: minLimit.toDouble(),
-                        maxLimit: maxLimit.toDouble(),
+                        minLimit: minLimit is double ? minLimit : (minLimit is int ? minLimit.toDouble() : double.tryParse(minLimit.toString()) ?? 0.0),
+                        maxLimit: maxLimit is double ? maxLimit : (maxLimit is int ? maxLimit.toDouble() : double.tryParse(maxLimit.toString()) ?? 0.0),
                       ),
                     ),
                   );
@@ -413,5 +887,4 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with TickerProvider
       ),
     );
   }
-*/
 }

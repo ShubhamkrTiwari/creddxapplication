@@ -104,6 +104,93 @@ class WalletService {
     }
   }
 
+  // Fetch INR balance directly from wallet API
+  static Future<Map<String, dynamic>> getINRBalance() async {
+    try {
+      debugPrint('=== Fetching INR Balance ===');
+      
+      // Try all-wallet-balance API first (most reliable for INR)
+      final result = await getAllWalletBalances();
+      debugPrint('Raw API result: $result');
+      
+      if (result['success'] == true && result['data'] != null) {
+        final data = result['data'];
+        debugPrint('API data keys: ${data.keys.toList()}');
+        debugPrint('Full data: $data');
+        
+        // Extract INR from mainBalance
+        final mainBalance = data['mainBalance'] ?? data['main'] ?? data['main_balance'];
+        debugPrint('mainBalance found: $mainBalance, type: ${mainBalance?.runtimeType}');
+        if (mainBalance != null && mainBalance is Map) {
+          debugPrint('mainBalance keys: ${mainBalance.keys.toList()}');
+          final inrValue = mainBalance['INR'] ?? mainBalance['inr'] ?? mainBalance['Inr'];
+          debugPrint('inrValue found: $inrValue, type: ${inrValue?.runtimeType}');
+          if (inrValue != null) {
+            double inr = 0.0;
+            if (inrValue is num) inr = inrValue.toDouble();
+            else if (inrValue is String) inr = double.tryParse(inrValue) ?? 0.0;
+            else if (inrValue is Map) {
+              inr = double.tryParse(
+                inrValue['total']?.toString() ?? 
+                inrValue['balance']?.toString() ?? 
+                inrValue['available']?.toString() ?? 
+                inrValue['free']?.toString() ?? '0'
+              ) ?? 0.0;
+            }
+            
+            debugPrint('INR Balance fetched: $inr');
+            return {'success': true, 'inrBalance': inr, 'source': 'mainBalance'};
+          }
+        }
+        
+        // Try to find INR in other wallet types
+        final walletTypes = ['main', 'spot', 'p2p', 'bot', 'demo_bot'];
+        for (final type in walletTypes) {
+          final wallet = data[type];
+          if (wallet != null && wallet is Map) {
+            final balances = wallet['balances'];
+            if (balances is List) {
+              for (final b in balances) {
+                if (b is Map && (b['coin']?.toString().toUpperCase() == 'INR' || 
+                    b['asset']?.toString().toUpperCase() == 'INR')) {
+                  final inr = double.tryParse(
+                    b['total']?.toString() ?? 
+                    b['balance']?.toString() ?? 
+                    b['available']?.toString() ?? '0'
+                  ) ?? 0.0;
+                  debugPrint('INR Balance found in $type wallet: $inr');
+                  return {'success': true, 'inrBalance': inr, 'source': type};
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      // Fallback to overview API
+      final response = await http.get(
+        Uri.parse('$baseUrl/wallet/overview/inr-holding'),
+        headers: await _getHeaders(),
+      );
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true || data['inrHolding'] != null) {
+          final holdingData = data['data'] ?? data;
+          final inr = holdingData['inrHolding'] ?? holdingData['inr'] ?? holdingData['balance'] ?? holdingData['amount'] ?? 0.0;
+          final inrDouble = inr is num ? inr.toDouble() : double.tryParse(inr.toString()) ?? 0.0;
+          debugPrint('INR Balance from overview API: $inrDouble');
+          return {'success': true, 'inrBalance': inrDouble, 'source': 'overview'};
+        }
+      }
+      
+      return {'success': false, 'error': 'INR balance not found'};
+    } catch (e) {
+      debugPrint('Error fetching INR balance: $e');
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
   // Primary method to fetch wallet balance using /wallet/v1/wallet/get
   static Future<Map<String, dynamic>> getWalletBalance() async {
     try {
@@ -1343,7 +1430,43 @@ class WalletService {
     }
   }
 
-  
+  // Enable crypto withdrawal for a specific coin (admin endpoint)
+  static Future<Map<String, dynamic>> enableCryptoWithdraw({required String coin, required String network}) async {
+    try {
+      debugPrint('Enabling crypto withdrawal: coin=$coin, network=$network');
+
+      final requestBody = {
+        'coin': coin,
+        'network': network,
+      };
+
+      debugPrint('Enable withdraw request body: $requestBody');
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/super-admin/v1/coin/withdraw/enable'),
+        headers: await _getHeaders(),
+        body: json.encode(requestBody),
+      );
+
+      debugPrint('Enable Withdraw API Response Status: ${response.statusCode}');
+      debugPrint('Enable Withdraw API Response Body: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          return {'success': true, 'data': data['data'], 'message': data['message'] ?? 'Withdrawal enabled successfully'};
+        } else {
+          return {'success': false, 'error': data['message'] ?? 'Failed to enable withdrawal'};
+        }
+      } else {
+        final error = json.decode(response.body);
+        return {'success': false, 'error': error['message'] ?? error['error'] ?? 'Error ${response.statusCode}'};
+      }
+    } catch (e) {
+      debugPrint('Error in enableCryptoWithdraw: $e');
+      return {'success': false, 'error': 'Network error: $e'};
+    }
+  }
 
   /// 1. Fetch Bank Details
   /// GET /wallet/v1/wallet/deposit/bank-details

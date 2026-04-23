@@ -275,7 +275,7 @@ class _AddUpiScreenState extends State<AddUpiScreen> {
                   if (isSuccess) {
                     // OTP verified, now save UPI payment method
                     // First get payment modes to find UPI mode ID
-                    final modesResponse = await P2PService.getPaymentModes(widget.country);
+                    final modesResponse = await P2PService.getPaymentModes(country: widget.country);
                     String? upiModeId;
                     if (modesResponse != null && modesResponse['data'] != null) {
                       final modes = modesResponse['data'] as List<dynamic>;
