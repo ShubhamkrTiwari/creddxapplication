@@ -184,42 +184,6 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Max Withdraw Omega Display
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.orange.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: Colors.orange.withOpacity(0.3),
-                width: 1,
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Max Withdraw (Omega)',
-                  style: TextStyle(
-                    color: Colors.orange.withOpacity(0.8),
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${_maxWithdrawOmega.toStringAsFixed(2)} USDT',
-                  style: const TextStyle(
-                    color: Colors.orange,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-
           // Header
           Row(
             children: [
@@ -293,7 +257,7 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${_maxWithdrawOmega.toStringAsFixed(2)} USDT',
+                  '${_totalInvested.toStringAsFixed(2)} USDT',
                   style: const TextStyle(
                     color: Colors.orange,
                     fontSize: 16,

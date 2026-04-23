@@ -160,6 +160,18 @@ class SocketService {
     debugPrint('SocketService: Subscribed to $symbol');
   }
 
+  // Request wallet balance from socket
+  static void requestWalletBalance() {
+    _socket?.emit('get_wallet_balance');
+    debugPrint('SocketService: Requested wallet balance');
+  }
+
+  // Request wallet summary from socket
+  static void requestWalletSummary() {
+    _socket?.emit('get_wallet_summary');
+    debugPrint('SocketService: Requested wallet summary');
+  }
+
   static void _reconnect() {
     _socket = null;
     _isConnecting = false;

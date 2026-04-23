@@ -139,7 +139,8 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
   bool _canInvest() {
     // 7. Invest Button Conditions
     if (_btnDisable) return false;
-    if (_subscriptionPlan == null) return false;
+    // Allow button if no subscription (to navigate to subscribe) OR if has valid subscription
+    if (_subscriptionPlan == null) return true;
     if (_walletBalance <= 0) return false;
     if (!widget.isAvailable) return false;
     
@@ -345,7 +346,8 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
       Navigator.push(
         context,
         MaterialPageRoute(builder: (context) => const PackageProgramScreen()),
-      ).then((_) {
+      ).then((result) {
+        // Refresh data regardless of result to get updated subscription status
         _fetchUserData();
       });
     }

@@ -251,18 +251,27 @@ class AuthService {
         'deviceName': getDeviceName(),
       };
 
+      debugPrint('=== LOGIN SEND OTP PAYLOAD ===');
+      debugPrint(jsonEncode(payload));
+
       final response = await http.post(
         Uri.parse('$_baseUrl/user/v1/auth/login/send-otp'),
         headers: _getHeaders(),
         body: jsonEncode(payload),
-      );
+      ).timeout(const Duration(seconds: 30));
+
+      debugPrint('Login Send OTP Response: ${response.statusCode} - ${response.body}');
+
       if (response.statusCode == 200) {
         return {'success': true, 'message': 'OTP Sent'};
       } else {
         final errorData = json.decode(response.body);
         return {'success': false, 'message': errorData['message'] ?? 'Failed to send OTP'};
       }
-    } catch (e) { return {'success': false, 'message': 'Network error'}; }
+    } catch (e) {
+      debugPrint('Login Send OTP Error: $e');
+      return {'success': false, 'message': 'Network error: $e'};
+    }
   }
 
   static Future<Map<String, dynamic>> signupSendOtp(String email) async {
@@ -278,18 +287,28 @@ class AuthService {
         'deviceName': getDeviceName(),
       };
 
+      debugPrint('=== SIGNUP SEND OTP PAYLOAD ===');
+      debugPrint(jsonEncode(payload));
+
+      // Use signup-send-otp endpoint
       final response = await http.post(
         Uri.parse('$_baseUrl/user/v1/auth/signup-send-otp'),
         headers: _getHeaders(),
         body: jsonEncode(payload),
-      );
+      ).timeout(const Duration(seconds: 30));
+
+      debugPrint('Signup Send OTP Response: ${response.statusCode} - ${response.body}');
+
       if (response.statusCode == 200) {
         return {'success': true, 'message': 'OTP Sent'};
       } else {
         final errorData = json.decode(response.body);
         return {'success': false, 'message': errorData['message'] ?? 'Failed to send OTP'};
       }
-    } catch (e) { return {'success': false, 'message': 'Network error'}; }
+    } catch (e) {
+      debugPrint('Signup Send OTP Error: $e');
+      return {'success': false, 'message': 'Network error: $e'};
+    }
   }
 
   static Future<Map<String, dynamic>> signup(String email, {String? referralCode}) async {
@@ -336,11 +355,16 @@ class AuthService {
         'deviceName': getDeviceName(),
       };
 
+      debugPrint('=== RESEND OTP PAYLOAD ===');
+      debugPrint(jsonEncode(payload));
+
       final response = await http.post(
         Uri.parse('$_baseUrl/user/v1/auth/login/send-otp'),
         headers: _getHeaders(),
         body: jsonEncode(payload),
-      );
+      ).timeout(const Duration(seconds: 30));
+
+      debugPrint('Resend OTP Response: ${response.statusCode} - ${response.body}');
 
       if (response.statusCode == 200) {
         return {'success': true, 'message': 'OTP resent successfully'};
@@ -349,7 +373,8 @@ class AuthService {
         return {'success': false, 'message': errorData['message'] ?? 'Failed to resend OTP'};
       }
     } catch (e) {
-      return {'success': false, 'message': 'Network error'};
+      debugPrint('Resend OTP Error: $e');
+      return {'success': false, 'message': 'Network error: $e'};
     }
   }
 
@@ -489,23 +514,36 @@ class AuthService {
       final payload = {
         'email': email.trim(),
         'otp': otp.trim(),
-        if (referralCode != null) 'referralCode': referralCode,
+        if (referralCode != null) 'referral_code': referralCode,
         'os': osInt,
         'deviceOs': osInt,
         'deviceUuid': deviceUuid,
         'deviceName': getDeviceName(),
       };
 
+      debugPrint('=== COMPLETE SIGNUP WITH OTP PAYLOAD ===');
+      debugPrint(jsonEncode(payload));
+
+      // Use signup endpoint with OTP
       final response = await http.post(
-        Uri.parse('$_baseUrl/user/v1/auth/complete-signup'),
+        Uri.parse('$_baseUrl/user/v1/auth/signup'),
         headers: _getHeaders(),
         body: jsonEncode(payload),
-      );
+      ).timeout(const Duration(seconds: 30));
 
-      if (response.statusCode == 200) {
+      debugPrint('Complete Signup Response: ${response.statusCode} - ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
         final data = json.decode(response.body);
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString(_tokenKey, data['authToken'] ?? data['token'] ?? '');
+        
+        final token = data['authToken'] ?? data['token'] ?? '';
+        if (token.isEmpty) {
+          debugPrint('Token is empty or missing from signup response');
+          return {'success': false, 'message': 'Token not received from server'};
+        }
+        
+        await prefs.setString(_tokenKey, token);
         
         // Store user ID as String
         if (data['user'] != null) {
@@ -514,6 +552,9 @@ class AuthService {
             await prefs.setString('user_id', userId.toString());
           }
         }
+        
+        // Save user data
+        await prefs.setString(_userKey, json.encode(data['user'] ?? {}));
         
         // Log signup notification
         await NotificationService.addNotification(
@@ -527,7 +568,10 @@ class AuthService {
         final errorData = json.decode(response.body);
         return {'success': false, 'message': errorData['message'] ?? 'Signup failed'};
       }
-    } catch (e) { return {'success': false, 'message': 'Network error'}; }
+    } catch (e) {
+      debugPrint('Complete Signup Error: $e');
+      return {'success': false, 'message': 'Network error: $e'};
+    }
   }
 
   // Check if user is logged in

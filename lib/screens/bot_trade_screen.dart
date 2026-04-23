@@ -21,7 +21,7 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
   String _selectedTimeframe = '15 Min';
   
   // User subscription data
-  Map<String, dynamic>? _userSubscription;
+  String? _subscriptionPlan;
   int _subscriptionDaysLeft = 0;
   bool _isLoadingSubscription = true;
 
@@ -102,31 +102,47 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
   
   Future<void> _fetchUserSubscription() async {
     try {
-      final response = await BotService.getUserSubscription();
-      if (response['success'] == true && response['subscription'] != null) {
-        final subscription = response['subscription'];
-        final startDate = DateTime.tryParse(subscription['startDate'] ?? '');
-        final duration = subscription['duration'] ?? 365;
+      final response = await BotService.getUserData();
+      if (response['success'] == true && response['data'] != null) {
+        final data = response['data'];
+        final subscription = data['subscription'];
         
-        if (startDate != null) {
-          final endDate = startDate.add(Duration(days: duration));
+        if (subscription != null && subscription['endDate'] != null) {
+          final endDate = DateTime.tryParse(subscription['endDate'].toString());
           final now = DateTime.now();
-          final daysLeft = endDate.difference(now).inDays;
           
+          if (endDate != null) {
+            final daysLeft = endDate.difference(now).inDays;
+            
+            setState(() {
+              _subscriptionPlan = daysLeft > 0 ? subscription['plan']?.toString() : null;
+              _subscriptionDaysLeft = daysLeft > 0 ? daysLeft : 0;
+              _isLoadingSubscription = false;
+            });
+          } else {
+            setState(() {
+              _subscriptionPlan = null;
+              _isLoadingSubscription = false;
+            });
+          }
+        } else {
           setState(() {
-            _userSubscription = subscription;
-            _subscriptionDaysLeft = daysLeft > 0 ? daysLeft : 0;
+            _subscriptionPlan = null;
             _isLoadingSubscription = false;
           });
-        } else {
-          setState(() => _isLoadingSubscription = false);
         }
       } else {
-        setState(() => _isLoadingSubscription = false);
+        setState(() {
+          _subscriptionPlan = null;
+          _isLoadingSubscription = false;
+        });
       }
     } catch (e) {
       debugPrint('Error fetching subscription: $e');
-      setState(() => _isLoadingSubscription = false);
+      setState(() {
+        _subscriptionPlan = null;
+        _isLoadingSubscription = false;
+      });
     }
   }
 
@@ -278,7 +294,7 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Subscription Package Card
-            if (_userSubscription != null && _subscriptionDaysLeft > 0) ...[
+            if (_subscriptionPlan != null && _subscriptionDaysLeft > 0) ...[
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
@@ -323,7 +339,7 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      _userSubscription?['plan'] ?? 'Annual Plan',
+                      _subscriptionPlan ?? 'Annual Plan',
                       style: const TextStyle(
                         color: Colors.black,
                         fontSize: 22,
@@ -332,7 +348,7 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Price: \$${_userSubscription?['price']?.toString() ?? '25.00'}',
+                      'Price: \$25.00',
                       style: TextStyle(
                         color: Colors.black.withOpacity(0.7),
                         fontSize: 14,
@@ -809,14 +825,17 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
                 ElevatedButton(
                   onPressed: () {
                     // Check if user has active subscription
-                    if (_userSubscription != null && _subscriptionDaysLeft > 0) {
+                    if (_subscriptionPlan != null && _subscriptionDaysLeft > 0) {
                       // User is subscribed, navigate directly to Algos screen
                       Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (context) => const BotAlgorithmScreen()
                         )
-                      ).then((_) => setState(() {}));
+                      ).then((_) {
+                        setState(() {});
+                        _fetchUserSubscription();
+                      });
                     } else {
                       // Navigate to details screen for subscription
                       Navigator.push(
@@ -824,7 +843,10 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
                         MaterialPageRoute(
                           builder: (context) => BotTradeDetailScreen(name: name, multiplier: multiplier)
                         )
-                      ).then((_) => setState(() {}));
+                      ).then((_) {
+                        setState(() {});
+                        _fetchUserSubscription();
+                      });
                     }
                   },
                   style: ElevatedButton.styleFrom(

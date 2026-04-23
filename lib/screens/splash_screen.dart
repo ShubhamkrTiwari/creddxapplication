@@ -74,7 +74,12 @@ class _SplashScreenState extends State<SplashScreen>
     final bool isLoggedIn = results[0] as bool;
 
     if (isLoggedIn) {
+      debugPrint('SplashScreen: User is logged in, connecting to websocket...');
+      debugPrint('Socket URL: ${SocketService.isConnected ? "Already connected" : "Connecting..."}');
       unawaited(SocketService.connect());
+      debugPrint('SplashScreen: WebSocket connection initiated');
+    } else {
+      debugPrint('SplashScreen: User not logged in, skipping websocket connection');
     }
 
     if (mounted) {

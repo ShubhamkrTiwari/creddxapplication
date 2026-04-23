@@ -442,7 +442,7 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(context); // Close dialog
-              Navigator.pop(context); // Go back to previous screen
+              Navigator.pop(context, true); // Go back to previous screen with success
             },
             child: const Text(
               'OK',

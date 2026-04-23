@@ -71,22 +71,47 @@ class _ConversionScreenState extends State<ConversionScreen> {
   Future<void> _initializeAndFetch() async {
     debugPrint('=== CONVERSION SCREEN INIT ===');
     
-    // Step 1: Initialize UnifiedWalletService (sets up socket listeners)
-    await unified.UnifiedWalletService.initialize();
-    
-    // Step 2: Connect wallet socket and emit join (AFTER listeners are attached)
-    debugPrint('Connecting wallet socket...');
+    // Step 1: Websocket connect
+    debugPrint('Step 1: Connecting to websocket...');
     await SocketService.connect();
-    debugPrint('Socket connected: ${SocketService.isConnected}');
+    debugPrint('✅ Wallet Connected: ${SocketService.isConnected}');
     
-    // Step 3: Subscribe to balance updates
+    // Step 2: Connect wallet (emit join event happens automatically on connect in SocketService)
+    debugPrint('Step 2: Join event emitted (handled by SocketService onConnect)');
+    
+    // Step 3: Wallet summary update socket listener
+    debugPrint('Step 3: Setting up wallet summary update socket listener...');
     _subscribeToBalanceUpdates();
     
-    // Step 4: Fetch INR balance directly from API FIRST (from mainBalance.INR)
+    // Step 4: Initialize UnifiedWalletService (sets up additional socket listeners)
+    await unified.UnifiedWalletService.initialize();
+    
+    // Step 5: Request wallet balance from socket
+    debugPrint('Step 5: Requesting wallet balance from socket...');
+    SocketService.requestWalletBalance();
+    SocketService.requestWalletSummary();
+    
+    // Step 6: Fetch INR balance directly from API FIRST (from mainBalance.INR)
     await _fetchInrDirectly();
     
-    // Step 5: Fetch all other balances
+    // Step 7: Fetch all other balances
     await _fetchBalances();
+    
+    // Step 8: Wait a moment for socket to receive initial balance update
+    await Future.delayed(const Duration(seconds: 2));
+    
+    // Step 9: If INR is still 0, try fetching from socket cache
+    if (_inrBalance == 0) {
+      debugPrint('INR still 0 after initial fetch, trying socket cache...');
+      final socketINR = unified.UnifiedWalletService.totalINRBalance;
+      if (socketINR > 0 && mounted) {
+        setState(() {
+          _inrBalance = socketINR;
+          _mainINR = unified.UnifiedWalletService.mainINRBalance;
+        });
+        debugPrint('✅ INR updated from socket cache: $_inrBalance');
+      }
+    }
   }
 
   // Direct INR balance fetch from API
@@ -96,59 +121,107 @@ class _ConversionScreenState extends State<ConversionScreen> {
       final result = await WalletService.getINRBalance();
       debugPrint('INR Balance API Result: $result');
       debugPrint('Success: ${result['success']}, INR: ${result['inrBalance']}, Source: ${result['source']}');
+      debugPrint('Result keys: ${result.keys.toList()}');
       
       if (result['success'] == true && result['inrBalance'] != null) {
-        final inr = result['inrBalance'] as double;
-        debugPrint('Parsed INR value: $inr, mounted: $mounted');
+        final inr = result['inrBalance'];
+        debugPrint('Parsed INR value: $inr (type: ${inr.runtimeType}), mounted: $mounted');
+        
+        double inrDouble = 0.0;
+        if (inr is num) {
+          inrDouble = inr.toDouble();
+        } else if (inr is String) {
+          inrDouble = double.tryParse(inr) ?? 0.0;
+        }
+        
+        debugPrint('Final INR double value: $inrDouble');
+        
         if (mounted) {
           setState(() {
-            _inrBalance = inr;
-            _mainINR = inr;
+            _inrBalance = inrDouble;
+            _mainINR = inrDouble;
           });
-          debugPrint('INR Balance updated from API: $inr');
+          debugPrint('✅ INR Balance updated from API: $_inrBalance');
         }
       } else {
-        debugPrint('INR Balance fetch failed or returned null: ${result['error']}');
+        debugPrint('❌ INR Balance fetch failed or returned null');
+        debugPrint('Error: ${result['error']}');
+        // Fallback: Try to get INR from UnifiedWalletService totalINRBalance
+        final fallbackINR = unified.UnifiedWalletService.totalINRBalance;
+        if (fallbackINR > 0 && mounted) {
+          setState(() {
+            _inrBalance = fallbackINR;
+            _mainINR = fallbackINR;
+          });
+          debugPrint('✅ INR Balance updated from UnifiedWalletService fallback: $_inrBalance');
+        }
       }
     } catch (e, stackTrace) {
-      debugPrint('Error fetching INR balance directly: $e');
+      debugPrint('❌ Error fetching INR balance directly: $e');
       debugPrint('Stack trace: $stackTrace');
+      // Fallback on error
+      final fallbackINR = unified.UnifiedWalletService.totalINRBalance;
+      if (fallbackINR > 0 && mounted) {
+        setState(() {
+          _inrBalance = fallbackINR;
+          _mainINR = fallbackINR;
+        });
+        debugPrint('✅ INR Balance updated from UnifiedWalletService fallback on error: $_inrBalance');
+      }
     }
   }
 
   Future<void> _fetchInrDirectly() async {
     try {
       debugPrint('=== DIRECT INR FETCH ===');
-      final result = await WalletService.getAllWalletBalances();
-      debugPrint('Wallet API Result: $result');
+      // Use WalletService.getINRBalance which has better fallback logic including INR holding API
+      final result = await WalletService.getINRBalance();
+      debugPrint('INR Balance Result: $result');
+      debugPrint('Success: ${result['success']}, INR: ${result['inrBalance']}, Source: ${result['source']}');
       
-      if (result['success'] == true && result['data'] != null) {
-        final data = result['data'];
-        debugPrint('Wallet Data: $data');
+      if (result['success'] == true && result['inrBalance'] != null) {
+        final inr = result['inrBalance'];
+        debugPrint('INR value: $inr (type: ${inr.runtimeType})');
         
-        // Check mainBalance
-        final mainBalance = data['mainBalance'] ?? data['main_balance'];
-        debugPrint('mainBalance: $mainBalance');
+        double inrDouble = 0.0;
+        if (inr is num) {
+          inrDouble = inr.toDouble();
+        } else if (inr is String) {
+          inrDouble = double.tryParse(inr) ?? 0.0;
+        }
         
-        if (mainBalance != null && mainBalance is Map) {
-          final inrValue = mainBalance['INR'] ?? mainBalance['inr'];
-          debugPrint('INR Value: $inrValue (type: ${inrValue?.runtimeType})');
-          
-          if (inrValue != null) {
-            double inr = 0.0;
-            if (inrValue is double) inr = inrValue;
-            else if (inrValue is int) inr = inrValue.toDouble();
-            else if (inrValue is String) inr = double.tryParse(inrValue) ?? 0.0;
-            
-            debugPrint('Parsed INR: $inr');
-            if (mounted) {
-              setState(() => _inrBalance = inr);
-            }
-          }
+        debugPrint('Parsed INR: $inrDouble');
+        if (mounted) {
+          setState(() {
+            _inrBalance = inrDouble;
+            _mainINR = inrDouble;
+          });
+          debugPrint('✅ INR updated from direct fetch: $_inrBalance (source: ${result['source']})');
+        }
+      } else {
+        debugPrint('❌ INR fetch failed or returned null');
+        debugPrint('Error: ${result['error']}');
+        // Fallback to UnifiedWalletService
+        final fallbackINR = unified.UnifiedWalletService.totalINRBalance;
+        if (fallbackINR > 0 && mounted) {
+          setState(() {
+            _inrBalance = fallbackINR;
+            _mainINR = fallbackINR;
+          });
+          debugPrint('✅ INR updated from UnifiedWalletService fallback: $_inrBalance');
         }
       }
     } catch (e) {
-      debugPrint('Error in direct INR fetch: $e');
+      debugPrint('❌ Error in direct INR fetch: $e');
+      // Fallback to UnifiedWalletService on error
+      final fallbackINR = unified.UnifiedWalletService.totalINRBalance;
+      if (fallbackINR > 0 && mounted) {
+        setState(() {
+          _inrBalance = fallbackINR;
+          _mainINR = fallbackINR;
+        });
+        debugPrint('✅ INR updated from UnifiedWalletService fallback on error: $_inrBalance');
+      }
     }
   }
   
@@ -157,42 +230,84 @@ class _ConversionScreenState extends State<ConversionScreen> {
     _balanceSubscription = unified.UnifiedWalletService.walletBalanceStream.listen((walletBalance) {
       if (mounted) {
         setState(() {
-          if (walletBalance != null && walletBalance.mainBalance != null) {
-            final inrValue = walletBalance.mainBalance!['INR'] ?? walletBalance.mainBalance!['inr'];
-            if (inrValue is num) {
-              _inrBalance = inrValue.toDouble();
-              _mainINR = inrValue.toDouble();
-            }
-          }
+          // Use totalINRBalance which includes INR from all sources (mainBalance + INR holding API + spot + bot)
+          _inrBalance = unified.UnifiedWalletService.totalINRBalance;
+          _mainINR = unified.UnifiedWalletService.mainINRBalance;
           _usdtBalance = unified.UnifiedWalletService.mainUSDTBalance;
           _totalUsdtBalance = unified.UnifiedWalletService.totalUSDTBalance;
         });
+        debugPrint('ConversionScreen: INR updated from UnifiedWalletService stream: $_inrBalance');
       }
     });
 
-    // Also subscribe directly to socket for real-time INR balance updates
+    // Subscribe to specific INR balance update events from wallet socket
     _directSocketSubscription = SocketService.balanceStream.listen((data) {
-      debugPrint('ConversionScreen: Direct socket update: $data');
-      final eventType = data['type'];
-      final balanceData = data['data'];
-
-      if (balanceData != null && balanceData is Map) {
-        // Extract INR from mainBalance in socket data
-        final mainBalance = balanceData['mainBalance'] ?? balanceData['main'];
-        if (mainBalance != null && mainBalance is Map) {
-          final inrValue = mainBalance['INR'] ?? mainBalance['inr'];
-          if (inrValue != null && mounted) {
-            setState(() {
+      debugPrint('=== CONVERSION SCREEN SOCKET UPDATE ===');
+      debugPrint('Event type: ${data['type']}');
+      debugPrint('Full socket data: $data');
+      
+      // Check for INR-specific balance updates
+      if (data['type'] == 'balance_update' || data['type'] == 'wallet_summary' || data['type'] == 'wallet_summary_update') {
+        final balanceData = data['data'];
+        
+        if (balanceData != null && balanceData is Map) {
+          debugPrint('Balance data keys: ${balanceData.keys.toList()}');
+          
+          // Extract INR from mainBalance
+          final mainBalance = balanceData['mainBalance'] ?? balanceData['main'];
+          if (mainBalance != null && mainBalance is Map) {
+            final inrValue = mainBalance['INR'] ?? mainBalance['inr'] ?? mainBalance['Inr'];
+            if (inrValue != null && mounted) {
+              double inrDouble = 0.0;
               if (inrValue is num) {
-                _inrBalance = inrValue.toDouble();
-                _mainINR = inrValue.toDouble();
+                inrDouble = inrValue.toDouble();
               } else if (inrValue is String) {
-                _inrBalance = double.tryParse(inrValue) ?? _inrBalance;
-                _mainINR = _inrBalance;
+                inrDouble = double.tryParse(inrValue) ?? 0.0;
+              } else if (inrValue is Map) {
+                final nestedInr = inrValue['total'] ?? inrValue['balance'] ?? inrValue['available'] ?? inrValue['free'];
+                inrDouble = double.tryParse(nestedInr?.toString() ?? '0') ?? 0.0;
               }
-              debugPrint('ConversionScreen: INR updated from socket: $_inrBalance');
-            });
+              
+              if (inrDouble > 0) {
+                setState(() {
+                  _inrBalance = inrDouble;
+                  _mainINR = inrDouble;
+                });
+                debugPrint('✅ ConversionScreen: INR updated from socket mainBalance: $_inrBalance');
+              }
+            }
           }
+          
+          // Also check for INR in holding/balance fields
+          final inrHolding = balanceData['inrHolding'] ?? balanceData['inr'] ?? balanceData['INR'];
+          if (inrHolding != null && mounted) {
+            double inrDouble = 0.0;
+            if (inrHolding is num) {
+              inrDouble = inrHolding.toDouble();
+            } else if (inrHolding is String) {
+              inrDouble = double.tryParse(inrHolding) ?? 0.0;
+            }
+            
+            if (inrDouble > 0) {
+              setState(() {
+                _inrBalance = inrDouble;
+                _mainINR = inrDouble;
+              });
+              debugPrint('✅ ConversionScreen: INR updated from socket holding: $_inrBalance');
+            }
+          }
+        }
+      }
+      
+      // Fallback: Always check UnifiedWalletService totalINRBalance on any socket update
+      if (mounted) {
+        final fallbackINR = unified.UnifiedWalletService.totalINRBalance;
+        if (fallbackINR > 0 && fallbackINR != _inrBalance) {
+          setState(() {
+            _inrBalance = fallbackINR;
+            _mainINR = unified.UnifiedWalletService.mainINRBalance;
+          });
+          debugPrint('✅ ConversionScreen: INR updated from UnifiedWalletService fallback: $_inrBalance');
         }
       }
     });
@@ -205,6 +320,11 @@ class _ConversionScreenState extends State<ConversionScreen> {
         _inrBalance = inrValue.toDouble();
         _mainINR = inrValue.toDouble();
       }
+    }
+    // Fallback to totalINRBalance if mainBalance doesn't have INR
+    if (_inrBalance == 0) {
+      _inrBalance = unified.UnifiedWalletService.totalINRBalance;
+      _mainINR = unified.UnifiedWalletService.mainINRBalance;
     }
     debugPrint('ConversionScreen: Initial main INR: $_inrBalance');
   }
@@ -245,7 +365,7 @@ class _ConversionScreenState extends State<ConversionScreen> {
     try {
       debugPrint('=== Fetching balances via unified.UnifiedWalletService ===');
       
-      // First, refresh INR balance directly from API (from mainBalance.INR)
+      // First, refresh INR balance directly from API using WalletService.getINRBalance
       await _fetchInrDirectly();
       
       // Use unified.UnifiedWalletService to refresh all balances
@@ -253,17 +373,19 @@ class _ConversionScreenState extends State<ConversionScreen> {
       
       if (mounted) {
         setState(() {
-          // Use directly fetched INR, fallback to UnifiedWalletService
+          // Use directly fetched INR, but also check UnifiedWalletService totalINRBalance
+          // which includes INR from mainBalance + INR holding API + spot + bot
           final serviceINR = unified.UnifiedWalletService.totalINRBalance;
-          if (_inrBalance == 0 && serviceINR > 0) {
+          if (serviceINR > 0) {
             _inrBalance = serviceINR;
-            _mainINR = serviceINR;
+            _mainINR = unified.UnifiedWalletService.mainINRBalance;
           }
           _usdtBalance = unified.UnifiedWalletService.mainUSDTBalance;
           _totalUsdtBalance = unified.UnifiedWalletService.totalUSDTBalance;
           
           debugPrint('=== FINAL BALANCES UPDATED ===');
-          debugPrint('INR Balance: $_inrBalance');
+          debugPrint('INR Balance: $_inrBalance (from totalINRBalance)');
+          debugPrint('Main INR: $_mainINR (from mainINRBalance)');
           debugPrint('USDT Balance: $_usdtBalance');
           debugPrint('Total USDT Balance: $_totalUsdtBalance');
         });
@@ -482,6 +604,7 @@ class _ConversionScreenState extends State<ConversionScreen> {
           'use_fixed_rate': true, // Use fixed rates
           'inr_to_usdt_rate': _inrToUsdtRate, // 92
           'usdt_to_inr_rate': _usdtToInrRate, // 90
+          'fee': 0.0, // Conversion fee (0% as shown in UI)
         }),
       ).timeout(const Duration(seconds: 30));
       
@@ -528,6 +651,8 @@ class _ConversionScreenState extends State<ConversionScreen> {
         errorMessage = 'Authentication failed. Please login again.';
       } else if (e.toString().contains('403')) {
         errorMessage = 'Permission denied. Please contact support.';
+      } else if (e.toString().contains('404')) {
+        errorMessage = 'Conversion service unavailable. Please try again later.';
       } else if (e.toString().contains('500')) {
         errorMessage = 'Server error. Please try again later.';
       }

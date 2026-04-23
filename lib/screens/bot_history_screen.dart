@@ -327,7 +327,7 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
                 ],
               ),
               Text(
-                trade.formattedTime,
+                trade.formattedRawTime,
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.35),
                   fontSize: 12,

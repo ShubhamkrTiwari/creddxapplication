@@ -123,13 +123,20 @@ class WalletService {
         debugPrint('mainBalance found: $mainBalance, type: ${mainBalance?.runtimeType}');
         if (mainBalance != null && mainBalance is Map) {
           debugPrint('mainBalance keys: ${mainBalance.keys.toList()}');
-          final inrValue = mainBalance['INR'] ?? mainBalance['inr'] ?? mainBalance['Inr'];
+          debugPrint('mainBalance full content: $mainBalance');
+          
+          // Try multiple possible INR field names
+          final inrValue = mainBalance['INR'] ?? mainBalance['inr'] ?? mainBalance['Inr'] ?? mainBalance['inrBalance'];
           debugPrint('inrValue found: $inrValue, type: ${inrValue?.runtimeType}');
+          
           if (inrValue != null) {
             double inr = 0.0;
             if (inrValue is num) inr = inrValue.toDouble();
             else if (inrValue is String) inr = double.tryParse(inrValue) ?? 0.0;
             else if (inrValue is Map) {
+              debugPrint('INR is a Map, extracting from nested fields');
+              debugPrint('INR Map keys: ${inrValue.keys.toList()}');
+              debugPrint('INR Map content: $inrValue');
               inr = double.tryParse(
                 inrValue['total']?.toString() ?? 
                 inrValue['balance']?.toString() ?? 
@@ -139,8 +146,16 @@ class WalletService {
             }
             
             debugPrint('INR Balance fetched: $inr');
-            return {'success': true, 'inrBalance': inr, 'source': 'mainBalance'};
+            if (inr > 0) {
+              return {'success': true, 'inrBalance': inr, 'source': 'mainBalance'};
+            } else {
+              debugPrint('INR is 0 in mainBalance, checking other wallet types...');
+            }
+          } else {
+            debugPrint('INR field not found in mainBalance');
           }
+        } else {
+          debugPrint('mainBalance is null or not a Map');
         }
         
         // Try to find INR in other wallet types
@@ -148,6 +163,7 @@ class WalletService {
         for (final type in walletTypes) {
           final wallet = data[type];
           if (wallet != null && wallet is Map) {
+            debugPrint('Checking $type wallet: ${wallet.keys.toList()}');
             final balances = wallet['balances'];
             if (balances is List) {
               for (final b in balances) {
@@ -159,7 +175,9 @@ class WalletService {
                     b['available']?.toString() ?? '0'
                   ) ?? 0.0;
                   debugPrint('INR Balance found in $type wallet: $inr');
-                  return {'success': true, 'inrBalance': inr, 'source': type};
+                  if (inr > 0) {
+                    return {'success': true, 'inrBalance': inr, 'source': type};
+                  }
                 }
               }
             }
@@ -168,10 +186,14 @@ class WalletService {
       }
       
       // Fallback to overview API
+      debugPrint('Trying overview API fallback...');
       final response = await http.get(
         Uri.parse('$baseUrl/wallet/overview/inr-holding'),
         headers: await _getHeaders(),
       );
+      
+      debugPrint('Overview API response: ${response.statusCode}');
+      debugPrint('Overview API body: ${response.body}');
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -184,6 +206,7 @@ class WalletService {
         }
       }
       
+      debugPrint('❌ INR balance not found in any source');
       return {'success': false, 'error': 'INR balance not found'};
     } catch (e) {
       debugPrint('Error fetching INR balance: $e');

@@ -1833,6 +1833,7 @@ class BotTrade {
   final double? userSimulatedMargin;
   final double? uplineShare;
   final List<Map<String, dynamic>>? distribution;
+  final String? rawTime; // Store raw time string from API
 
   BotTrade({
     required this.id,
@@ -1853,6 +1854,7 @@ class BotTrade {
     this.userSimulatedMargin,
     this.uplineShare,
     this.distribution,
+    this.rawTime,
   });
 
   factory BotTrade.fromJson(Map<String, dynamic> json, {String? strategy}) {
@@ -1878,6 +1880,7 @@ class BotTrade {
       
       // Parse time from API with better error handling
       DateTime? parsedDate;
+      String? rawTimeString;
       
       // Try different possible field names for time
       final timeFields = ['time', 'date', 'timestamp', 'created_at', 'updatedAt', 'updateTime'];
@@ -1886,10 +1889,12 @@ class BotTrade {
       for (final field in timeFields) {
         final timeString = json[field]?.toString();
         if (timeString != null && timeString.isNotEmpty) {
+          // Parse as UTC to preserve exact time from API
           parsedDate = DateTime.tryParse(timeString);
           if (parsedDate != null) {
             usedField = field;
-            debugPrint('Parsing $field: "$timeString" -> $parsedDate');
+            rawTimeString = timeString; // Store raw time string
+            debugPrint('Parsing $field: "$timeString" -> $parsedDate (UTC)');
             break;
           }
         }
@@ -1922,6 +1927,7 @@ class BotTrade {
         distribution: json['distribution'] != null
             ? List<Map<String, dynamic>>.from(json['distribution'])
             : null,
+        rawTime: rawTimeString,
       );
     } else {
       // Legacy API format (fallback)
@@ -1962,8 +1968,34 @@ class BotTrade {
   }
 
   String get formattedTime {
-    // Format: DD MMM YYYY, HH:MM
-    return '${date.day.toString().padLeft(2, '0')} ${_getMonthName(date.month)} ${date.year}, ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    // Use exact UTC time from API without any conversion
+    // Format: DD MMM YYYY, HH:MM:SS
+    return '${date.day.toString().padLeft(2, '0')} ${_getMonthName(date.month)} ${date.year}, ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}:${date.second.toString().padLeft(2, '0')}';
+  }
+
+  String get formattedTimeUTC {
+    // Convert to UTC and get exact time from API
+    final utcDate = date.toUtc();
+    // Format: DD MMM YYYY, HH:MM:SS
+    return '${utcDate.day.toString().padLeft(2, '0')} ${_getMonthName(utcDate.month)} ${utcDate.year}, ${utcDate.hour.toString().padLeft(2, '0')}:${utcDate.minute.toString().padLeft(2, '0')}:${utcDate.second.toString().padLeft(2, '0')}';
+  }
+
+  String get formattedRawTime {
+    // Return raw time string exactly as received from API with date and time
+    if (rawTime != null && rawTime!.isNotEmpty) {
+      // Format: YYYY-MM-DD HH:MM:SS
+      if (rawTime!.contains('T')) {
+        final parts = rawTime!.split('T');
+        if (parts.length > 1) {
+          final datePart = parts[0]; // YYYY-MM-DD
+          final timePart = parts[1].split('.')[0]; // HH:MM:SS (remove milliseconds and Z)
+          return '$datePart $timePart';
+        }
+      }
+      return rawTime!;
+    }
+    // Fallback to formatted time
+    return formattedTimeUTC;
   }
 
   String _getMonthName(int month) {

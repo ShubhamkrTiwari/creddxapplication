@@ -15,6 +15,7 @@ import 'screens/p2p_user_profile_screen.dart';
 import '../services/wallet_service.dart';
 import '../services/user_service.dart';
 import '../services/unified_wallet_service.dart';
+import '../services/socket_service.dart';
 
 class MainNavigation extends StatefulWidget {
   final int initialIndex;
@@ -24,7 +25,7 @@ class MainNavigation extends StatefulWidget {
   State<MainNavigation> createState() => _MainNavigationState();
 }
 
-class _MainNavigationState extends State<MainNavigation> {
+class _MainNavigationState extends State<MainNavigation> with WidgetsBindingObserver {
   late int _selectedIndex;
   late final UserService _userService;
 
@@ -36,9 +37,17 @@ class _MainNavigationState extends State<MainNavigation> {
     _selectedIndex = widget.initialIndex;
     _userService = UserService();
     
-    // Initialize Unified Wallet Service early
+    // Add app lifecycle observer
+    WidgetsBinding.instance.addObserver(this);
+    
+    // Step 1: Initialize Unified Wallet Service early
+    debugPrint('MainNavigation: Initializing UnifiedWalletService...');
     UnifiedWalletService.initialize();
-
+    
+    // Step 2: Connect to websocket
+    debugPrint('MainNavigation: Connecting to websocket...');
+    _connectWebSocket();
+    
     _screens = [
       const HomeScreen(),
       const FuturesScreen(),
@@ -46,6 +55,37 @@ class _MainNavigationState extends State<MainNavigation> {
       const SpotScreen(),
       const WalletScreen(),
     ];
+  }
+  
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    debugPrint('MainNavigation: App lifecycle state changed to: $state');
+    switch (state) {
+      case AppLifecycleState.resumed:
+        debugPrint('MainNavigation: App resumed, reconnecting websocket...');
+        _connectWebSocket();
+        break;
+      case AppLifecycleState.paused:
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.detached:
+      case AppLifecycleState.hidden:
+        debugPrint('MainNavigation: App paused/inactive/detached/hidden');
+        break;
+    }
+  }
+  
+  Future<void> _connectWebSocket() async {
+    try {
+      if (!SocketService.isConnected) {
+        debugPrint('MainNavigation: Socket not connected, connecting now...');
+        await SocketService.connect();
+        debugPrint('MainNavigation: Socket connection status: ${SocketService.isConnected}');
+      } else {
+        debugPrint('MainNavigation: Socket already connected');
+      }
+    } catch (e) {
+      debugPrint('MainNavigation: Error connecting socket: $e');
+    }
   }
 
   Widget _buildP2PProfileScreen() {
@@ -77,6 +117,15 @@ class _MainNavigationState extends State<MainNavigation> {
     setState(() {
       _selectedIndex = index;
     });
+  }
+  
+  @override
+  void dispose() {
+    debugPrint('MainNavigation: Disposing, removing observer');
+    WidgetsBinding.instance.removeObserver(this);
+    // Don't disconnect socket here as it should stay connected for the entire app session
+    // Socket will be disconnected when app is fully terminated
+    super.dispose();
   }
 
   @override
