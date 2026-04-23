@@ -827,8 +827,8 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
     
     // Get the invested amount for this strategy from investments state
     final strategyKey = strategy['name']?.toString() ?? '';
-    final investedAmount = investments[strategyKey]?.toStringAsFixed(2) ?? '0.0';
-    final maxWithdraw = double.tryParse(investedAmount) ?? 0.0;
+    final investedAmount = investments[strategyKey]?.toString() ?? '0';
+    final maxWithdraw = investments[strategyKey] ?? 0.0;
     
     showDialog(
       context: context,
