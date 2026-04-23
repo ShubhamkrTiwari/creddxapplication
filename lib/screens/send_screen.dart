@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -6,6 +7,7 @@ import 'confirm_order_screen.dart';
 import 'otp_verification_screen.dart';
 import 'wallet_history_screen.dart';
 import '../services/wallet_service.dart';
+import '../services/socket_service.dart';
 
 class SendScreen extends StatefulWidget {
   const SendScreen({super.key});
@@ -29,6 +31,7 @@ class _SendScreenState extends State<SendScreen> with SingleTickerProviderStateM
   bool _isInternalLoading = false;
   double _availableBalance = 0.0;
   late TabController _tabController;
+  StreamSubscription? _balanceSubscription;
 
   @override
   void initState() {
@@ -36,6 +39,7 @@ class _SendScreenState extends State<SendScreen> with SingleTickerProviderStateM
     _tabController = TabController(length: 2, vsync: this);
     _fetchCryptoData();
     _fetchBalance();
+    _subscribeToBalance();
   }
 
   Future<void> _fetchBalance() async {
@@ -72,6 +76,42 @@ class _SendScreenState extends State<SendScreen> with SingleTickerProviderStateM
     } catch (e) {
       print('Error fetching balance: $e');
     }
+  }
+
+  void _subscribeToBalance() {
+    _balanceSubscription = SocketService.balanceStream.listen((data) {
+      if (mounted && (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary')) {
+        final balanceData = data['data'];
+        if (balanceData != null && balanceData is Map) {
+          double totalAvailable = 0.0;
+          
+          final walletTypeMap = {
+            'spot': 'spotBalance',
+            'main': 'mainBalance',
+            'p2p': 'p2pBalance',
+            'bot': 'botBalance',
+          };
+
+          for (String type in walletTypeMap.keys) {
+            final fieldName = walletTypeMap[type]!;
+            final walletData = balanceData[fieldName];
+
+            if (walletData != null) {
+              if (walletData is Map && walletData['USDT'] != null) {
+                totalAvailable += double.tryParse(walletData['USDT'].toString()) ?? 0.0;
+              } else if (walletData is num) {
+                totalAvailable += walletData.toDouble();
+              }
+            }
+          }
+
+          setState(() {
+            _availableBalance = totalAvailable;
+          });
+          debugPrint('Send Screen: Balance updated: $totalAvailable');
+        }
+      }
+    });
   }
 
   Future<void> _sendInternalTransfer() async {
@@ -598,6 +638,7 @@ class _SendScreenState extends State<SendScreen> with SingleTickerProviderStateM
   
   @override
   void dispose() {
+    _balanceSubscription?.cancel();
     _tabController.dispose();
     _recipientController.dispose();
     _amountController.dispose();

@@ -26,6 +26,7 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
   final NumberFormat _currencyFormat = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
   StreamSubscription? _walletSubscription;
   StreamSubscription? _coinSubscription;
+  StreamSubscription? _socketBalanceSubscription;
   
   bool _isLoading = true;
   String _walletAddress = 'Fetching...';
@@ -65,6 +66,7 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
     WidgetsBinding.instance.removeObserver(this);
     _walletSubscription?.cancel();
     _coinSubscription?.cancel();
+    _socketBalanceSubscription?.cancel();
     _tabController.dispose();
     super.dispose();
   }
@@ -87,7 +89,15 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
         });
       }
     });
-    
+
+    // Direct socket listener for wallet summary updates (including bot balance)
+    _socketBalanceSubscription = SocketService.balanceStream.listen((data) {
+      if (mounted && (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary')) {
+        debugPrint('Wallet Screen: Wallet summary update received');
+        _fetchWalletBalances();
+      }
+    });
+
     // Initial state
     _walletBalance = unified.UnifiedWalletService.walletBalance;
     _coinBalances = unified.UnifiedWalletService.coinBalance;

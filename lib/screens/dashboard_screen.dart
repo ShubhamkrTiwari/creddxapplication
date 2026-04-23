@@ -66,7 +66,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               break;
             }
           }
-          
+
           if (mounted && totalUsdt > 0) {
             setState(() {
               // We need to be careful here because _totalWalletBalance is across ALL wallets
@@ -80,6 +80,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
         } else {
           _fetchTotalBalance();
         }
+      } else if (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary') {
+        // Handle wallet summary updates for all wallets including bot
+        debugPrint('Dashboard: Wallet summary update received');
+        _fetchTotalBalance();
       }
     });
 

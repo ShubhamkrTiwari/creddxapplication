@@ -2,8 +2,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
 import '../services/auth_service.dart';
+import '../services/socket_service.dart';
 import 'bot_trade_detail_screen.dart';
 import 'login_screen.dart';
+import '../main_navigation.dart';
 
 class SubscriptionScreen extends StatefulWidget {
   const SubscriptionScreen({super.key});
@@ -56,6 +58,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   Timer? _countdownTimer;
   String _totalBalance = '0.00';
   bool _isLoadingBalance = false;
+  StreamSubscription? _balanceSubscription;
   
   // Selected plan for subscription - gets values from _packages
   Map<String, dynamic> get _selectedPackage => _packages.firstWhere(
@@ -71,6 +74,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     _loadUserSubscription();
     _loadBotBalance();
     _startCountdownTimer();
+    _subscribeToBotBalance();
   }
 
   Future<void> _loadBotBalance() async {
@@ -91,6 +95,29 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         setState(() => _isLoadingBalance = false);
       }
     }
+  }
+
+  void _subscribeToBotBalance() {
+    _balanceSubscription = SocketService.balanceStream.listen((data) {
+      if (mounted && (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary')) {
+        final balanceData = data['data'];
+        if (balanceData != null && balanceData is Map) {
+          final botBalance = balanceData['botBalance'] ?? balanceData['bot'];
+          if (botBalance != null) {
+            double newBalance = 0.0;
+            if (botBalance is num) {
+              newBalance = botBalance.toDouble();
+            } else if (botBalance is Map) {
+              newBalance = double.tryParse(botBalance['USDT']?.toString() ?? '0') ?? 0.0;
+            }
+            setState(() {
+              _totalBalance = newBalance.toStringAsFixed(2);
+            });
+            debugPrint('Subscription Screen: Bot balance updated: $newBalance');
+          }
+        }
+      }
+    });
   }
 
   Future<void> _loadUserSubscription() async {
@@ -178,6 +205,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   @override
   void dispose() {
     _countdownTimer?.cancel();
+    _balanceSubscription?.cancel();
     super.dispose();
   }
 
@@ -206,10 +234,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF0D0D0D),
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
+        automaticallyImplyLeading: false,
         title: const Text(
           'Package Program',
           style: TextStyle(
@@ -798,7 +823,11 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(context); // Close dialog
-              Navigator.pop(context); // Go back to previous screen
+              // Navigate to MainNavigation (root screen) and clear all previous screens
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (context) => const MainNavigation()),
+                (route) => false,
+              );
             },
             child: const Text(
               'OK',

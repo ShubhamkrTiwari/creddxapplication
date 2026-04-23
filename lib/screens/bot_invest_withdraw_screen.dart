@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
+import '../services/socket_service.dart';
+import 'dart:async';
 
 class BotInvestWithdrawScreen extends StatefulWidget {
   final Map<String, dynamic> strategy;
@@ -24,22 +26,50 @@ class _BotInvestWithdrawScreenState extends State<BotInvestWithdrawScreen>
   late TabController _tabController;
   final TextEditingController _amountController = TextEditingController();
   bool _isLoading = false;
+  double _liveBotBalance = 0.0;
+  StreamSubscription? _balanceSubscription;
 
   @override
   void initState() {
     super.initState();
+    _liveBotBalance = widget.walletBalance;
     _tabController = TabController(
       length: 2,
       vsync: this,
       initialIndex: widget.initialTabIndex,
     );
+    _subscribeToBotBalance();
   }
 
   @override
   void dispose() {
+    _balanceSubscription?.cancel();
     _tabController.dispose();
     _amountController.dispose();
     super.dispose();
+  }
+
+  void _subscribeToBotBalance() {
+    _balanceSubscription = SocketService.balanceStream.listen((data) {
+      if (mounted && (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary')) {
+        final balanceData = data['data'];
+        if (balanceData != null && balanceData is Map) {
+          final botBalance = balanceData['botBalance'] ?? balanceData['bot'];
+          if (botBalance != null) {
+            double newBalance = 0.0;
+            if (botBalance is num) {
+              newBalance = botBalance.toDouble();
+            } else if (botBalance is Map) {
+              newBalance = double.tryParse(botBalance['USDT']?.toString() ?? '0') ?? 0.0;
+            }
+            setState(() {
+              _liveBotBalance = newBalance;
+            });
+            debugPrint('Invest/Withdraw Screen: Bot balance updated: $newBalance');
+          }
+        }
+      }
+    });
   }
 
   Future<void> _handleInvest() async {
@@ -49,8 +79,8 @@ class _BotInvestWithdrawScreenState extends State<BotInvestWithdrawScreen>
       return;
     }
 
-    if (amount > widget.walletBalance) {
-      _showSnackBar('Maximum invest amount is ${widget.walletBalance.toStringAsFixed(2)} USDT', isError: true);
+    if (amount > _liveBotBalance) {
+      _showSnackBar('Maximum invest amount is ${_liveBotBalance.toStringAsFixed(2)} USDT', isError: true);
       return;
     }
 
@@ -66,6 +96,11 @@ class _BotInvestWithdrawScreenState extends State<BotInvestWithdrawScreen>
       );
 
       if (result['success'] == true) {
+        // Immediately update local balance for instant feedback
+        setState(() {
+          _liveBotBalance = _liveBotBalance - amount;
+        });
+
         _showSnackBar(result['message'] ?? 'Investment successful!');
         Navigator.pop(context, true);
       } else {
@@ -102,6 +137,11 @@ class _BotInvestWithdrawScreenState extends State<BotInvestWithdrawScreen>
       );
 
       if (result['success'] == true) {
+        // Immediately update local balance for instant feedback
+        setState(() {
+          _liveBotBalance = _liveBotBalance + amount;
+        });
+
         _showSnackBar(result['message'] ?? 'Withdrawal successful!');
         Navigator.pop(context, true);
       } else {
@@ -191,7 +231,7 @@ class _BotInvestWithdrawScreenState extends State<BotInvestWithdrawScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Available Balance',
+                  'Bot Wallet Balance',
                   style: TextStyle(
                     color: Color(0xFF8E8E93),
                     fontSize: 14,
@@ -199,7 +239,7 @@ class _BotInvestWithdrawScreenState extends State<BotInvestWithdrawScreen>
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '${widget.walletBalance.toStringAsFixed(2)} USDT',
+                  '${_liveBotBalance.toStringAsFixed(2)} USDT',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 28,
@@ -244,7 +284,7 @@ class _BotInvestWithdrawScreenState extends State<BotInvestWithdrawScreen>
           Align(
             alignment: Alignment.centerRight,
             child: TextButton(
-              onPressed: () => _setMaxAmount(widget.walletBalance),
+              onPressed: () => _setMaxAmount(_liveBotBalance),
               child: const Text(
                 'Set Max',
                 style: TextStyle(color: Color(0xFF84BD00)),

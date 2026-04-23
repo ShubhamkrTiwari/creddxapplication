@@ -311,6 +311,10 @@ class _HomeScreenState extends State<HomeScreen> {
             _totalBalance = totalAvailable;
           });
         }
+      } else if (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary') {
+        // Handle wallet summary updates for all wallets including bot
+        debugPrint('Home Screen: Wallet summary update received');
+        _fetchWalletBalance();
       }
     });
   }

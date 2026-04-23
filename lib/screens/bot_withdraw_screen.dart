@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
+import '../services/socket_service.dart';
+import 'dart:async';
 
 class BotWithdrawScreen extends StatefulWidget {
   final Map<String, dynamic> strategy;
@@ -21,12 +23,68 @@ class _BotWithdrawScreenState extends State<BotWithdrawScreen> {
   double _maxWithdrawAmount = 0.0;
   double _currentInvestment = 0.0;
   bool _isLoadingInvestment = false;
+  double _liveBotBalance = 0.0;
+  StreamSubscription? _balanceSubscription;
 
   @override
   void initState() {
     super.initState();
     _fetchCurrentInvestment();
     _fetchMaxWithdrawAmount();
+    _fetchBotBalance();
+    _subscribeToBotBalance();
+  }
+
+  @override
+  void dispose() {
+    _balanceSubscription?.cancel();
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _fetchBotBalance() async {
+    try {
+      final result = await BotService.getBotBalance();
+      if (mounted && result['success'] == true && result['data'] != null) {
+        final data = result['data'];
+        double balance = 0.0;
+        if (data['balance'] != null) {
+          balance = double.tryParse(data['balance'].toString()) ?? 0.0;
+        } else if (data['totalBalance'] != null) {
+          balance = double.tryParse(data['totalBalance'].toString()) ?? 0.0;
+        } else if (data['availableBalance'] != null) {
+          balance = double.tryParse(data['availableBalance'].toString()) ?? 0.0;
+        }
+        setState(() {
+          _liveBotBalance = balance;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching bot balance: $e');
+    }
+  }
+
+  void _subscribeToBotBalance() {
+    _balanceSubscription = SocketService.balanceStream.listen((data) {
+      if (mounted && (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary')) {
+        final balanceData = data['data'];
+        if (balanceData != null && balanceData is Map) {
+          final botBalance = balanceData['botBalance'] ?? balanceData['bot'];
+          if (botBalance != null) {
+            double newBalance = 0.0;
+            if (botBalance is num) {
+              newBalance = botBalance.toDouble();
+            } else if (botBalance is Map) {
+              newBalance = double.tryParse(botBalance['USDT']?.toString() ?? '0') ?? 0.0;
+            }
+            setState(() {
+              _liveBotBalance = newBalance;
+            });
+            debugPrint('Withdraw Screen: Bot balance updated: $newBalance');
+          }
+        }
+      }
+    });
   }
 
   Future<void> _fetchMaxWithdrawAmount() async {
@@ -117,6 +175,11 @@ class _BotWithdrawScreenState extends State<BotWithdrawScreen> {
       );
 
       if (result['success'] == true) {
+        // Immediately update local balance for instant feedback
+        setState(() {
+          _liveBotBalance = _liveBotBalance + amount;
+        });
+
         _showSnackBar(result['message'] ?? 'Withdrawal successful!');
         Navigator.pop(context, true);
       } else {

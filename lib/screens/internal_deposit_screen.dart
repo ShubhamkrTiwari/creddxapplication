@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/wallet_service.dart';
+import '../services/socket_service.dart';
 import 'otp_verification_screen.dart';
 
 class InternalDepositScreen extends StatefulWidget {
@@ -21,6 +23,7 @@ class _InternalDepositScreenState extends State<InternalDepositScreen> with Sing
   double _availableBalance = 0.0;
   List<Map<String, dynamic>> _transferHistory = [];
   late TabController _tabController;
+  StreamSubscription? _balanceSubscription;
 
   @override
   void initState() {
@@ -28,6 +31,7 @@ class _InternalDepositScreenState extends State<InternalDepositScreen> with Sing
     _tabController = TabController(length: 2, vsync: this);
     _fetchBalance();
     _fetchTransferHistory();
+    _subscribeToBalance();
   }
 
   Future<void> _fetchBalance() async {
@@ -65,6 +69,43 @@ class _InternalDepositScreenState extends State<InternalDepositScreen> with Sing
     } catch (e) {
       print('Error fetching balance: $e');
     }
+  }
+
+  void _subscribeToBalance() {
+    _balanceSubscription = SocketService.balanceStream.listen((data) {
+      if (mounted && (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary')) {
+        final balanceData = data['data'];
+        if (balanceData != null && balanceData is Map) {
+          double totalAvailable = 0.0;
+
+          // Sum up USDT from all wallet types
+          final walletTypeMap = {
+            'spot': 'spotBalance',
+            'main': 'mainBalance',
+            'p2p': 'p2pBalance',
+            'bot': 'botBalance',
+          };
+
+          for (String type in walletTypeMap.keys) {
+            final fieldName = walletTypeMap[type]!;
+            final walletData = balanceData[fieldName];
+
+            if (walletData != null) {
+              if (walletData is Map && walletData['USDT'] != null) {
+                totalAvailable += double.tryParse(walletData['USDT'].toString()) ?? 0.0;
+              } else if (walletData is num) {
+                totalAvailable += walletData.toDouble();
+              }
+            }
+          }
+
+          setState(() {
+            _availableBalance = totalAvailable;
+          });
+          debugPrint('Internal Deposit Screen: Balance updated: $totalAvailable');
+        }
+      }
+    });
   }
 
   Future<void> _fetchTransferHistory() async {
@@ -936,6 +977,7 @@ class _InternalDepositScreenState extends State<InternalDepositScreen> with Sing
 
   @override
   void dispose() {
+    _balanceSubscription?.cancel();
     _tabController.dispose();
     _recipientUidController.dispose();
     _amountController.dispose();

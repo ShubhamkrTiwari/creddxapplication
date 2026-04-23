@@ -3,6 +3,7 @@ import 'dart:async';
 import '../services/wallet_service.dart';
 import '../services/spot_service.dart';
 import '../services/socket_service.dart';
+import '../services/bot_service.dart';
 import 'package:intl/intl.dart';
 
 class InternalTransferScreen extends StatefulWidget {
@@ -53,32 +54,99 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
   void _subscribeToSocketBalance() {
     _balanceSubscription?.cancel();
     _balanceSubscription = SocketService.balanceStream.listen((data) {
-      if (mounted && data['type'] == 'balance_update') {
-        setState(() {
-          final assets = data['assets'] as List?;
-          if (assets != null) {
-            // Find the selected coin (usually USDT) in the socket update
-            final assetData = assets.firstWhere(
-              (a) => a['asset'] == _selectedCoin,
-              orElse: () => null,
-            );
+      if (mounted) {
+        debugPrint('=== SOCKET BALANCE UPDATE IN TRANSFER SCREEN ===');
+        debugPrint('Event type: ${data['type']}');
+        debugPrint('Full data: $data');
 
-            if (assetData != null) {
-              final available = double.tryParse(assetData['available']?.toString() ?? '0.0') ?? 0.0;
-              final locked = double.tryParse(assetData['locked']?.toString() ?? '0.0') ?? 0.0;
-              final total = available + locked;
+        // Handle wallet_summary_update for all wallets including bot
+        if (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary') {
+          final balanceData = data['data'];
+          if (balanceData != null && balanceData is Map) {
+            // Update bot balance from wallet summary
+            final botBalance = balanceData['botBalance'] ?? balanceData['bot'];
+            if (botBalance != null) {
+              double botAvailable = 0.0;
+              if (botBalance is num) {
+                botAvailable = botBalance.toDouble();
+              } else if (botBalance is Map) {
+                botAvailable = double.tryParse(botBalance['USDT']?.toString() ?? '0') ?? 0.0;
+              }
+              setState(() {
+                _balances['bot'] = {
+                  'available': botAvailable.toStringAsFixed(2),
+                  'locked': '0.00',
+                  'total': botAvailable.toStringAsFixed(2),
+                };
+              });
+              debugPrint('✅ Bot balance updated from wallet summary: $botAvailable');
+            }
 
-              // The socket balance update specifically updates the Spot Wallet
-              _balances['spot'] = {
-                'available': available.toStringAsFixed(2),
-                'locked': locked.toStringAsFixed(2),
-                'total': total.toStringAsFixed(2),
-              };
-              
-              debugPrint('Socket balance update applied to Spot Wallet: $available $_selectedCoin');
+            // Update other wallets from wallet summary
+            final mainBalance = balanceData['mainBalance'] ?? balanceData['main'];
+            if (mainBalance != null) {
+              double mainAvailable = 0.0;
+              if (mainBalance is num) {
+                mainAvailable = mainBalance.toDouble();
+              } else if (mainBalance is Map) {
+                mainAvailable = double.tryParse(mainBalance['USDT']?.toString() ?? '0') ?? 0.0;
+              }
+              setState(() {
+                _balances['main'] = {
+                  'available': mainAvailable.toStringAsFixed(2),
+                  'locked': '0.00',
+                  'total': mainAvailable.toStringAsFixed(2),
+                };
+              });
+            }
+
+            final p2pBalance = balanceData['p2pBalance'] ?? balanceData['p2p'];
+            if (p2pBalance != null) {
+              double p2pAvailable = 0.0;
+              if (p2pBalance is num) {
+                p2pAvailable = p2pBalance.toDouble();
+              } else if (p2pBalance is Map) {
+                p2pAvailable = double.tryParse(p2pBalance['USDT']?.toString() ?? '0') ?? 0.0;
+              }
+              setState(() {
+                _balances['p2p'] = {
+                  'available': p2pAvailable.toStringAsFixed(2),
+                  'locked': '0.00',
+                  'total': p2pAvailable.toStringAsFixed(2),
+                };
+              });
             }
           }
-        });
+        }
+
+        // Handle balance_update for spot wallet
+        if (data['type'] == 'balance_update') {
+          setState(() {
+            final assets = data['assets'] as List?;
+            if (assets != null) {
+              // Find the selected coin (usually USDT) in the socket update
+              final assetData = assets.firstWhere(
+                (a) => a['asset'] == _selectedCoin,
+                orElse: () => null,
+              );
+
+              if (assetData != null) {
+                final available = double.tryParse(assetData['available']?.toString() ?? '0.0') ?? 0.0;
+                final locked = double.tryParse(assetData['locked']?.toString() ?? '0.0') ?? 0.0;
+                final total = available + locked;
+
+                // The socket balance update specifically updates the Spot Wallet
+                _balances['spot'] = {
+                  'available': available.toStringAsFixed(2),
+                  'locked': locked.toStringAsFixed(2),
+                  'total': total.toStringAsFixed(2),
+                };
+
+                debugPrint('✅ Spot balance updated from socket: $available $_selectedCoin');
+              }
+            }
+          });
+        }
       }
     });
   }
@@ -361,7 +429,44 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
 
       if (result['success'] == true) {
         _amountController.clear();
-        await _fetchBalances(); // Refresh balances
+
+        // If transfer was from or to bot wallet, fetch bot balance specifically
+        if (_fromWallet == 'bot' || _toWallet == 'bot') {
+          // Trigger socket requests for real-time update
+          SocketService.requestWalletBalance();
+          SocketService.requestWalletSummary();
+
+          // Wait a bit for socket to update
+          await Future.delayed(const Duration(milliseconds: 300));
+
+          // Directly fetch bot balance from API to ensure it's updated
+          try {
+            final botBalanceResult = await BotService.getBotBalance();
+            if (botBalanceResult['success'] == true && botBalanceResult['data'] != null) {
+              final data = botBalanceResult['data'];
+              double balance = 0.0;
+              if (data['balance'] != null) {
+                balance = double.tryParse(data['balance'].toString()) ?? 0.0;
+              } else if (data['totalBalance'] != null) {
+                balance = double.tryParse(data['totalBalance'].toString()) ?? 0.0;
+              } else if (data['availableBalance'] != null) {
+                balance = double.tryParse(data['availableBalance'].toString()) ?? 0.0;
+              }
+              setState(() {
+                _balances['bot'] = {
+                  'available': balance.toStringAsFixed(2),
+                  'locked': '0.00',
+                  'total': balance.toStringAsFixed(2),
+                };
+              });
+              debugPrint('✅ Bot balance fetched directly from API: $balance');
+            }
+          } catch (e) {
+            debugPrint('Error fetching bot balance: $e');
+          }
+        }
+
+        await _fetchBalances(); // Refresh all balances
         await _fetchTransferHistory(); // Refresh transfer history
 
         if (mounted) {

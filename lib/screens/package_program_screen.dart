@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
+import '../services/socket_service.dart';
 import 'bot_trade_detail_screen.dart';
+import '../main_navigation.dart';
 
 class PackageProgramScreen extends StatefulWidget {
   const PackageProgramScreen({super.key});
@@ -442,7 +444,11 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(context); // Close dialog
-              Navigator.pop(context, true); // Go back to previous screen with success
+              // Navigate to MainNavigation (root screen) and clear all previous screens
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (context) => const MainNavigation()),
+                (route) => false,
+              );
             },
             child: const Text(
               'OK',

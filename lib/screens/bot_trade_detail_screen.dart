@@ -349,6 +349,10 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
       ).then((result) {
         // Refresh data regardless of result to get updated subscription status
         _fetchUserData();
+        // If subscription was successful (result == true), go back to bot algorithm screen
+        if (result == true) {
+          Navigator.pop(context);
+        }
       });
     }
   }

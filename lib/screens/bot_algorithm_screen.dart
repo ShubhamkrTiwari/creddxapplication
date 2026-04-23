@@ -782,6 +782,13 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
                   Navigator.of(context).pop(); // Remove loading indicator
 
                   if (result['success'] == true) {
+                    // Immediately update local balance for instant feedback
+                    setState(() {
+                      walletBalance = walletBalance - amount;
+                      _availableBalance = _availableBalance - amount;
+                      _totalBalance = _totalBalance - amount;
+                    });
+
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(result['message'] ?? 'Investment successful!'),
@@ -789,9 +796,9 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
                         duration: const Duration(seconds: 3),
                       ),
                     );
-                    // Refresh data
+                    // Refresh data - update bot balance after investment
                     _fetchUserData();
-                    setState(() {});
+                    _fetchBotBalance();
                   } else {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
@@ -943,6 +950,13 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
                   Navigator.of(context).pop(); // Remove loading indicator
 
                   if (result['success'] == true) {
+                    // Immediately update local balance for instant feedback
+                    setState(() {
+                      walletBalance = walletBalance + amount;
+                      _availableBalance = _availableBalance + amount;
+                      _totalBalance = _totalBalance + amount;
+                    });
+
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(result['message'] ?? 'Withdrawal successful!'),
@@ -950,7 +964,9 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
                         duration: Duration(seconds: 3),
                       ),
                     );
-                    setState(() {}); // Refresh UI
+                    // Refresh data - update bot balance after withdrawal
+                    _fetchUserData();
+                    _fetchBotBalance();
                   } else {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
