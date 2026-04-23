@@ -172,10 +172,10 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: const Color(0xFF1C1C1E),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: Colors.white.withOpacity(0.1),
           width: 1,
@@ -187,80 +187,79 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
           // Header
           Row(
             children: [
-              const Icon(Icons.account_balance_wallet, color: Color(0xFF84BD00), size: 20),
-              const SizedBox(width: 8),
+              const Icon(Icons.account_balance_wallet, color: Color(0xFF84BD00), size: 16),
+              const SizedBox(width: 6),
               const Text(
                 'Bot Wallet Balance',
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 16,
+                  fontSize: 14,
                   fontWeight: FontWeight.w600,
                 ),
               ),
               const Spacer(),
               if (subscriptionPlan != null)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
                     color: const Color(0xFF84BD00).withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(20),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
                     'Subscribed',
                     style: TextStyle(
                       color: const Color(0xFF84BD00),
-                      fontSize: 12,
+                      fontSize: 10,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
                 ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
 
           // Total Balance
           Text(
             'Total Balance',
             style: TextStyle(
               color: Colors.white.withOpacity(0.7),
-              fontSize: 14,
+              fontSize: 12,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 2),
           Text(
             '${_totalBalance.toStringAsFixed(2)} USDT',
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 28,
+              fontSize: 20,
               fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
 
           // Total Invested
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
               color: const Color(0xFF0F0F0F),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(8),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
                   'Total Invested',
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.6),
-                    fontSize: 12,
+                    fontSize: 11,
                   ),
                 ),
-                const SizedBox(height: 4),
                 Text(
                   '${_totalInvested.toStringAsFixed(2)} USDT',
                   style: const TextStyle(
                     color: Colors.orange,
-                    fontSize: 16,
+                    fontSize: 13,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
