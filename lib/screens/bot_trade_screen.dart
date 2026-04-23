@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'dart:ui' as ui;
 import 'bot_trade_detail_screen.dart';
-import 'package_program_screen.dart';
 import 'bot_history_screen.dart';
 import 'bot_algorithm_screen.dart';
 import '../services/bot_service.dart';
@@ -39,7 +37,7 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 2, vsync: this);
     _fetchUserSubscription();
     _fetchBotBalance();
     _fetchUserPositions();
@@ -185,7 +183,6 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
                 controller: _tabController,
                 children: [
                   _buildRecommendedContent(),
-                  _buildRunningContent(),
                   const BotHistoryScreen(showHeader: false), // Using the synchronized history screen
                 ],
               ),
@@ -264,7 +261,6 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
         ),
         tabs: const [
           Tab(text: 'Recommended'),
-          Tab(text: 'Running (1)'),
           Tab(text: 'History'),
         ],
       ),
