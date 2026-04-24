@@ -34,20 +34,30 @@ class _ConversionScreenState extends State<ConversionScreen> {
   StreamSubscription? _socketBalanceSubscription;
 
   // Conversion API endpoints
-  static const String _baseUrl = 'https://api11.hathmetech.com/api';
-  static const String _inrToUsdtApiUrl = '$_baseUrl/wallet/v1/wallet/inr/convert/inr-to-usdt';
-  static const String _usdtToInrApiUrl = '$_baseUrl/wallet/v1/wallet/inr/convert/usdt-to-inr';
+  static const String _baseUrl = 'https://api11.hathmetech.com';
+  static const String _inrToUsdtApiUrl = '$_baseUrl/api/v1/wallet/inr/convert/inr-to-usdt';
+  static const String _usdtToInrApiUrl = '$_baseUrl/api/v1/wallet/inr/convert/usdt-to-inr';
 
   @override
   void initState() {
     super.initState();
     _fromController.addListener(_calculateConversion);
     _loadConversionRates();
+    // Setup streams first to catch all updates
     _setupStreams();
     // Initialize and fetch fresh balances from server right away
     unified.UnifiedWalletService.initialize().then((_) {
       unified.UnifiedWalletService.refreshAllBalances();
       _fetchINRFromApi(); // Also fetch specifically using the INR API logic
+      // Manually set initial values after initialization
+      if (mounted) {
+        setState(() {
+          _inrBalance = unified.UnifiedWalletService.mainINRBalance;
+          _usdtBalance = unified.UnifiedWalletService.mainUSDTBalance;
+          _totalUsdtBalance = unified.UnifiedWalletService.totalUSDTBalance;
+        });
+        debugPrint('ConversionScreen: Initial values set after init — INR: $_inrBalance, USDT: $_usdtBalance');
+      }
     });
   }
 
@@ -55,10 +65,16 @@ class _ConversionScreenState extends State<ConversionScreen> {
     try {
       final result = await WalletService.getINRBalance();
       if (result['success'] == true && mounted) {
-        setState(() {
-          _inrBalance = result['inrBalance'] ?? 0.0;
-        });
-        debugPrint('ConversionScreen: INR fetched from dedicated API: $_inrBalance (source: ${result['source']})');
+        // Only update if INR balance is 0 (initial state)
+        // Don't overwrite socket value
+        if (_inrBalance == 0.0) {
+          setState(() {
+            _inrBalance = result['inrBalance'] ?? 0.0;
+          });
+          debugPrint('ConversionScreen: INR fetched from dedicated API: $_inrBalance (source: ${result['source']})');
+        } else {
+          debugPrint('ConversionScreen: Skipping API INR update, socket value already set: $_inrBalance');
+        }
       }
     } catch (e) {
       debugPrint('ConversionScreen: Error fetching INR from dedicated API: $e');
@@ -70,33 +86,97 @@ class _ConversionScreenState extends State<ConversionScreen> {
     // 1. Listen to UnifiedWalletService stream for real-time balance updates
     _balanceSubscription = unified.UnifiedWalletService.walletBalanceStream.listen((balance) {
       if (mounted) {
+        final newInrBalance = unified.UnifiedWalletService.mainINRBalance;
+        final newUsdtBalance = unified.UnifiedWalletService.mainUSDTBalance;
+        final newTotalUsdtBalance = unified.UnifiedWalletService.totalUSDTBalance;
+
+        debugPrint('ConversionScreen: Stream received - mainINRBalance: $newInrBalance, mainUSDTBalance: $newUsdtBalance');
+
         setState(() {
-          // Use mainINRBalance — specifically fetching INR from mainBalance
-          _inrBalance = unified.UnifiedWalletService.mainINRBalance;
-          _usdtBalance = unified.UnifiedWalletService.mainUSDTBalance;
-          _totalUsdtBalance = unified.UnifiedWalletService.totalUSDTBalance;
+          _inrBalance = newInrBalance;
+          _usdtBalance = newUsdtBalance;
+          _totalUsdtBalance = newTotalUsdtBalance;
         });
-        debugPrint('ConversionScreen: INR updated from socket stream: $_inrBalance');
+        debugPrint('ConversionScreen: Balance Stream Update — INR: $_inrBalance, USDT: $_usdtBalance, Total USDT: $_totalUsdtBalance');
       }
     });
 
-    // 2. On any wallet_summary socket event, trigger a full balance refresh
+    // 2. On any wallet_summary socket event, extract INR balance directly
     _socketBalanceSubscription = SocketService.balanceStream.listen((data) {
-      if (mounted &&
-          (data['type'] == 'wallet_summary' ||
-              data['type'] == 'wallet_summary_update' ||
-              data['type'] == 'balance_update')) {
-        debugPrint('ConversionScreen: Socket event ${data['type']} — refreshing balances');
-        unified.UnifiedWalletService.refreshAllBalances();
-        _fetchINRFromApi(); // Also refresh from API
+      debugPrint('ConversionScreen: Socket data received: $data');
+
+      if (mounted) {
+        // Extract INR balance directly from socket data
+        // Try both data['data'] and direct data access
+        dynamic socketData = data['data'] ?? data;
+
+        debugPrint('ConversionScreen: Socket data to parse: $socketData (type: ${socketData.runtimeType})');
+
+        if (socketData != null && socketData is Map) {
+          final mainBalance = socketData['mainBalance'] ?? socketData['main'];
+          debugPrint('ConversionScreen: mainBalance: $mainBalance (type: ${mainBalance?.runtimeType})');
+
+          if (mainBalance != null && mainBalance is Map) {
+            // Try multiple ways to extract INR
+            final inrValue = mainBalance['INR'] ?? mainBalance['inr'] ?? mainBalance['Inr'];
+            debugPrint('ConversionScreen: INR value raw: $inrValue (type: ${inrValue?.runtimeType})');
+
+            if (inrValue != null) {
+              double newInrBalance = 0.0;
+              if (inrValue is num) {
+                newInrBalance = inrValue.toDouble();
+              } else if (inrValue is String) {
+                newInrBalance = double.tryParse(inrValue) ?? 0.0;
+              }
+              debugPrint('ConversionScreen: Setting INR balance to: $newInrBalance');
+              setState(() {
+                _inrBalance = newInrBalance;
+              });
+              debugPrint('ConversionScreen: INR balance updated from socket: $_inrBalance');
+            } else {
+              debugPrint('ConversionScreen: INR key not found in mainBalance. Keys: ${mainBalance.keys.toList()}');
+            }
+
+            // Also extract USDT from socket
+            final usdtValue = mainBalance['USDT'] ?? mainBalance['usdt'] ?? mainBalance['Usdt'];
+            debugPrint('ConversionScreen: USDT value raw: $usdtValue (type: ${usdtValue?.runtimeType})');
+            if (usdtValue != null) {
+              double newUsdtBalance = 0.0;
+              if (usdtValue is num) {
+                newUsdtBalance = usdtValue.toDouble();
+              } else if (usdtValue is String) {
+                newUsdtBalance = double.tryParse(usdtValue) ?? 0.0;
+              }
+              setState(() {
+                _usdtBalance = newUsdtBalance;
+              });
+              debugPrint('ConversionScreen: USDT balance updated from socket: $_usdtBalance');
+            }
+          } else {
+            debugPrint('ConversionScreen: mainBalance is null or not a Map');
+          }
+        } else {
+          debugPrint('ConversionScreen: socketData is null or not a Map (type: ${socketData?.runtimeType})');
+        }
       }
     });
 
-    // 3. Seed from current cache immediately (no async wait needed)
-    _inrBalance = unified.UnifiedWalletService.mainINRBalance;
-    _usdtBalance = unified.UnifiedWalletService.mainUSDTBalance;
-    _totalUsdtBalance = unified.UnifiedWalletService.totalUSDTBalance;
-    debugPrint('ConversionScreen: Initial INR from cache: $_inrBalance');
+    // 3. Seed from current cache immediately and update UI with setState
+    final cachedInr = unified.UnifiedWalletService.mainINRBalance;
+    final cachedUsdt = unified.UnifiedWalletService.mainUSDTBalance;
+    final cachedTotal = unified.UnifiedWalletService.totalUSDTBalance;
+
+    // Schedule setState after build completes to use cached values
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        setState(() {
+          _inrBalance = cachedInr;
+          _usdtBalance = cachedUsdt;
+          _totalUsdtBalance = cachedTotal;
+        });
+        debugPrint('ConversionScreen: Initial values seeded from cache — INR: $_inrBalance, USDT: $_usdtBalance');
+      }
+    });
   }
 
 
@@ -259,23 +339,24 @@ class _ConversionScreenState extends State<ConversionScreen> {
     // Always read the latest live balance from the service at conversion time.
     setState(() => _isLoading = true);
     
-    // We only care about main INR balance for conversion
+    // We only care about main balances for conversion
     final liveInrBalance = unified.UnifiedWalletService.mainINRBalance;
-    final liveTotalUsdt = unified.UnifiedWalletService.totalUSDTBalance;
+    final liveMainUsdt = unified.UnifiedWalletService.mainUSDTBalance;
 
-    debugPrint('_performConversion: liveINR=$liveInrBalance, liveTotalUSDT=$liveTotalUsdt, amount=$amount, from=$_fromCurrency');
+    debugPrint('_performConversion: liveINR=$liveInrBalance, liveMainUSDT=$liveMainUsdt, amount=$amount, from=$_fromCurrency');
 
     // Sync local state so the UI reflects the latest values too
     if (mounted) {
       setState(() {
         _inrBalance = liveInrBalance;
-        _totalUsdtBalance = liveTotalUsdt;
-        _usdtBalance = unified.UnifiedWalletService.mainUSDTBalance;
+        _usdtBalance = liveMainUsdt;
+        _totalUsdtBalance = unified.UnifiedWalletService.totalUSDTBalance;
       });
     }
 
     // Check if user has sufficient balance using live values
     if (_fromCurrency == 'INR' && amount > liveInrBalance) {
+      if (mounted) setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Insufficient INR balance. Available: ₹${liveInrBalance.toStringAsFixed(2)}'),
@@ -285,17 +366,16 @@ class _ConversionScreenState extends State<ConversionScreen> {
       return;
     }
 
-    if (_fromCurrency == 'USDT' && amount > liveTotalUsdt) {
+    if (_fromCurrency == 'USDT' && amount > liveMainUsdt) {
+      if (mounted) setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Insufficient USDT balance. Total Available: ${liveTotalUsdt.toStringAsFixed(4)} USDT'),
+          content: Text('Insufficient USDT balance. Available: ${liveMainUsdt.toStringAsFixed(4)} USDT'),
           backgroundColor: Colors.red,
         ),
       );
       return;
     }
-    
-    setState(() => _isLoading = true);
     
     try {
       final token = await AuthService.getToken();
@@ -352,7 +432,15 @@ class _ConversionScreenState extends State<ConversionScreen> {
         debugPrint('Conversion completed with fixed rate: $usedRate');
         debugPrint('Actual amount received: $actualAmount');
         
-        unified.UnifiedWalletService.refreshAllBalances();
+        await unified.UnifiedWalletService.refreshAllBalances();
+        if (mounted) {
+          setState(() {
+            _inrBalance = unified.UnifiedWalletService.mainINRBalance;
+            _usdtBalance = unified.UnifiedWalletService.mainUSDTBalance;
+            _totalUsdtBalance = unified.UnifiedWalletService.totalUSDTBalance;
+          });
+          debugPrint('ConversionScreen: Balances updated after conversion — INR: $_inrBalance, USDT: $_usdtBalance');
+        }
         _fromController.clear();
         _toController.text = '0';
       } else {
@@ -425,6 +513,7 @@ class _ConversionScreenState extends State<ConversionScreen> {
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('ConversionScreen: BUILD — _inrBalance: $_inrBalance, _fromCurrency: $_fromCurrency');
     return Scaffold(
       backgroundColor: const Color(0xFF0D0D0D),
       appBar: AppBar(
@@ -459,7 +548,7 @@ class _ConversionScreenState extends State<ConversionScreen> {
                 label: 'From',
                 available: _fromCurrency == 'INR' 
                     ? 'Available: ₹${_inrBalance.toStringAsFixed(2)}' 
-                    : 'Total Available: ${_totalUsdtBalance.toStringAsFixed(4)} USDT',
+                    : 'Available: ${_usdtBalance.toStringAsFixed(4)} USDT',
                 controller: _fromController,
                 currency: _fromCurrency,
                 onCurrencyChanged: (value) {
@@ -475,7 +564,7 @@ class _ConversionScreenState extends State<ConversionScreen> {
                 label: 'To',
                 available: _toCurrency == 'INR' 
                     ? 'Available: ₹${_inrBalance.toStringAsFixed(2)}' 
-                    : 'Total Available: ${_totalUsdtBalance.toStringAsFixed(4)} USDT',
+                    : 'Available: ${_usdtBalance.toStringAsFixed(4)} USDT',
                 controller: _toController,
                 currency: _toCurrency,
                 onCurrencyChanged: (value) {
@@ -515,7 +604,7 @@ class _ConversionScreenState extends State<ConversionScreen> {
         border: Border.all(color: const Color(0xFF84BD00).withOpacity(0.3), width: 1),
       ),
       child: const Text(
-        'Convert between INR and USDT at live market value rates. Rates are updated in real-time from global markets. Final value may vary slightly depending on market movement.',
+        'Convert between INR and USDT at live market value rates. Rates are updated in real-time from global markets.',
         style: TextStyle(
           color: Color(0xFF84BD00),
           fontSize: 13,
@@ -555,12 +644,43 @@ class _ConversionScreenState extends State<ConversionScreen> {
                   fontSize: 13,
                 ),
               ),
-              Text(
-                available,
-                style: const TextStyle(
-                  color: Colors.white54,
-                  fontSize: 12,
-                ),
+              Row(
+                children: [
+                  Text(
+                    available,
+                    style: const TextStyle(
+                      color: Colors.white54,
+                      fontSize: 12,
+                    ),
+                  ),
+                  if (!isReadOnly) ...[
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () {
+                        final val = available.replaceAll(RegExp(r'[^0-9.]'), '');
+                        if (val.isNotEmpty) {
+                          controller.text = val;
+                        }
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF84BD00).withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: const Color(0xFF84BD00).withOpacity(0.5)),
+                        ),
+                        child: const Text(
+                          'MAX',
+                          style: TextStyle(
+                            color: Color(0xFF84BD00),
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ],
           ),

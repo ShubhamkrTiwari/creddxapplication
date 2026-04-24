@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/wallet_service.dart';
 import '../services/notification_service.dart';
 import 'add_bank_account_screen.dart';
+import 'add_inr_bank_screen.dart';
 
 class WithdrawINRScreen extends StatefulWidget {
   const WithdrawINRScreen({super.key});
@@ -39,17 +40,44 @@ class _WithdrawINRScreenState extends State<WithdrawINRScreen> {
       final result = await WalletService.getINRBankDetails();
       
       if (result['success'] == true && result['data'] != null) {
-        final data = result['data'];
+        final rawData = result['data'];
+        debugPrint('WithdrawINRScreen: Bank data received: $rawData');
         
-        // Parse bank data into a list
         List<Map<String, dynamic>> accounts = [];
-        if (data is List) {
-          accounts = data.map((item) => Map<String, dynamic>.from(item)).toList();
-        } else if (data is Map && data.isNotEmpty) {
-          accounts = [Map<String, dynamic>.from(data)];
+        
+        void parseItem(dynamic item) {
+          if (item is Map) {
+            final map = Map<String, dynamic>.from(item);
+            // Be very permissive about keys
+            if (map.containsKey('accountNumber') || 
+                map.containsKey('bankName') || 
+                map.containsKey('Name') ||
+                map.containsKey('account_number') ||
+                map.containsKey('bank_name')) {
+              accounts.add(map);
+            }
+          }
+        }
+
+        if (rawData is List) {
+          for (var item in rawData) {
+            parseItem(item);
+          }
+        } else if (rawData is Map) {
+          if (rawData['docs'] is List) {
+            for (var item in rawData['docs']) parseItem(item);
+          } else if (rawData['data'] is List) {
+            for (var item in rawData['data']) parseItem(item);
+          } else if (rawData['result'] is List) {
+            for (var item in rawData['result']) parseItem(item);
+          } else {
+            parseItem(rawData);
+          }
         }
         
-        // Filter only approved accounts (status = 2)
+        debugPrint('WithdrawINRScreen: Parsed ${accounts.length} accounts');
+        
+        // Filter only approved accounts (status = 2) or show all if specifically needed
         final approvedAccounts = accounts.where((acc) {
           final status = acc['status'] is int 
               ? acc['status'] 
@@ -59,12 +87,27 @@ class _WithdrawINRScreenState extends State<WithdrawINRScreen> {
         
         setState(() {
           _bankAccounts = accounts;
-          // Select first approved account by default
-          _selectedBankAccount = approvedAccounts.isNotEmpty ? approvedAccounts.first : null;
-          _bankStatus = _selectedBankAccount != null ? 2 : (accounts.isNotEmpty ? 1 : null);
-          _bankId = _selectedBankAccount?['_id']?.toString() ?? _selectedBankAccount?['id']?.toString();
+          // Select first approved account by default, or the first account if none are approved
+          _selectedBankAccount = approvedAccounts.isNotEmpty 
+              ? approvedAccounts.first 
+              : (accounts.isNotEmpty ? accounts.first : null);
+          
+          if (_selectedBankAccount != null) {
+            _bankStatus = _selectedBankAccount!['status'] is int 
+                ? _selectedBankAccount!['status'] 
+                : int.tryParse(_selectedBankAccount!['status']?.toString() ?? '1');
+            _bankId = _selectedBankAccount?['_id']?.toString() ?? _selectedBankAccount?['id']?.toString();
+          } else {
+            _bankStatus = null;
+            _bankId = null;
+          }
         });
       } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(result['error'] ?? 'Failed to fetch bank details')),
+          );
+        }
         setState(() {
           _bankAccounts = [];
           _selectedBankAccount = null;
@@ -524,20 +567,17 @@ class _WithdrawINRScreenState extends State<WithdrawINRScreen> {
   void _navigateToAddBankAccount() {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => const AddBankAccountScreen(country: 'India'),
+        builder: (context) => const AddInrBankScreen(),
       ),
     ).then((_) => _fetchBankAccount()); // Refresh after returning
   }
 
-  void _navigateToEditBankAccount() {
-    if (_bankId == null) return;
-
+  void _navigateToEditBankAccount(Map<String, dynamic> account) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => AddBankAccountScreen(
-          country: 'India',
+        builder: (context) => AddInrBankScreen(
           isEditMode: true,
-          editData: _selectedBankAccount,
+          editData: account,
         ),
       ),
     ).then((_) => _fetchBankAccount()); // Refresh after returning
@@ -759,10 +799,13 @@ class _WithdrawINRScreenState extends State<WithdrawINRScreen> {
                     const SizedBox(height: 24),
 
                     // Bank Account Card or Empty State
-                    if (_selectedBankAccount == null) ...[
+                    if (_bankAccounts.isEmpty) ...[
                       _buildEmptyState(),
                     ] else ...[
-                      _buildBankAccountCard(),
+                      ..._bankAccounts.map((account) => Padding(
+                        padding: const EdgeInsets.only(bottom: 16.0),
+                        child: _buildBankAccountCard(account),
+                      )),
                     ],
 
                     const SizedBox(height: 20),
@@ -833,7 +876,12 @@ class _WithdrawINRScreenState extends State<WithdrawINRScreen> {
     );
   }
 
-  Widget _buildBankAccountCard() {
+  Widget _buildBankAccountCard(Map<String, dynamic> account) {
+    final status = account['status'] is int
+        ? account['status']
+        : int.tryParse(account['status']?.toString() ?? '1');
+    final accountId = account['_id']?.toString() ?? account['id']?.toString();
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -869,7 +917,7 @@ class _WithdrawINRScreenState extends State<WithdrawINRScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      _selectedBankAccount!['bankName'] ?? 'Bank Name',
+                      account['bankName'] ?? account['bank_name'] ?? account['Name'] ?? account['name'] ?? 'Bank Name',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 16,
@@ -877,26 +925,30 @@ class _WithdrawINRScreenState extends State<WithdrawINRScreen> {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      '•••• ${_selectedBankAccount!['accountNumber']?.toString().substring(_selectedBankAccount!['accountNumber'].toString().length - 4) ?? '0000'}',
-                      style: const TextStyle(
-                        color: Colors.white54,
-                        fontSize: 14,
-                      ),
-                    ),
+                    Builder(builder: (context) {
+                      final accNum = (account['accountNumber'] ?? account['account_number'] ?? '').toString();
+                      final last4 = accNum.length > 4 ? accNum.substring(accNum.length - 4) : accNum;
+                      return Text(
+                        accNum.isNotEmpty ? '•••• $last4' : 'No Account Number',
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 14,
+                        ),
+                      );
+                    }),
                   ],
                 ),
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: _getStatusColor(_bankStatus).withOpacity(0.2),
+                  color: _getStatusColor(status).withOpacity(0.2),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
-                  _getStatusText(_bankStatus),
+                  _getStatusText(status),
                   style: TextStyle(
-                    color: _getStatusColor(_bankStatus),
+                    color: _getStatusColor(status),
                     fontSize: 12,
                     fontWeight: FontWeight.w500,
                   ),
@@ -907,11 +959,11 @@ class _WithdrawINRScreenState extends State<WithdrawINRScreen> {
           const SizedBox(height: 20),
           const Divider(color: Colors.white10, height: 1),
           const SizedBox(height: 20),
-          _buildInfoRow('Account Holder', _selectedBankAccount!['accountHolderName'] ?? _selectedBankAccount!['holderName'] ?? 'Name'),
+          _buildInfoRow('Account Holder', account['accountHolderName'] ?? account['account_holder_name'] ?? account['accountHolder'] ?? account['holderName'] ?? 'Name'),
           const SizedBox(height: 12),
-          _buildInfoRow('IFSC Code', _selectedBankAccount!['ifscCode'] ?? 'IFSC'),
+          _buildInfoRow('IFSC Code', account['ifscCode'] ?? account['ifsc_code'] ?? account['ifsc'] ?? 'IFSC'),
           const SizedBox(height: 20),
-          if (_bankStatus == 1) // Pending
+          if (status == 1) // Pending
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(16),
@@ -936,11 +988,11 @@ class _WithdrawINRScreenState extends State<WithdrawINRScreen> {
                 ],
               ),
             )
-          else if (_bankStatus == 3) // Rejected
+          else if (status == 3) // Rejected
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: _navigateToEditBankAccount,
+                onPressed: () => _navigateToEditBankAccount(account),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFFF3B30),
                   foregroundColor: Colors.white,
@@ -958,11 +1010,14 @@ class _WithdrawINRScreenState extends State<WithdrawINRScreen> {
                 ),
               ),
             )
-          else if (_bankStatus == 2) // Approved
+          else if (status == 2) // Approved
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: _showWithdrawalDialog,
+                onPressed: () {
+                  setState(() => _selectedBankAccount = account);
+                  _showWithdrawalDialog();
+                },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF84BD00),
                   foregroundColor: Colors.white,

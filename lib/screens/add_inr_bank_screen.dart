@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import '../services/wallet_service.dart';
-import 'otp_verification_screen.dart';
 
 class AddInrBankScreen extends StatefulWidget {
-  const AddInrBankScreen({super.key});
+  final bool isEditMode;
+  final Map<String, dynamic>? editData;
+  
+  const AddInrBankScreen({
+    super.key,
+    this.isEditMode = false,
+    this.editData,
+  });
 
   @override
   State<AddInrBankScreen> createState() => _AddInrBankScreenState();
@@ -18,6 +24,18 @@ class _AddInrBankScreenState extends State<AddInrBankScreen> {
   final _bankNameController = TextEditingController();
   
   bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isEditMode && widget.editData != null) {
+      _holderNameController.text = widget.editData!['accountHolderName'] ?? widget.editData!['holderName'] ?? '';
+      _bankNameController.text = widget.editData!['bankName'] ?? widget.editData!['Name'] ?? '';
+      _accountNumberController.text = widget.editData!['accountNumber'] ?? '';
+      _confirmAccountNumberController.text = widget.editData!['accountNumber'] ?? '';
+      _ifscCodeController.text = widget.editData!['ifscCode'] ?? '';
+    }
+  }
 
   @override
   void dispose() {
@@ -42,56 +60,41 @@ class _AddInrBankScreenState extends State<AddInrBankScreen> {
     setState(() => _isLoading = true);
     
     try {
-      final response = await WalletService.sendOtp(purpose: 'inr_withdraw');
+      Map<String, dynamic> response;
+      
+      if (widget.isEditMode && widget.editData != null) {
+        final id = widget.editData!['_id']?.toString() ?? widget.editData!['id']?.toString() ?? '';
+        response = await WalletService.editINRBankAccount(
+          id: id,
+          accountHolderName: _holderNameController.text,
+          accountNumber: _accountNumberController.text,
+          ifscCode: _ifscCodeController.text,
+          bankName: _bankNameController.text,
+        );
+      } else {
+        response = await WalletService.addINRBankAccount(
+          accountHolderName: _holderNameController.text,
+          accountNumber: _accountNumberController.text,
+          ifscCode: _ifscCodeController.text,
+          bankName: _bankNameController.text,
+        );
+      }
       
       setState(() => _isLoading = false);
       
       if (mounted) {
         if (response['success'] == true) {
-          final bool? verified = await Navigator.push<bool>(
-            context,
-            MaterialPageRoute(
-              builder: (context) => OtpVerificationScreen(
-                onVerify: (otp) async {
-                  // Verify OTP first
-                  final verifyResponse = await WalletService.verifyOtp(
-                    otp: otp,
-                    purpose: 'inr_withdraw',
-                  );
-                  
-                  if (verifyResponse['success'] == true) {
-                    // Save bank details
-                    final saveResponse = await WalletService.addINRBankAccount(
-                      accountHolderName: _holderNameController.text,
-                      accountNumber: _accountNumberController.text,
-                      ifscCode: _ifscCodeController.text,
-                      bankName: _bankNameController.text,
-                    );
-                    
-                    return saveResponse;
-                  }
-                  return verifyResponse;
-                },
-                onResend: () => WalletService.sendOtp(purpose: 'inr_withdraw'),
-              ),
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(widget.isEditMode ? 'Bank account updated successfully' : 'Bank account added successfully'),
+              backgroundColor: const Color(0xFF84BD00),
             ),
           );
-
-          if (verified == true) {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Bank account added successfully'),
-                  backgroundColor: Color(0xFF84BD00),
-                ),
-              );
-              Navigator.pop(context, true);
-            }
-          }
+          Navigator.pop(context, true);
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(response['error'] ?? 'Failed to send OTP'),
+              content: Text(response['error'] ?? response['message'] ?? 'Failed to save bank details'),
               backgroundColor: Colors.red,
             ),
           );
@@ -119,9 +122,9 @@ class _AddInrBankScreenState extends State<AddInrBankScreen> {
           onPressed: () => Navigator.pop(context),
           icon: const Icon(Icons.arrow_back_ios, color: Colors.white, size: 20),
         ),
-        title: const Text(
-          'Add Bank Account',
-          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+        title: Text(
+          widget.isEditMode ? 'Edit Bank Account' : 'Add Bank Account',
+          style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
         ),
       ),
       body: SingleChildScrollView(
@@ -191,9 +194,9 @@ class _AddInrBankScreenState extends State<AddInrBankScreen> {
                             width: 20,
                             child: CircularProgressIndicator(color: Colors.black, strokeWidth: 2),
                           )
-                        : const Text(
-                            'Submit',
-                            style: TextStyle(color: Colors.black, fontSize: 16, fontWeight: FontWeight.bold),
+                        : Text(
+                            widget.isEditMode ? 'Update' : 'Submit',
+                            style: const TextStyle(color: Colors.black, fontSize: 16, fontWeight: FontWeight.bold),
                           ),
                   ),
                 ),

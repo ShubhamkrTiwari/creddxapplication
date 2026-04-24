@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import '../services/wallet_service.dart';
 import '../services/auth_service.dart';
 import 'bank_withdrawal_screen.dart';
+import 'add_inr_bank_screen.dart';
 
 class InrWithdrawBankScreen extends StatefulWidget {
   const InrWithdrawBankScreen({super.key});
@@ -25,28 +26,39 @@ class _InrWithdrawBankScreenState extends State<InrWithdrawBankScreen> {
 
   Future<void> _fetchBankDetails() async {
     try {
-      final token = await AuthService.getToken();
-      final headers = {
-        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-      };
-      debugPrint('Fetching bank details from: ${WalletService.baseUrl}/wallet/v1/wallet/deposit/bank-details');
-      final response = await http.get(
-        Uri.parse('${WalletService.baseUrl}/wallet/v1/wallet/deposit/bank-details'),
-        headers: headers,
-      );
-      debugPrint('Bank details response: ${response.statusCode} - ${response.body}');
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        final data = responseData is Map ? (responseData['data'] ?? responseData) : responseData;
-        if (data is List) {
-          setState(() {
-            _bankList = data.where((b) => b['accountNumber'] != null && b['accountNumber'].toString().isNotEmpty).toList();
-            _selectedBank = _bankList.isNotEmpty ? _bankList.first : null;
-            _isLoading = false;
-          });
-        } else {
-          setState(() => _isLoading = false);
+      final result = await WalletService.getINRBankDetails();
+      debugPrint('InrWithdrawBankScreen: Bank details result: $result');
+      
+      if (result['success'] == true && result['data'] != null) {
+        final rawData = result['data'];
+        List<Map<String, dynamic>> accounts = [];
+        
+        void parseItem(dynamic item) {
+          if (item is Map) {
+            final map = Map<String, dynamic>.from(item);
+            if (map.containsKey('accountNumber') || map.containsKey('bankName') || map.containsKey('Name')) {
+              accounts.add(map);
+            }
+          }
         }
+
+        if (rawData is List) {
+          for (var item in rawData) parseItem(item);
+        } else if (rawData is Map) {
+          if (rawData['docs'] is List) {
+            for (var item in rawData['docs']) parseItem(item);
+          } else if (rawData['data'] is List) {
+            for (var item in rawData['data']) parseItem(item);
+          } else {
+            parseItem(rawData);
+          }
+        }
+        
+        setState(() {
+          _bankList = accounts.where((b) => b['accountNumber'] != null && b['accountNumber'].toString().isNotEmpty).toList();
+          _selectedBank = _bankList.isNotEmpty ? _bankList.first : null;
+          _isLoading = false;
+        });
       } else {
         setState(() => _isLoading = false);
       }
@@ -87,7 +99,66 @@ class _InrWithdrawBankScreenState extends State<InrWithdrawBankScreen> {
                     ),
                     const SizedBox(height: 12),
                     _buildBankDropdown(),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => const AddInrBankScreen()),
+                          ).then((value) {
+                            if (value == true) {
+                              _fetchBankDetails();
+                            }
+                          });
+                        },
+                        icon: const Icon(Icons.add, color: Color(0xFF84BD00), size: 18),
+                        label: const Text(
+                          'Add New Account',
+                          style: TextStyle(color: Color(0xFF84BD00), fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ] else ...[
+                    const SizedBox(height: 40),
+                    Center(
+                      child: Column(
+                        children: [
+                          const Icon(Icons.account_balance_outlined, color: Colors.white24, size: 64),
+                          const SizedBox(height: 16),
+                          const Text(
+                            'No Bank Account Found',
+                            style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Please add a bank account to proceed with withdrawal',
+                            style: TextStyle(color: Colors.white54, fontSize: 14),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 24),
+                          ElevatedButton(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => const AddInrBankScreen()),
+                              ).then((value) {
+                                if (value == true) {
+                                  _fetchBankDetails();
+                                }
+                              });
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF84BD00),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: const Text('Add Bank Account', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                   
                   if (_selectedBank != null)
@@ -110,9 +181,9 @@ class _InrWithdrawBankScreenState extends State<InrWithdrawBankScreen> {
                             ),
                           ),
                           const SizedBox(height: 20),
-                          _buildDetailRow('Bank Name', _selectedBank?['Name'] ?? 'N/A'),
+                          _buildDetailRow('Bank Name', _selectedBank?['bankName'] ?? _selectedBank?['Name'] ?? 'N/A'),
                           const SizedBox(height: 16),
-                          _buildDetailRow('Account Holder', _selectedBank?['accountHolderName'] ?? 'N/A'),
+                          _buildDetailRow('Account Holder', _selectedBank?['accountHolderName'] ?? _selectedBank?['accountHolder'] ?? 'N/A'),
                           const SizedBox(height: 16),
                           _buildDetailRow('Account Number', _selectedBank?['accountNumber'] ?? 'N/A', showCopy: true),
                           const SizedBox(height: 16),
@@ -183,7 +254,7 @@ class _InrWithdrawBankScreenState extends State<InrWithdrawBankScreen> {
           items: _bankList.map<DropdownMenuItem<Map<String, dynamic>>>((bank) {
             return DropdownMenuItem<Map<String, dynamic>>(
               value: bank,
-              child: Text(bank['Name'] ?? 'Unknown Bank'),
+              child: Text(bank['bankName'] ?? bank['Name'] ?? 'Unknown Bank'),
             );
           }).toList(),
         ),

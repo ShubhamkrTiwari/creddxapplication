@@ -4,6 +4,7 @@ import 'payment_proof_screen.dart';
 
 class PayBankTransferScreen extends StatefulWidget {
   final String amount;
+  final String? accountId;
   final String? accountHolderName;
   final String? accountNumber;
   final String? bankName;
@@ -12,6 +13,7 @@ class PayBankTransferScreen extends StatefulWidget {
   const PayBankTransferScreen({
     super.key, 
     required this.amount,
+    this.accountId,
     this.accountHolderName,
     this.accountNumber,
     this.bankName,
@@ -164,6 +166,7 @@ class _PayBankTransferScreenState extends State<PayBankTransferScreen> {
                     builder: (context) => PaymentProofScreen(
                       amount: widget.amount,
                       paymentMethod: 'Bank Transfer',
+                      account: widget.accountId,
                     ),
                   ),
                 );

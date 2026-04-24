@@ -463,6 +463,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
   
   Future<void> _fetchMarketData() async {
+    if (_isFetchingMarketData) return; // Prevent concurrent fetches
+    _isFetchingMarketData = true;
     try {
       // Fetch market cap data from CoinGecko
       final marketCaps = await BinanceService.getMarketCapData();
@@ -491,7 +493,10 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     } catch (e) {
-      debugPrint('Error fetching market data: $e');
+      // Only log once — don't spam on DNS/network failures
+      debugPrint('Market data fetch failed (network may be unavailable): $e');
+    } finally {
+      _isFetchingMarketData = false;
     }
   }
   
@@ -522,9 +527,12 @@ class _HomeScreenState extends State<HomeScreen> {
     return names[symbol] ?? symbol.replaceAll('USDT', '');
   }
   
+  bool _isFetchingMarketData = false;
+
   void _startPriceUpdates() {
-    _priceTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
-      if (mounted) {
+    // Use 60s interval to avoid spamming Binance/CoinGecko when network is unstable
+    _priceTimer = Timer.periodic(const Duration(seconds: 60), (timer) {
+      if (mounted && !_isFetchingMarketData) {
         _fetchMarketData();
       }
     });

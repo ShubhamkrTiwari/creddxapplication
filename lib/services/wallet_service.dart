@@ -1356,7 +1356,7 @@ class WalletService {
       debugPrint('Verifying OTP for purpose: $purpose');
 
       final response = await http.post(
-        Uri.parse('$baseUrl/v1/otp/verify'),
+        Uri.parse('$baseUrl/wallet/v1/otp/verify'),
         headers: await _getHeaders(),
         body: json.encode(requestBody),
       );
@@ -1379,6 +1379,7 @@ class WalletService {
       } else {
         return {
           'success': false,
+          'message': data['message'] ?? data['error'] ?? 'Failed to verify OTP',
           'error': data['message'] ?? data['error'] ?? 'Failed to verify OTP',
         };
       }
@@ -1496,40 +1497,55 @@ class WalletService {
   /// Status values: 1 = Pending, 2 = Approved, 3 = Rejected
   static Future<Map<String, dynamic>> getINRBankDetails() async {
     try {
-      debugPrint('Fetching INR bank details from: $baseUrl/wallet/v1/wallet/deposit/bank-details');
-      final response = await http.get(
-        Uri.parse('$baseUrl/wallet/v1/wallet/deposit/bank-details'),
-        headers: await _getHeaders(),
-      );
+      final headers = await _getHeaders();
+      
+      // Attempt 1: As requested by user (v1/wallet/deposit/inr-pay-details)
+      // Since baseUrl already ends in /api, we use /v1/...
+      String url = '$baseUrl/v1/wallet/deposit/inr-pay-details';
+      debugPrint('Attempting GET INR Bank Details from: $url');
+      
+      var response = await http.get(Uri.parse(url), headers: headers);
+      debugPrint('GET INR Bank Details (v1) Status: ${response.statusCode}');
+      
+      // Fallback: Try with /wallet/v1/...
+      if (response.statusCode != 200) {
+        url = '$baseUrl/wallet/v1/wallet/deposit/inr-pay-details';
+        debugPrint('Attempting GET INR Bank Details from fallback: $url');
+        response = await http.get(Uri.parse(url), headers: headers);
+        debugPrint('GET INR Bank Details (fallback) Status: ${response.statusCode}');
+      }
 
-      debugPrint('Bank Details API Response Status: ${response.statusCode}');
-      debugPrint('Bank Details API Response Body: ${response.body}');
+      // Fallback: Original endpoint
+      if (response.statusCode != 200) {
+        url = '$baseUrl/wallet/v1/wallet/deposit/bank-details';
+        debugPrint('Attempting GET INR Bank Details from original: $url');
+        response = await http.get(Uri.parse(url), headers: headers);
+        debugPrint('GET INR Bank Details (original) Status: ${response.statusCode}');
+      }
 
       if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['success'] == true) {
-          return {
-            'success': true,
-            'data': data['data'],
-          };
-        } else {
-          return {
-            'success': false,
-            'error': data['message'] ?? 'Failed to fetch bank details',
-          };
+        final decodedData = json.decode(response.body);
+        debugPrint('INR Bank Details Response: ${response.body}');
+        
+        // Handle various response wrappers
+        dynamic data = decodedData;
+        if (decodedData is Map) {
+          data = decodedData['data'] ?? decodedData['docs'] ?? decodedData['result'] ?? decodedData;
         }
-      } else {
+        
         return {
-          'success': false,
-          'error': 'Server error: ${response.statusCode}',
+          'success': true,
+          'data': data,
         };
       }
-    } catch (e) {
-      debugPrint('Error fetching INR bank details: $e');
+      
       return {
         'success': false,
-        'error': 'Network error: $e',
+        'error': 'Could not fetch bank details (${response.statusCode})',
       };
+    } catch (e) {
+      debugPrint('Error in getINRBankDetails: $e');
+      return {'success': false, 'error': 'Connection error'};
     }
   }
 
@@ -1543,6 +1559,7 @@ class WalletService {
     required String bankName,
     String? upiId,
     int type = 1, // 1 = Bank, 2 = UPI
+    String? otp,
   }) async {
     try {
       final body = {
@@ -1552,12 +1569,15 @@ class WalletService {
         'bankName': bankName,
         'type': type,
         if (upiId != null && upiId.isNotEmpty) 'upiId': upiId,
+        if (otp != null) 'otp': otp,
       };
 
       debugPrint('Adding INR bank account with body: $body');
 
+      // Try the path structure consistent with GET endpoint
+      final url = '$baseUrl/v1/wallet/deposit/add-inr-pay-details';
       final response = await http.post(
-        Uri.parse('$baseUrl/wallet/v1/wallet/deposit/add-inr-pay-details'),
+        Uri.parse(url),
         headers: await _getHeaders(),
         body: json.encode(body),
       );
@@ -1577,12 +1597,14 @@ class WalletService {
         } else {
           return {
             'success': false,
+            'message': data['message'] ?? 'Failed to add bank account',
             'error': data['message'] ?? 'Failed to add bank account',
           };
         }
       } else {
         return {
           'success': false,
+          'message': data['message'] ?? 'Server error: ${response.statusCode}',
           'error': data['message'] ?? 'Server error: ${response.statusCode}',
         };
       }
@@ -1604,6 +1626,7 @@ class WalletService {
     required String ifscCode,
     required String bankName,
     String? upiId,
+    String? otp,
   }) async {
     try {
       final body = {
@@ -1612,6 +1635,7 @@ class WalletService {
         'ifscCode': ifscCode,
         'bankName': bankName,
         if (upiId != null && upiId.isNotEmpty) 'upiId': upiId,
+        if (otp != null) 'otp': otp,
       };
 
       debugPrint('Editing INR bank account ID: $id with body: $body');
@@ -1637,12 +1661,14 @@ class WalletService {
         } else {
           return {
             'success': false,
+            'message': data['message'] ?? 'Failed to update bank account',
             'error': data['message'] ?? 'Failed to update bank account',
           };
         }
       } else {
         return {
           'success': false,
+          'message': data['message'] ?? 'Server error: ${response.statusCode}',
           'error': data['message'] ?? 'Server error: ${response.statusCode}',
         };
       }

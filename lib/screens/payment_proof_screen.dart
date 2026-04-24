@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import '../services/wallet_service.dart';
 import '../services/auth_service.dart';
+import '../main_navigation.dart';
 
 class PaymentProofScreen extends StatefulWidget {
   final String amount;
@@ -101,9 +102,12 @@ class _PaymentProofScreenState extends State<PaymentProofScreen> {
       
       request.fields['amount'] = widget.amount;
       request.fields['txid'] = _transactionIdController.text;
-      final accountNumber = _bankDetails?['accountNumber'] ?? widget.account ?? '698f14193c74d9cba2ab4eb1';
-      final accountName = _bankDetails?['accountHolder'] ?? widget.senderAccountName ?? 'shikha';
-      request.fields['account'] = accountNumber;
+      
+      // Use _id for the account field, fallback to widget.account or a default ID
+      final accountId = _bankDetails?['_id'] ?? widget.account ?? '698f14193c74d9cba2ab4eb1';
+      final accountName = _bankDetails?['accountHolderName'] ?? _bankDetails?['accountHolder'] ?? widget.senderAccountName ?? 'shikha';
+      
+      request.fields['account'] = accountId;
       request.fields['senderAccountName'] = accountName;
       
       if (_selectedImage != null) {
@@ -132,8 +136,19 @@ class _PaymentProofScreenState extends State<PaymentProofScreen> {
       if (response.statusCode == 200) {
         // Show success
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Deposit request submitted successfully')),
+          const SnackBar(
+            content: Text('Deposit request submitted successfully'),
+            backgroundColor: Color(0xFF84BD00),
+          ),
         );
+        // Navigate back to home screen immediately
+        if (mounted) {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (context) => const MainNavigation()),
+            (route) => false,
+          );
+        }
       } else {
         // Show error
         ScaffoldMessenger.of(context).showSnackBar(

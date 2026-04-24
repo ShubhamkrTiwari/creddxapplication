@@ -16,6 +16,8 @@ class SocketService {
   static final StreamController<Map<String, dynamic>> _ordersController = StreamController<Map<String, dynamic>>.broadcast();
   static final StreamController<Map<String, dynamic>> _fillsController = StreamController<Map<String, dynamic>>.broadcast();
   static bool _isConnecting = false;
+  static int _reconnectAttempts = 0;
+  static const int _maxReconnectAttempts = 10;
 
   static Stream<Map<String, dynamic>> get balanceStream => _balanceController.stream;
   static Stream<Map<String, dynamic>> get orderbookStream => _orderbookController.stream;
@@ -73,8 +75,9 @@ class SocketService {
       _socket!.onConnectError((error) {
         debugPrint('SocketService Connection Error: $error');
         _isConnecting = false;
-        // Don't reconnect immediately on connection error, wait a bit
-        Future.delayed(const Duration(seconds: 10), () => _reconnect());
+        // Back-off reconnect: wait longer on repeated failures
+        final delay = Duration(seconds: 15 + (_reconnectAttempts * 5).clamp(0, 45));
+        Future.delayed(delay, () => _reconnect());
       });
 
       _socket!.onError((error) {
@@ -135,9 +138,8 @@ class SocketService {
 
   static Future<void> _joinWalletRoom() async {
     final userId = await _getUserId();
-    final token = await AuthService.getToken();
     // Emit 'join' like web app does
-    _socket?.emit('join', {'user_id': userId, 'token': token});
+    _socket?.emit("join", userId);
     debugPrint('SocketService: Join emitted for user $userId');
   }
 
@@ -173,12 +175,20 @@ class SocketService {
   }
 
   static void _reconnect() {
+    if (_reconnectAttempts >= _maxReconnectAttempts) {
+      debugPrint('SocketService: Max reconnect attempts ($_maxReconnectAttempts) reached. Stopping.');
+      return;
+    }
+    _reconnectAttempts++;
     _socket = null;
     _isConnecting = false;
-    Future.delayed(const Duration(seconds: 5), () => connect());
+    final delay = Duration(seconds: (5 * _reconnectAttempts).clamp(5, 60));
+    debugPrint('SocketService: Reconnect attempt $_reconnectAttempts/$_maxReconnectAttempts in ${delay.inSeconds}s');
+    Future.delayed(delay, () => connect());
   }
 
   static void disconnect() {
+    _reconnectAttempts = 0; // Reset on manual disconnect
     _socket?.disconnect();
     _socket = null;
   }

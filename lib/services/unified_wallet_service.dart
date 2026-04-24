@@ -140,7 +140,6 @@ class UnifiedWalletService {
   // State
   static WalletBalance? _walletBalance;
   static List<CoinBalance> _coinBalance = [];
-  static double _inrHolding = 0.0; // From /wallet/overview/inr-holding API
   static double _botINRBalance = 0.0; // From bot wallet API
   static bool _isInitialized = false;
   static bool _isLoading = false;
@@ -170,7 +169,11 @@ class UnifiedWalletService {
   static double get mainUSDTBalance => _extractUSDTValue(_walletBalance?.mainBalance);
   static double get mainINRBalance {
     final main = _walletBalance?.mainBalance;
-    return _extractINRValue(main);
+    debugPrint('mainINRBalance getter: _walletBalance=$_walletBalance');
+    debugPrint('mainINRBalance getter: mainBalance=$main (type: ${main?.runtimeType})');
+    final result = _extractINRValue(main);
+    debugPrint('mainINRBalance getter: returning $result');
+    return result;
   }
 
   static double get mainINRAvailableBalance {
@@ -181,26 +184,22 @@ class UnifiedWalletService {
   static double get p2pUSDTBalance => _walletBalance?.p2pBalance ?? 0.0;
   static double get demoUSDTBalance => _walletBalance?.demoBalance ?? 0.0;
   static double get botUSDTBalance => _walletBalance?.botBalance ?? 0.0;
-  static double get botINRBalance => _botINRBalance; // From bot wallet API
+  static double get botINRBalance => _botINRBalance;
   
-  // Total INR from all sources (main wallet + spot + bot + INR holding API)
+  // Total INR from mainBalance (socket/API) + spot coin + bot INR
   static double get totalINRBalance {
-    double total = mainINRBalance; // From mainBalance via wallet socket/API
+    double total = mainINRBalance; // Primary: mainBalance.INR from wallet socket/API
     
-    // Add INR from INR holding API
-    total += _inrHolding;
-    
-    // Add INR from spot coin balances if exists
+    // Add INR from spot coin balances (if any)
     final spotINR = getCoinBalance('INR');
     if (spotINR != null) {
       total += spotINR.total;
     }
     
-    // Add INR from bot wallet
+    // Add INR from bot wallet (if any)
     total += _botINRBalance;
     
-    debugPrint('totalINRBalance: mainINR=$mainINRBalance, holding=$_inrHolding, spot=${spotINR?.total ?? 0}, bot=$_botINRBalance, total=$total');
-    
+    debugPrint('totalINRBalance: mainINR=$mainINRBalance, spot=${spotINR?.total ?? 0}, bot=$_botINRBalance, total=$total');
     return total;
   }
   
@@ -219,8 +218,8 @@ class UnifiedWalletService {
   // Get USDT coin balance details
   static CoinBalance? get usdtCoinBalance => getCoinBalance('USDT');
 
-  // INR holding from overview API
-  static double get inrHolding => _inrHolding;
+  // INR holding getter (always 0 — endpoint no longer used)
+  static double get inrHolding => 0.0;
 
   // Public streams
   static Stream<WalletBalance?> get walletBalanceStream => _walletBalanceController.stream;
@@ -328,9 +327,12 @@ class UnifiedWalletService {
           preserveSpotBalance: true,
         );
         
+        debugPrint('UnifiedWalletService: mainBalance content: ${_walletBalance?.mainBalance}');
+        debugPrint('UnifiedWalletService: mainBalance keys: ${_walletBalance?.mainBalance?.keys.toList()}');
+        debugPrint('UnifiedWalletService: Extracted mainINRBalance: $mainINRBalance');
+        
         _saveCachedData();
         _walletBalanceController.add(_walletBalance);
-        debugPrint('UnifiedWalletService: Balance updated via socket. mainINR: $mainINRBalance');
       }
     } catch (e) {
       debugPrint('UnifiedWalletService: Error handling wallet socket update: $e');
@@ -375,7 +377,6 @@ class UnifiedWalletService {
     await Future.wait([
       refreshSpotBalance(),
       refreshBotBalance(),
-      refreshINRHolding(),
     ]);
     
     // Wallet summary is refreshed via socket, but also call API as backup
@@ -388,12 +389,15 @@ class UnifiedWalletService {
     
     try {
       final result = await _getAllWalletSummary();
+      debugPrint('refreshWalletSummary: API result=$result');
       
       if (result['success'] == true) {
         final data = result['data'] ?? {};
+        debugPrint('refreshWalletSummary: data=$data');
         
         // Extract balances - DO NOT override spot or bot (merge rule)
         final mainData = data['main'] ?? data['mainBalance'];
+        debugPrint('refreshWalletSummary: mainData=$mainData (type: ${mainData?.runtimeType})');
         final p2pData = _extractUSDTValue(data['p2p'] ?? data['p2pBalance']);
         final demoData = _extractUSDTValue(data['demo'] ?? data['demoBalance'] ?? data['demo_bot']);
         
@@ -415,6 +419,9 @@ class UnifiedWalletService {
           preserveSpotBalance: true,
           preserveBotBalance: true,
         );
+        
+        debugPrint('refreshWalletSummary: _walletBalance updated with mainBalance=${_walletBalance?.mainBalance}');
+        debugPrint('refreshWalletSummary: mainINRBalance=${mainINRBalance}');
         
         _saveCachedData();
         _walletBalanceController.add(_walletBalance);
@@ -525,36 +532,6 @@ class UnifiedWalletService {
     await refreshBotBalance();
   }
 
-  // 4. Get INR holding from wallet overview API
-  static Future<Map<String, dynamic>> refreshINRHolding() async {
-    _setLoading(true);
-    
-    try {
-      final result = await _getINRHolding();
-      
-      if (result['success'] == true) {
-        final data = result['data'] ?? {};
-        final holding = data['inrHolding'] ?? data['inr'] ?? data['balance'] ?? data['amount'] ?? 0.0;
-        
-        _inrHolding = holding is num ? holding.toDouble() : 0.0;
-        
-        _saveCachedData();
-        _setError(null);
-        
-        debugPrint('UnifiedWalletService: INR holding refreshed: $_inrHolding');
-        return {'success': true, 'data': {'inrHolding': _inrHolding}};
-      } else {
-        _setError(result['error'] ?? 'Failed to fetch INR holding');
-        return result;
-      }
-    } catch (e) {
-      _setError('Failed to fetch INR holding, try again later!');
-      return {'success': false, 'error': e.toString()};
-    } finally {
-      _setLoading(false);
-    }
-  }
-
   // Private API methods
   static Future<Map<String, String>> _getHeaders() async {
     final token = await AuthService.getToken();
@@ -654,35 +631,6 @@ class UnifiedWalletService {
     }
   }
 
-  static Future<Map<String, dynamic>> _getINRHolding() async {
-    try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/wallet/overview/inr-holding'),
-        headers: await _getHeaders(),
-      );
-      
-      debugPrint('INR Holding API: ${response.statusCode}');
-      
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        
-        if (data['success'] == true || data['inrHolding'] != null || data['balance'] != null) {
-          final holdingData = data['data'] ?? data;
-          return {
-            'success': true,
-            'data': {
-              'inrHolding': holdingData['inrHolding'] ?? holdingData['inr'] ?? holdingData['balance'] ?? holdingData['amount'] ?? 0.0,
-            }
-          };
-        }
-        return {'success': false, 'error': data['message'] ?? 'Failed to fetch INR holding'};
-      }
-      return {'success': false, 'error': 'Server error: ${response.statusCode}'};
-    } catch (e) {
-      debugPrint('Error fetching INR holding: $e');
-      return {'success': false, 'error': 'Network error: $e'};
-    }
-  }
 
   // Helper methods
   static double _extractUSDTValue(dynamic data) {
@@ -728,14 +676,25 @@ class UnifiedWalletService {
   }
 
   static double _extractINRValue(dynamic data) {
-    if (data == null) return 0.0;
-    if (data is num) return data.toDouble();
+    debugPrint('_extractINRValue: called with data=$data (type: ${data.runtimeType})');
+    if (data == null) {
+      debugPrint('_extractINRValue: data is null, returning 0.0');
+      return 0.0;
+    }
+    if (data is num) {
+      debugPrint('_extractINRValue: data is num, returning ${data.toDouble()}');
+      return data.toDouble();
+    }
     
     if (data is Map) {
+      debugPrint('_extractINRValue: data is Map with keys: ${data.keys.toList()}');
       // 1. Check direct keys for INR (flat map)
       final directInr = data['INR'] ?? data['inr'] ?? data['Inr'];
+      debugPrint('_extractINRValue: directInr=$directInr (type: ${directInr?.runtimeType})');
       if (directInr != null) {
-        return _parseBalanceField(directInr, preferTotal: true);
+        final result = _parseBalanceField(directInr, preferTotal: true);
+        debugPrint('_extractINRValue: parsed result=$result');
+        return result;
       }
 
       // 2. Check for INR in balances list
@@ -755,7 +714,9 @@ class UnifiedWalletService {
           return _parseBalanceField(inr, preferTotal: true);
         }
       }
+      debugPrint('_extractINRValue: INR not found in any format');
     }
+    debugPrint('_extractINRValue: returning 0.0 (data type: ${data.runtimeType})');
     return 0.0;
   }
 
