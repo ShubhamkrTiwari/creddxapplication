@@ -63,14 +63,16 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
         if (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary') {
           final balanceData = data['data'];
           if (balanceData != null && balanceData is Map) {
-            // Update bot balance from wallet summary
-            final botBalance = balanceData['botBalance'] ?? balanceData['bot'];
-            if (botBalance != null) {
+            // Update bot balance from wallet summary - use availableBalance to show only investable amount
+            final availableBalance = balanceData['availableBalance'] ?? balanceData['available'];
+            if (availableBalance != null) {
               double botAvailable = 0.0;
-              if (botBalance is num) {
-                botAvailable = botBalance.toDouble();
-              } else if (botBalance is Map) {
-                botAvailable = double.tryParse(botBalance['USDT']?.toString() ?? '0') ?? 0.0;
+              if (availableBalance is num) {
+                botAvailable = availableBalance.toDouble();
+              } else if (availableBalance is Map) {
+                botAvailable = double.tryParse(availableBalance['USDT']?.toString() ?? '0') ?? 0.0;
+              } else {
+                botAvailable = double.tryParse(availableBalance.toString()) ?? 0.0;
               }
               setState(() {
                 _balances['bot'] = {
@@ -79,7 +81,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                   'total': botAvailable.toStringAsFixed(2),
                 };
               });
-              debugPrint('✅ Bot balance updated from wallet summary: $botAvailable');
+              debugPrint('✅ Bot available balance updated from wallet summary: $botAvailable');
             }
 
             // Update other wallets from wallet summary
@@ -189,7 +191,10 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
 
   Future<void> _fetchBalances() async {
     setState(() => _isFetchingBalances = true);
-    
+
+    // Fetch bot balance specifically from BotService to get availableBalance
+    final botBalanceResult = await BotService.getBotBalance();
+
     // Fetch both WalletService and SpotService balances
     final result = await WalletService.getAllWalletBalances();
     final spotResult = await SpotService.getBalance();
@@ -197,7 +202,27 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
     if (mounted) {
       setState(() {
         _balances = {};
-        
+
+        // Step 0: Set bot balance from BotService (has correct availableBalance)
+        if (botBalanceResult['success'] == true && botBalanceResult['data'] != null) {
+          final data = botBalanceResult['data'];
+          double botAvailable = 0.0;
+          // Prefer availableBalance to show only investable amount
+          if (data['availableBalance'] != null) {
+            botAvailable = double.tryParse(data['availableBalance'].toString()) ?? 0.0;
+          } else if (data['balance'] != null) {
+            botAvailable = double.tryParse(data['balance'].toString()) ?? 0.0;
+          } else if (data['totalBalance'] != null) {
+            botAvailable = double.tryParse(data['totalBalance'].toString()) ?? 0.0;
+          }
+          _balances['bot'] = {
+            'available': botAvailable.toStringAsFixed(2),
+            'locked': '0.00',
+            'total': botAvailable.toStringAsFixed(2),
+          };
+          debugPrint('Bot balance from BotService API: $botAvailable');
+        }
+
         // Step 1: Fetch spot balance from SpotService API (GET /balance/:user_id)
         if (spotResult['success'] == true && spotResult['data'] != null) {
           final spotData = spotResult['data'];
@@ -239,14 +264,20 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
           bool foundBalances = false;
           
           for (String type in walletTypeMap.keys) {
+            // Skip bot if already set from BotService (has correct availableBalance)
+            if (type == 'bot' && _balances['bot'] != null) {
+              debugPrint('Skipping bot balance from WalletService (already set from BotService)');
+              continue;
+            }
+
             final fieldName = walletTypeMap[type]!;
             final walletData = data[fieldName];
-            
+
             if (walletData != null) {
               double available = 0.0;
               double total = 0.0;
               double inrTotal = 0.0;
-              
+
               if (walletData is Map) {
                 // Format: {INR: X, USDT: Y}
                 if (walletData['USDT'] != null) {
@@ -261,14 +292,14 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                 total = walletData.toDouble();
                 available = total;
               }
-              
+
               _balances[type] = {
                 'available': available.toStringAsFixed(2),
                 'locked': '0.00',
                 'total': total.toStringAsFixed(2),
                 'inr_total': inrTotal.toStringAsFixed(2),
               };
-              
+
               foundBalances = true;
               debugPrint('$type USDT - Available: $available, Total: $total, INR: $inrTotal');
             }
@@ -445,12 +476,13 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
             if (botBalanceResult['success'] == true && botBalanceResult['data'] != null) {
               final data = botBalanceResult['data'];
               double balance = 0.0;
-              if (data['balance'] != null) {
+              // Prefer availableBalance to show only investable amount
+              if (data['availableBalance'] != null) {
+                balance = double.tryParse(data['availableBalance'].toString()) ?? 0.0;
+              } else if (data['balance'] != null) {
                 balance = double.tryParse(data['balance'].toString()) ?? 0.0;
               } else if (data['totalBalance'] != null) {
                 balance = double.tryParse(data['totalBalance'].toString()) ?? 0.0;
-              } else if (data['availableBalance'] != null) {
-                balance = double.tryParse(data['availableBalance'].toString()) ?? 0.0;
               }
               setState(() {
                 _balances['bot'] = {
@@ -459,7 +491,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                   'total': balance.toStringAsFixed(2),
                 };
               });
-              debugPrint('✅ Bot balance fetched directly from API: $balance');
+              debugPrint('✅ Bot available balance fetched directly from API: $balance');
             }
           } catch (e) {
             debugPrint('Error fetching bot balance: $e');
