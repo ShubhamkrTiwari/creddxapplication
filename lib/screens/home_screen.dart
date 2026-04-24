@@ -25,6 +25,7 @@ import '../services/user_service.dart';
 import '../services/wallet_service.dart';
 import '../services/spot_service.dart';
 import '../services/binance_service.dart';
+import '../services/unified_wallet_service.dart' as unified;
 import '../utils/coin_icon_mapper.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 
@@ -259,7 +260,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, Map<String, dynamic>> _favoritesMarketData = {};
   bool _isWebSocketConnected = false;
   StreamSubscription<Map<String, dynamic>>? _marketDataSubscription;
-  StreamSubscription<Map<String, dynamic>>? _balanceSubscription;
+  StreamSubscription<unified.WalletBalance?>? _balanceSubscription;
   
   // Candlestick chart data for Std. Futures
   List<Map<String, dynamic>> _candleData = [];
@@ -284,6 +285,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     UserService().initUserData();
+    unified.UnifiedWalletService.initialize();
     _fetchInitialData();
     _startPriceUpdates();
     _generateMockCandleData();
@@ -294,27 +296,19 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _subscribeToBalance() {
-    _balanceSubscription = SocketService.balanceStream.listen((data) {
-      if (data['type'] == 'balance_update' && data['assets'] != null) {
-        double totalAvailable = 0.0;
-        final assets = data['assets'] as List;
-        for (var assetItem in assets) {
-          final assetName = assetItem['asset']?.toString().toUpperCase() ?? '';
-          if (assetName == 'USDT') {
-            final available = double.tryParse(assetItem['available']?.toString() ?? '0') ?? 0.0;
-            // The Home Screen seems to only care about available USDT for _totalBalance based on _fetchWalletBalance implementation
-            totalAvailable += available;
-          }
-        }
-        if (mounted) {
-          setState(() {
-            _totalBalance = totalAvailable;
-          });
-        }
-      } else if (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary') {
-        // Handle wallet summary updates for all wallets including bot
-        debugPrint('Home Screen: Wallet summary update received');
-        _fetchWalletBalance();
+    _balanceSubscription = unified.UnifiedWalletService.walletBalanceStream.listen((balance) {
+      if (mounted) {
+        setState(() {
+          _totalBalance = balance?.totalBalance ?? 0.0;
+        });
+      }
+    });
+
+    // Also listen to direct updates strictly for forced refresh triggers if missed by unified stream
+    SocketService.balanceStream.listen((data) {
+      if (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary') {
+        debugPrint('Home Screen: Wallet summary update received - Refreshing unified wallet');
+        unified.UnifiedWalletService.refreshAllBalances();
       }
     });
   }
@@ -450,95 +444,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _fetchWalletBalance() async {
     try {
-      // Use getAllWalletBalances API to get all wallet balances
-      final result = await WalletService.getAllWalletBalances();
-      debugPrint('Home Screen - getAllWalletBalances Result: $result');
-      
-      if (result['success'] == true && result['data'] != null) {
-        final data = result['data'];
-        double totalAvailable = 0.0;
-        
-        // Handle flat format: {spotBalance: X, mainBalance: {USDT: Y}, p2pBalance: Z, botBalance: W}
-        final walletTypeMap = {
-          'spot': 'spotBalance',
-          'main': 'mainBalance', 
-          'p2p': 'p2pBalance',
-          'bot': 'botBalance',
-        };
-        
-        for (String type in walletTypeMap.keys) {
-          final fieldName = walletTypeMap[type]!;
-          final walletData = data[fieldName];
-          
-          if (walletData != null) {
-            double available = 0.0;
-            
-            if (walletData is Map) {
-              // Format: {INR: X, USDT: Y}
-              if (walletData['USDT'] != null) {
-                available = double.tryParse(walletData['USDT'].toString()) ?? 0.0;
-              }
-            } else if (walletData is num) {
-              // Format: spotBalance: 0 (direct number)
-              available = walletData.toDouble();
-            }
-            
-            totalAvailable += available;
-            debugPrint('Home Screen - $type available: $available');
-          }
-        }
-        
-        // Fallback: try nested format if flat format returned 0
-        if (totalAvailable == 0) {
-          final walletTypes = ['spot', 'p2p', 'bot', 'main'];
-          for (String type in walletTypes) {
-            if (data[type] != null) {
-              final wallet = data[type];
-              if (wallet['balances'] != null && wallet['balances'] is List) {
-                final balances = wallet['balances'] as List;
-                for (var b in balances) {
-                  final coin = b['coin']?.toString().toUpperCase() ?? '';
-                  if (coin == 'USDT') {
-                    final available = double.tryParse(b['available']?.toString() ?? '0') ?? 0.0;
-                    totalAvailable += available;
-                    debugPrint('Home Screen (nested) - $type available: $available');
-                  }
-                }
-              }
-            }
-          }
-        }
-        
-        debugPrint('Home Screen - Total Available USDT: $totalAvailable');
-        
-        if (mounted) {
-          setState(() {
-            _totalBalance = totalAvailable;
-          });
-        }
-      } else {
-        // Fallback to SpotService if WalletService fails
-        debugPrint('WalletService failed, trying SpotService...');
-        final spotResult = await SpotService.getBalance();
-        if (spotResult['success'] == true && spotResult['data'] != null) {
-          final spotData = spotResult['data'];
-          if (spotData['assets'] != null && spotData['assets'] is List) {
-            final List assetsList = spotData['assets'];
-            for (var assetItem in assetsList) {
-              final assetName = assetItem['asset']?.toString().toUpperCase() ?? '';
-              if (assetName == 'USDT') {
-                final available = double.tryParse(assetItem['available']?.toString() ?? '0') ?? 0.0;
-                if (mounted) {
-                  setState(() {
-                    _totalBalance = available;
-                  });
-                }
-                debugPrint('Home Screen - SpotService USDT available: $available');
-                break;
-              }
-            }
-          }
-        }
+      await unified.UnifiedWalletService.refreshAllBalances();
+      if (mounted) {
+        setState(() {
+          _totalBalance = unified.UnifiedWalletService.totalUSDTBalance;
+        });
       }
     } catch (e) {
       debugPrint('Error fetching wallet balance in Home: $e');

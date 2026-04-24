@@ -39,12 +39,6 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
   List<Map<String, dynamic>> _transactionHistory = [];
   List<Map<String, dynamic>> _conversionHistory = [];
 
-  // Wallet balances from getWalletBalance API
-  Map<String, dynamic> _apiWalletBalances = {};
-  double _mainUSDT = 0.0;
-  double _spotUSDT = 0.0;
-  double _p2pUSDT = 0.0;
-  double _botUSDT = 0.0;
 
   @override
   void initState() {
@@ -55,7 +49,6 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
     _setupStreams();
     _fetchUserData();
     _fetchHistoryData();
-    _fetchWalletBalances(); // Fetch from getWalletBalance API
 
     // Initial fetch if not already initialized
     unified.UnifiedWalletService.initialize();
@@ -94,7 +87,7 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
     _socketBalanceSubscription = SocketService.balanceStream.listen((data) {
       if (mounted && (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary')) {
         debugPrint('Wallet Screen: Wallet summary update received');
-        _fetchWalletBalances();
+        unified.UnifiedWalletService.refreshAllBalances();
       }
     });
 
@@ -182,65 +175,11 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
     await Future.wait([
       unified.UnifiedWalletService.refreshAllBalances(),
       _fetchHistoryData(),
-      _fetchWalletBalances(), // Refresh from API
     ]);
   }
 
-  // Fetch wallet balances from getWalletBalance API
-  Future<void> _fetchWalletBalances() async {
-    try {
-      final result = await WalletService.getWalletBalance();
-      if (result['success'] == true && result['data'] != null) {
-        final data = result['data'];
-        setState(() {
-          _apiWalletBalances = data;
-          // Extract USDT balances from each wallet type
-          _mainUSDT = _extractUSDTFromWalletData(data['main']);
-          _spotUSDT = _extractUSDTFromWalletData(data['spot']);
-          _p2pUSDT = _extractUSDTFromWalletData(data['p2p']);
-          _botUSDT = _extractUSDTFromWalletData(data['bot'] ?? data['demo_bot']);
-        });
-      }
-    } catch (e) {
-      debugPrint('Error fetching wallet balances: $e');
-    }
-  }
 
-  // Helper to extract USDT balance from wallet data
-  double _extractUSDTFromWalletData(dynamic walletData) {
-    if (walletData == null) return 0.0;
 
-    // Handle balances list format
-    if (walletData['balances'] is List) {
-      final balances = walletData['balances'] as List;
-      for (var balance in balances) {
-        if (balance['coin']?.toString().toUpperCase() == 'USDT') {
-          return double.tryParse(balance['total']?.toString() ?? balance['available']?.toString() ?? '0') ?? 0.0;
-        }
-      }
-    }
-
-    // Handle balances map format
-    if (walletData['balances'] is Map) {
-      final usdtData = walletData['balances']['USDT'] ?? walletData['balances']['usdt'];
-      if (usdtData is Map) {
-        return double.tryParse(usdtData['total']?.toString() ?? usdtData['available']?.toString() ?? '0') ?? 0.0;
-      } else if (usdtData is num) {
-        return usdtData.toDouble();
-      }
-    }
-
-    // Direct USDT fields
-    if (walletData['USDT'] != null) {
-      final usdt = walletData['USDT'];
-      if (usdt is num) return usdt.toDouble();
-      if (usdt is Map) {
-        return double.tryParse(usdt['total']?.toString() ?? usdt['available']?.toString() ?? '0') ?? 0.0;
-      }
-    }
-
-    return 0.0;
-  }
 
   void _copyAddress() {
     Clipboard.setData(ClipboardData(text: _walletAddress));
