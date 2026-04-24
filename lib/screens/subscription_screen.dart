@@ -102,18 +102,21 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
       if (mounted && (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary')) {
         final balanceData = data['data'];
         if (balanceData != null && balanceData is Map) {
-          final botBalance = balanceData['botBalance'] ?? balanceData['bot'];
-          if (botBalance != null) {
+          // Use availableBalance instead of botBalance to show only investable amount
+          final availableBalance = balanceData['availableBalance'] ?? balanceData['available'];
+          if (availableBalance != null) {
             double newBalance = 0.0;
-            if (botBalance is num) {
-              newBalance = botBalance.toDouble();
-            } else if (botBalance is Map) {
-              newBalance = double.tryParse(botBalance['USDT']?.toString() ?? '0') ?? 0.0;
+            if (availableBalance is num) {
+              newBalance = availableBalance.toDouble();
+            } else if (availableBalance is Map) {
+              newBalance = double.tryParse(availableBalance['USDT']?.toString() ?? '0') ?? 0.0;
+            } else {
+              newBalance = double.tryParse(availableBalance.toString()) ?? 0.0;
             }
             setState(() {
               _totalBalance = newBalance.toStringAsFixed(2);
             });
-            debugPrint('Subscription Screen: Bot balance updated: $newBalance');
+            debugPrint('Subscription Screen: Available balance updated: $newBalance');
           }
         }
       }
@@ -443,7 +446,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  _buildDetailRow('Plan', _planName ?? 'Annual Plan'),
+                  _buildDetailRow('Plan', _planName ?? 'Basic Package'),
                   _buildDetailRow('Status', _isSubscribed ? 'Active' : 'Inactive'),
                   _buildDetailRow('Days Remaining', '$_daysLeft days'),
                   _buildDetailRow('Price', _planPrice != null ? '\$${_planPrice!.toStringAsFixed(2)}' : '\$25.00'),

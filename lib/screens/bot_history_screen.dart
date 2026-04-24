@@ -244,21 +244,26 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            label,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.5),
-              fontSize: 14,
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.5),
+                fontSize: 14,
+              ),
             ),
           ),
-          Text(
-            value,
-            style: TextStyle(
-              color: valueColor ?? Colors.white,
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                color: valueColor ?? Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
         ],
@@ -338,12 +343,37 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
           const SizedBox(height: 20),
           _buildHistoryMetric('Entry Price:', trade.formattedOpenPrice),
           _buildHistoryMetric('Exit Price:', trade.formattedClosePrice),
-          if (trade.userSimulatedMargin != null && trade.userSimulatedMargin! > 0)
-            _buildHistoryMetric('Margin:', '${trade.userSimulatedMargin!.toStringAsFixed(2)} USDT'),
           _buildHistoryMetric(
-            'PnL:', 
+            'Your PnL:',
             '${trade.isProfit ? '+' : ''}${trade.userPnl.toStringAsFixed(2)} USDT',
             valueColor: trade.isProfit ? Colors.green : Colors.red,
+          ),
+          _buildHistoryMetric(
+            'Total PnL:',
+            '${trade.totalPnl >= 0 ? '+' : ''}${trade.totalPnl.toStringAsFixed(2)} USDT',
+            valueColor: trade.totalPnl >= 0 ? Colors.green : Colors.red,
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () => _viewTradeDetails(trade),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFA1CD3B),
+                foregroundColor: Colors.black,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: const Text(
+                'View',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
           ),
         ],
       ),
@@ -688,21 +718,101 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
   }
 
   void _viewTradeDetails(BotTrade trade) {
-    // Navigate to trade detail screen
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Viewing details for ${trade.pair} trade'),
-        backgroundColor: const Color(0xFF84BD00),
+    // Extract shares from distribution
+    double yourShare = 0.0;
+    double adminShare = 0.0;
+    double uplineShare = 0.0;
+
+    if (trade.distribution != null) {
+      for (var item in trade.distribution!) {
+        final type = item['type']?.toString() ?? '';
+        final share = double.tryParse(item['share']?.toString() ?? '0') ?? 0.0;
+
+        switch (type.toLowerCase()) {
+          case 'user':
+            yourShare = share;
+            break;
+          case 'admin':
+            adminShare = share;
+            break;
+          case 'upline':
+            uplineShare = share;
+            break;
+        }
+      }
+    }
+
+    // Show bottom sheet with distribution details
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1C1C1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Distribution Details',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close, color: Colors.white),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            _buildDistributionRow('Your Share', yourShare),
+            const SizedBox(height: 16),
+            _buildDistributionRow('Admin Share', adminShare),
+            const SizedBox(height: 16),
+            _buildDistributionRow('Upline Share', uplineShare),
+            const SizedBox(height: 16),
+            Container(
+              height: 1,
+              color: Colors.white.withOpacity(0.1),
+            ),
+            const SizedBox(height: 16),
+            _buildDistributionRow('Total', yourShare + adminShare + uplineShare),
+          ],
+        ),
       ),
     );
-    
-    // TODO: Navigate to detailed trade screen
-    // Navigator.push(
-    //   context,
-    //   MaterialPageRoute(
-    //     builder: (context) => BotTradeDetailScreen(trade: trade),
-    //   ),
-    // );
+  }
+
+  Widget _buildDistributionRow(String label, double value) {
+    final isPositive = value >= 0;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.6),
+            fontSize: 16,
+          ),
+        ),
+        Text(
+          '${isPositive ? '+' : ''}${value.toStringAsFixed(4)} USDT',
+          style: TextStyle(
+            color: isPositive ? const Color(0xFFA1CD3B) : Colors.red,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildTradesContent() {

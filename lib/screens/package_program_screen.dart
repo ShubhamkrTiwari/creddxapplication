@@ -216,7 +216,7 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
                           : Text(
                               _isSubscribed 
                                   ? 'Already Subscribed'
-                                  : 'Get Annual Plan',
+                                  : 'Get Basic Package',
                               style: TextStyle(
                                 color: _isSubscribed ? Colors.white : Colors.black,
                                 fontSize: 16,
@@ -254,7 +254,7 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  _buildDetailRow('Plan', 'Annual Plan'),
+                  _buildDetailRow('Plan', 'Basic Package'),
                   _buildDetailRow('Status', 'Active'),
                   _buildDetailRow('Price', '\$25'),
                   _buildDetailRow('Duration', '365 Days'),
@@ -399,10 +399,10 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
     setState(() => _isSubscribing = true);
     
     try {
-      debugPrint('=== SUBSCRIBING TO ANNUAL PLAN ===');
+      debugPrint('=== SUBSCRIBING TO BASIC PACKAGE ===');
       
       final response = await BotService.subscribeToPlan(
-        plan: 'Annual Plan',
+        plan: 'Basic Package',
         price: 25.0, // Set price to 25 USD as required by API
       );
       
@@ -415,7 +415,7 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
         // Set the global package state to true
         BotTradeDetailScreen.hasPackage = true;
         
-        _showSuccessDialog('Subscription successful!', response['message'] ?? 'You are now subscribed to Annual Plan');
+        _showSuccessDialog('Subscription successful!', response['message'] ?? 'You are now subscribed to Basic Package');
       } else {
         _showErrorDialog('Subscription failed', response['error'] ?? 'Something went wrong');
       }

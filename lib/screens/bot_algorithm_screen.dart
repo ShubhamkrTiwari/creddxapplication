@@ -465,7 +465,8 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
             data['balance']?.toString() ?? data['availableBalance']?.toString() ??
             data['walletBalance']?.toString() ?? '0'
           ) ?? 0.0;
-          if (adminBalance > 0) {
+          // Only use admin user data balance if availableBalance is still 0 (not set by bot balance API)
+          if (adminBalance > 0 && availableBalance == 0) {
             availableBalance = adminBalance;
             debugPrint('Using balance from admin user-data: $availableBalance');
           }
@@ -498,7 +499,8 @@ class _BotAlgorithmScreenState extends State<BotAlgorithmScreen> {
             data['walletBalance']?.toString() ?? data['botBalance']?.toString() ??
             data['maxWithdrawOmega']?.toString() ?? '0'
           ) ?? 0.0;
-          if (userBalance > 0) {
+          // Only use user data balance if availableBalance is still 0 (not set by bot balance API)
+          if (userBalance > 0 && availableBalance == 0) {
             availableBalance = userBalance;
             debugPrint('Using balance from /users/user: $availableBalance');
           }

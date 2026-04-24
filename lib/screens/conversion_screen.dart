@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:async';
 import '../services/socket_service.dart';
 import '../services/auth_service.dart';
+import '../services/wallet_service.dart';
 import '../services/unified_wallet_service.dart' as unified;
 
 class ConversionScreen extends StatefulWidget {
@@ -46,7 +47,22 @@ class _ConversionScreenState extends State<ConversionScreen> {
     // Initialize and fetch fresh balances from server right away
     unified.UnifiedWalletService.initialize().then((_) {
       unified.UnifiedWalletService.refreshAllBalances();
+      _fetchINRFromApi(); // Also fetch specifically using the INR API logic
     });
+  }
+
+  Future<void> _fetchINRFromApi() async {
+    try {
+      final result = await WalletService.getINRBalance();
+      if (result['success'] == true && mounted) {
+        setState(() {
+          _inrBalance = result['inrBalance'] ?? 0.0;
+        });
+        debugPrint('ConversionScreen: INR fetched from dedicated API: $_inrBalance (source: ${result['source']})');
+      }
+    } catch (e) {
+      debugPrint('ConversionScreen: Error fetching INR from dedicated API: $e');
+    }
   }
 
   /// Set up real-time balance streams — mirrors WalletScreen._setupStreams()
@@ -55,13 +71,12 @@ class _ConversionScreenState extends State<ConversionScreen> {
     _balanceSubscription = unified.UnifiedWalletService.walletBalanceStream.listen((balance) {
       if (mounted) {
         setState(() {
-          // Use totalINRBalance — includes mainBalance.INR + _inrHolding API + spot + bot
-          // (same as WalletScreen which shows the balance correctly)
-          _inrBalance = unified.UnifiedWalletService.totalINRBalance;
+          // Use mainINRBalance — specifically fetching INR from mainBalance
+          _inrBalance = unified.UnifiedWalletService.mainINRBalance;
           _usdtBalance = unified.UnifiedWalletService.mainUSDTBalance;
           _totalUsdtBalance = unified.UnifiedWalletService.totalUSDTBalance;
         });
-        debugPrint('ConversionScreen: INR updated from socket stream: $_inrBalance (holding=${unified.UnifiedWalletService.inrHolding})');
+        debugPrint('ConversionScreen: INR updated from socket stream: $_inrBalance');
       }
     });
 
@@ -73,14 +88,15 @@ class _ConversionScreenState extends State<ConversionScreen> {
               data['type'] == 'balance_update')) {
         debugPrint('ConversionScreen: Socket event ${data['type']} — refreshing balances');
         unified.UnifiedWalletService.refreshAllBalances();
+        _fetchINRFromApi(); // Also refresh from API
       }
     });
 
     // 3. Seed from current cache immediately (no async wait needed)
-    _inrBalance = unified.UnifiedWalletService.totalINRBalance;
+    _inrBalance = unified.UnifiedWalletService.mainINRBalance;
     _usdtBalance = unified.UnifiedWalletService.mainUSDTBalance;
     _totalUsdtBalance = unified.UnifiedWalletService.totalUSDTBalance;
-    debugPrint('ConversionScreen: Initial INR from cache: $_inrBalance (holding=${unified.UnifiedWalletService.inrHolding})');
+    debugPrint('ConversionScreen: Initial INR from cache: $_inrBalance');
   }
 
 
@@ -241,15 +257,13 @@ class _ConversionScreenState extends State<ConversionScreen> {
     }
 
     // Always read the latest live balance from the service at conversion time.
-    // Explicitly refresh INR holding first — _inrHolding is the primary INR source
-    // and it's fetched from a separate API that may not have completed yet.
     setState(() => _isLoading = true);
-    await unified.UnifiedWalletService.refreshINRHolding();
-
-    final liveInrBalance = unified.UnifiedWalletService.totalINRBalance;
+    
+    // We only care about main INR balance for conversion
+    final liveInrBalance = unified.UnifiedWalletService.mainINRBalance;
     final liveTotalUsdt = unified.UnifiedWalletService.totalUSDTBalance;
 
-    debugPrint('_performConversion: liveINR=$liveInrBalance (holding=${unified.UnifiedWalletService.inrHolding}), liveTotalUSDT=$liveTotalUsdt, amount=$amount, from=$_fromCurrency');
+    debugPrint('_performConversion: liveINR=$liveInrBalance, liveTotalUSDT=$liveTotalUsdt, amount=$amount, from=$_fromCurrency');
 
     // Sync local state so the UI reflects the latest values too
     if (mounted) {

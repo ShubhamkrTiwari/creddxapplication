@@ -1514,6 +1514,7 @@ class BotService {
           if (data['balance'] != null && data['data'] == null) {
             final balance = double.tryParse(data['balance'].toString()) ?? 0.0;
             debugPrint('Parsed simple format - Balance: $balance');
+            // In simple format, assume balance is the available balance (no invested info)
             return {
               'success': true,
               'data': {
@@ -1532,13 +1533,14 @@ class BotService {
 
             // Parse balance fields - handle different possible field names
             final totalBalance = double.tryParse(balanceData['totalBalance']?.toString() ?? balanceData['balance']?.toString() ?? '0') ?? 0.0;
-            final availableBalance = double.tryParse(balanceData['availableBalance']?.toString() ?? balanceData['available']?.toString() ?? '0') ?? 0.0;
             final investedBalance = double.tryParse(balanceData['investedBalance']?.toString() ?? balanceData['invested']?.toString() ?? '0') ?? 0.0;
+            // Calculate available balance as total - invested to ensure correct value
+            final availableBalance = totalBalance - investedBalance;
 
             debugPrint('=== PARSED VALUES ===');
             debugPrint('Total Balance: $totalBalance');
-            debugPrint('Available Balance: $availableBalance');
             debugPrint('Invested Balance: $investedBalance');
+            debugPrint('Calculated Available Balance: $availableBalance');
 
             return {
               'success': true,
@@ -1881,38 +1883,70 @@ class BotTrade {
       // Parse time from API with better error handling
       DateTime? parsedDate;
       String? rawTimeString;
-      
+
       // Try different possible field names for time
       final timeFields = ['time', 'date', 'timestamp', 'created_at', 'updatedAt', 'updateTime'];
       String? usedField;
-      
+
       for (final field in timeFields) {
-        final timeString = json[field]?.toString();
-        if (timeString != null && timeString.isNotEmpty) {
-          // Parse as UTC to preserve exact time from API
-          parsedDate = DateTime.tryParse(timeString);
-          if (parsedDate != null) {
+        final timeValue = json[field];
+        if (timeValue != null) {
+          // Check if it's a Unix timestamp (number)
+          if (timeValue is num) {
+            // Unix timestamp in milliseconds
+            final timestamp = timeValue.toInt();
+            // Check if it's in milliseconds (larger than typical seconds timestamp)
+            if (timestamp > 1000000000000) {
+              parsedDate = DateTime.fromMillisecondsSinceEpoch(timestamp);
+            } else {
+              // Assume it's in seconds
+              parsedDate = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000);
+            }
             usedField = field;
-            rawTimeString = timeString; // Store raw time string
-            debugPrint('Parsing $field: "$timeString" -> $parsedDate (UTC)');
+            rawTimeString = parsedDate.toIso8601String();
+            debugPrint('Parsing $field (Unix timestamp): $timestamp -> $parsedDate');
             break;
+          } else {
+            // Try parsing as ISO8601 string
+            final timeString = timeValue.toString();
+            if (timeString.isNotEmpty) {
+              parsedDate = DateTime.tryParse(timeString);
+              if (parsedDate != null) {
+                usedField = field;
+                rawTimeString = timeString;
+                debugPrint('Parsing $field (ISO8601): "$timeString" -> $parsedDate');
+                break;
+              }
+            }
           }
         }
       }
-      
+
       if (parsedDate == null) {
         debugPrint('Failed to parse time from any field, using current time');
         debugPrint('Available fields: ${json.keys.join(", ")}');
         parsedDate = DateTime.now();
       }
 
+      // API mapping: userPnl -> totalPnl, pnl -> userPnl
+      final apiUserPnl = double.tryParse(json['userPnl']?.toString() ?? '0') ?? 0.0;
+      final apiPnl = double.tryParse(json['pnl']?.toString() ?? '0') ?? 0.0;
+
+      // totalPnl = userPnl from API (no rounding, keep decimal)
+      final totalPnlValue = apiUserPnl;
+      // userPnl = pnl from API
+      final extractedUserPnl = apiPnl;
+
+      debugPrint('API userPnl: $apiUserPnl -> totalPnl: $totalPnlValue');
+      debugPrint('API pnl: $apiPnl -> userPnl: $extractedUserPnl');
+
       return BotTrade(
         id: json['positionId']?.toString() ?? '',
         pair: symbol,
         openPrice: double.tryParse(json['avgPrice']?.toString() ?? '0') ?? 0.0,
         closePrice: double.tryParse(json['avgClosePrice']?.toString() ?? '0') ?? 0.0,
-        totalPnl: double.tryParse(json['pnl']?.toString() ?? '0') ?? 0.0,
-        userPnl: double.tryParse(json['pnl']?.toString() ?? '0') ?? 0.0,
+        totalPnl: totalPnlValue,
+        userPnl: extractedUserPnl,
         date: parsedDate,
         status: json['positionSide']?.toString() ?? '',
         botName: botName,
@@ -1981,21 +2015,36 @@ class BotTrade {
   }
 
   String get formattedRawTime {
-    // Return raw time string exactly as received from API with date and time
+    // Return raw time string exactly as received from API with date and time in 12-hour format
     if (rawTime != null && rawTime!.isNotEmpty) {
-      // Format: YYYY-MM-DD HH:MM:SS
+      // Format: YYYY-MM-DD HH:MM:SS AM/PM
       if (rawTime!.contains('T')) {
         final parts = rawTime!.split('T');
         if (parts.length > 1) {
           final datePart = parts[0]; // YYYY-MM-DD
           final timePart = parts[1].split('.')[0]; // HH:MM:SS (remove milliseconds and Z)
+          
+          // Convert 24-hour to 12-hour format
+          final timeComponents = timePart.split(':');
+          if (timeComponents.length >= 3) {
+            final hour = int.tryParse(timeComponents[0]) ?? 0;
+            final minute = timeComponents[1];
+            final second = timeComponents[2];
+            
+            final period = hour >= 12 ? 'PM' : 'AM';
+            final hour12 = hour % 12 == 0 ? 12 : hour % 12;
+            
+            return '$datePart ${hour12.toString().padLeft(2, '0')}:$minute:$second $period';
+          }
           return '$datePart $timePart';
         }
       }
       return rawTime!;
     }
-    // Fallback to formatted time
-    return formattedTimeUTC;
+    // Fallback to formatted time in 12-hour format
+    final hour12 = date.hour % 12 == 0 ? 12 : date.hour % 12;
+    final period = date.hour >= 12 ? 'PM' : 'AM';
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${hour12.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}:${date.second.toString().padLeft(2, '0')} $period';
   }
 
   String _getMonthName(int month) {
