@@ -7,6 +7,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'user_service.dart';
 import 'notification_service.dart';
+import 'unified_wallet_service.dart';
+import 'socket_service.dart';
+import 'spot_socket_service.dart';
+import 'temp_wallet_socket_service.dart';
 
 class AuthService {
   static const String _baseUrl = 'https://api11.hathmetech.com/api';
@@ -70,6 +74,106 @@ class AuthService {
     };
   }
 
+  /// Maps raw KYC status strings (any case) to the canonical display value
+  /// used throughout the app ('Completed', 'Pending', 'Rejected', 'Expired',
+  /// 'Not Started').  Mirrors the logic in UserService._mapKycStatusFromAuthObject().
+  static String _mapKycStatus(String rawStatus) {
+    final s = rawStatus.toLowerCase().trim();
+    if (s == 'completed' || s == 'already_completed' || s == 'verified' || s == 'approved') {
+      return 'Completed';
+    }
+    if (s == 'pending' || s == 'submitted' || s == 'processing') return 'Pending';
+    if (s == 'rejected' || s == 'failed' || s == 'denied') return 'Rejected';
+    if (s == 'expired') return 'Expired';
+    return 'Not Started';
+  }
+
+  /// Extracts the KYC status from the auth response user object and saves it
+  /// to SharedPreferences immediately so screens see the correct value without
+  /// waiting for the separate KYC status API call.
+  static Future<void> _saveKycStatusFromUserObject(
+      Map<String, dynamic>? userObj, SharedPreferences prefs) async {
+    if (userObj == null) return;
+
+    String determinedStatus = 'Not Started';
+
+    // Try nested kyc object with multiple fields: user.kyc
+    final kycObj = userObj['kyc'];
+    if (kycObj is Map) {
+      determinedStatus = _parseKYCFromMultiFieldObject(Map<String, dynamic>.from(kycObj));
+    } else {
+      // Fallback: top-level flat fields
+      String? rawStatus = userObj['kycStatus']?.toString() ??
+          userObj['kyc_status']?.toString();
+      
+      if (rawStatus != null && rawStatus.isNotEmpty) {
+        determinedStatus = _mapKycStatus(rawStatus);
+      }
+    }
+
+    if (determinedStatus.isNotEmpty) {
+      await prefs.setString('kyc_status', determinedStatus);
+      debugPrint('KYC Status from auth user object: "$determinedStatus"');
+    }
+  }
+
+  /// Parse KYC status from kyc object with multiple fields (same logic as UserService)
+  static String _parseKYCFromMultiFieldObject(Map<String, dynamic> kycObj) {
+    final kycCompleted = kycObj['kycCompleted'];
+    final documentImageVerified = kycObj['documentImageVerified'];
+    final selfieVerified = kycObj['selfieVerified'];
+    final selfieStatus = kycObj['selfieStatus'] ?? kycObj['selfiestatus'];
+    final kycStatus = kycObj['kycStatus']?.toString() ?? kycObj['status']?.toString();
+
+    debugPrint('_parseKYCFromMultiFieldObject: kycCompleted=$kycCompleted, documentImageVerified=$documentImageVerified, selfieVerified=$selfieVerified, selfieStatus=$selfieStatus');
+
+    String determinedStatus = 'Not Started';
+
+    // Logic to determine KYC status based on multiple fields
+    if (kycCompleted != null) {
+      // kycCompleted === 3 → Rejected
+      if (kycCompleted == 3) {
+        determinedStatus = 'Rejected';
+        debugPrint('✅ Auth KYC Status: REJECTED (kycCompleted=3)');
+      }
+      // kycCompleted === 2 → Completed
+      else if (kycCompleted == 2) {
+        determinedStatus = 'Completed';
+        debugPrint('✅ Auth KYC Status: COMPLETED (kycCompleted=2)');
+      }
+      // kycCompleted === 1 → In progress, check other fields
+      else if (kycCompleted == 1) {
+        // selfieStatus === 3 → Selfie Rejected
+        if (selfieStatus == 3) {
+          determinedStatus = 'Rejected';
+          debugPrint('✅ Auth KYC Status: REJECTED (selfieStatus=3)');
+        }
+        // kycCompleted === 1 && documentImageVerified === true && selfieStatus === 1 → Pending Admin Approval
+        else if (documentImageVerified == true && selfieStatus == 1) {
+          determinedStatus = 'Pending';
+          debugPrint('✅ Auth KYC Status: PENDING ADMIN APPROVAL');
+        }
+        // kycCompleted === 1 && documentImageVerified === true → Document Verified
+        else if (documentImageVerified == true) {
+          determinedStatus = 'Pending';
+          debugPrint('✅ Auth KYC Status: DOCUMENT VERIFIED');
+        }
+        // kycCompleted === 1 but document not verified yet → In Progress
+        else {
+          determinedStatus = 'Pending';
+          debugPrint('✅ Auth KYC Status: PENDING');
+        }
+      }
+    }
+    // Fallback: Use kycStatus string if numeric fields are not available
+    else if (kycStatus != null && kycStatus.isNotEmpty) {
+      determinedStatus = _mapKycStatus(kycStatus);
+      debugPrint('✅ Auth KYC Status: Using kycStatus string "$kycStatus" → "$determinedStatus"');
+    }
+
+    return determinedStatus;
+  }
+
   static Future<Map<String, dynamic>> login(String email, String password) async {
     try {
       final deviceUuid = await getDeviceUuid();
@@ -112,6 +216,13 @@ class AuthService {
           return {'success': false, 'message': 'Invalid credentials or token not received from server'};
         }
         
+        // Clear any previous user data before saving new user data
+        await UserService.instance.clearUserData();
+        await UnifiedWalletService.clearState();
+        SocketService.disconnect();
+        SpotSocketService.reset();
+        TempWalletSocketService.disconnect();
+        
         // Save token and user data
         await prefs.setString(_tokenKey, token);
         await prefs.setString(_userKey, json.encode(data['user'] ?? {}));
@@ -135,21 +246,26 @@ class AuthService {
             await prefs.setString('user_id', userId.toString());
           }
         }
+
+        // Save KYC status directly from the auth response user object so the
+        // correct status is available immediately — before any extra API call.
+        await _saveKycStatusFromUserObject(
+            data['user'] as Map<String, dynamic>?, prefs);
+        
+        // Initialize and Refresh user profile immediately after login
+        // This will fetch KYC status from /auth/me endpoint
+        await UserService.instance.initUserData();
+        
+        // Extract and update wallet data from login response if available
+        await _updateWalletFromLoginResponse(data);
+        
+        // Initialize wallet service and connect socket for balance fetching
+        await _initializeWalletAndSocket();
         
         // Fetch IP address immediately after login
         await _fetchAndSaveIPAddress();
         
-        // Log login notification
-        await NotificationService.addNotification(
-          title: 'Login Successful',
-          message: 'New login detected from ${getDeviceName()}',
-          type: NotificationType.security,
-        );
-        
-        // Check KYC status after login
-        await _checkAndSaveKYCStatus();
-        
-        debugPrint('Login successful, token saved');
+        debugPrint('Login successful, token and profile updated');
         return {'success': true, 'message': 'Login successful'};
       } else {
         final errorData = json.decode(response.body);
@@ -193,48 +309,13 @@ class AuthService {
     }
   }
 
-  // Check KYC status and save it locally
-  static Future<void> _checkAndSaveKYCStatus() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString(_tokenKey);
-      final userId = prefs.getString('user_id');
-
-      if (token == null || userId == null) return;
-
-      final response = await http.post(
-        Uri.parse('$_baseUrl/v1/kyc/status'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: json.encode({
-          'user_id': userId,
-        }),
-      ).timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['success'] == true && responseData['data'] != null) {
-          final kycData = responseData['data'];
-          final kycStatus = kycData['status']?.toString() ?? 'not_started';
-          await prefs.setString('kyc_status', kycStatus);
-          debugPrint('KYC Status saved: $kycStatus');
-        }
-      }
-    } catch (e) {
-      debugPrint('Error checking KYC status: $e');
-    }
-  }
-
-  // Get saved KYC status
+  // Get saved KYC status (from /auth/me endpoint via UserService)
   static Future<String> getKYCStatus() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      return prefs.getString('kyc_status') ?? 'not_started';
+      return prefs.getString('kyc_status') ?? 'Not Started';
     } catch (e) {
-      return 'not_started';
+      return 'Not Started';
     }
   }
 
@@ -274,17 +355,18 @@ class AuthService {
     }
   }
 
-  static Future<Map<String, dynamic>> signupSendOtp(String email) async {
+  static Future<Map<String, dynamic>> signupSendOtp(String email, {String? referralCode}) async {
     try {
       final deviceUuid = await getDeviceUuid();
       final osInt = getDeviceOSInt();
       
       final payload = {
-        'email': email.trim(), 
+        'email': email.trim(),
         'os': osInt,
         'deviceOs': osInt,
         'deviceUuid': deviceUuid,
         'deviceName': getDeviceName(),
+        if (referralCode != null && referralCode.isNotEmpty) 'referralCode': referralCode,
       };
 
       debugPrint('=== SIGNUP SEND OTP PAYLOAD ===');
@@ -315,15 +397,28 @@ class AuthService {
     try {
       final deviceUuid = await getDeviceUuid();
       final osInt = getDeviceOSInt();
+      final prefs = await SharedPreferences.getInstance();
+      final ipAddress = prefs.getString('ip_address') ?? '';
+      
+      debugPrint('=== SIGNUP DEBUG ===');
+      debugPrint('Email: ${email.trim()}');
+      debugPrint('Referral Code: $referralCode');
+      debugPrint('Referral Code Is Empty: ${referralCode?.isEmpty ?? true}');
       
       final payload = {
         'email': email.trim(),
-        if (referralCode != null) 'referral_code': referralCode,
-        'os': osInt,
-        'deviceOs': osInt,
-        'deviceUuid': deviceUuid,
+        'otp': '', // Will be filled during OTP verification
+        if (referralCode != null && referralCode.isNotEmpty) 'referralCode': referralCode,
+        'ipAddress': ipAddress,
         'deviceName': getDeviceName(),
+        'deviceUuid': deviceUuid,
+        'deviceManufacturer': 'Unknown', // Can be enhanced with device_info_plus
+        'deviceVersion': '1.0', // Can be enhanced with device_info_plus
+        'deviceOs': osInt,
       };
+      
+      debugPrint('SIGNUP PAYLOAD: $payload');
+      debugPrint('ReferralCode in payload: ${payload['referralCode']}');
 
       final response = await http.post(
         Uri.parse('$_baseUrl/user/v1/auth/signup'),
@@ -468,6 +563,13 @@ class AuthService {
           return {'success': false, 'message': 'Invalid OTP or token not received from server'};
         }
         
+        // Clear any previous user data before saving new user data
+        await UserService.instance.clearUserData();
+        await UnifiedWalletService.clearState();
+        SocketService.disconnect();
+        SpotSocketService.reset();
+        TempWalletSocketService.disconnect();
+        
         // Save token and user data
         await prefs.setString(_tokenKey, token);
         await prefs.setString(_userKey, json.encode(data['user'] ?? {}));
@@ -491,11 +593,25 @@ class AuthService {
             await prefs.setString('user_id', userId.toString());
           }
         }
+
+        // Save KYC status directly from the auth response user object.
+        await _saveKycStatusFromUserObject(
+            data['user'] as Map<String, dynamic>?, prefs);
+        
+        // Initialize and Refresh user profile immediately after login
+        // This will fetch KYC status from /auth/me endpoint
+        await UserService.instance.initUserData();
+        
+        // Extract and update wallet data from login response if available
+        await _updateWalletFromLoginResponse(data);
+        
+        // Initialize wallet service and connect socket for balance fetching
+        await _initializeWalletAndSocket();
         
         // Fetch IP address immediately after login
         await _fetchAndSaveIPAddress();
         
-        debugPrint('OTP Login successful, token saved');
+        debugPrint('OTP Login successful, token and profile updated');
         return {'success': true, 'message': 'Login successful'};
       } else {
         final errorData = json.decode(response.body);
@@ -510,19 +626,29 @@ class AuthService {
     try {
       final deviceUuid = await getDeviceUuid();
       final osInt = getDeviceOSInt();
+      final prefs = await SharedPreferences.getInstance();
+      final ipAddress = prefs.getString('ip_address') ?? '';
+      
+      debugPrint('=== COMPLETE SIGNUP WITH OTP DEBUG ===');
+      debugPrint('Email: ${email.trim()}');
+      debugPrint('OTP: ${otp.trim()}');
+      debugPrint('Referral Code: $referralCode');
+      debugPrint('Referral Code Is Empty: ${referralCode?.isEmpty ?? true}');
       
       final payload = {
         'email': email.trim(),
         'otp': otp.trim(),
-        if (referralCode != null) 'referral_code': referralCode,
-        'os': osInt,
-        'deviceOs': osInt,
-        'deviceUuid': deviceUuid,
+        if (referralCode != null && referralCode.isNotEmpty) 'referralCode': referralCode,
+        'ipAddress': ipAddress,
         'deviceName': getDeviceName(),
+        'deviceUuid': deviceUuid,
+        'deviceManufacturer': 'Unknown', // Can be enhanced with device_info_plus
+        'deviceVersion': '1.0', // Can be enhanced with device_info_plus
+        'deviceOs': osInt,
       };
 
-      debugPrint('=== COMPLETE SIGNUP WITH OTP PAYLOAD ===');
-      debugPrint(jsonEncode(payload));
+      debugPrint('COMPLETE SIGNUP PAYLOAD: $payload');
+      debugPrint('ReferralCode in payload: ${payload['referralCode']}');
 
       // Use signup endpoint with OTP
       final response = await http.post(
@@ -543,6 +669,13 @@ class AuthService {
           return {'success': false, 'message': 'Token not received from server'};
         }
         
+        // Clear any previous user data before saving new user data
+        await UserService.instance.clearUserData();
+        await UnifiedWalletService.clearState();
+        SocketService.disconnect();
+        SpotSocketService.reset();
+        TempWalletSocketService.disconnect();
+        
         await prefs.setString(_tokenKey, token);
         
         // Store user ID as String
@@ -555,6 +688,23 @@ class AuthService {
         
         // Save user data
         await prefs.setString(_userKey, json.encode(data['user'] ?? {}));
+
+        // Save KYC status directly from the signup response user object.
+        await _saveKycStatusFromUserObject(
+            data['user'] as Map<String, dynamic>?, prefs);
+        
+        // Initialize and Refresh user profile immediately after signup
+        // This will fetch KYC status from /auth/me endpoint
+        await UserService.instance.initUserData();
+        
+        // Extract and update wallet data from signup response if available
+        await _updateWalletFromLoginResponse(data);
+        
+        // Initialize wallet service and connect socket for balance fetching
+        await _initializeWalletAndSocket();
+        
+        // Fetch IP address immediately after signup
+        await _fetchAndSaveIPAddress();
         
         // Log signup notification
         await NotificationService.addNotification(
@@ -563,6 +713,7 @@ class AuthService {
           type: NotificationType.info,
         );
 
+        debugPrint('Signup successful, token and profile updated');
         return {'success': true, 'message': 'Signup successful'};
       } else {
         final errorData = json.decode(response.body);
@@ -652,6 +803,15 @@ class AuthService {
       await prefs.remove(_tokenKey);
       await prefs.remove(_userKey);
       await prefs.remove('user_id');
+      
+      // Clear all cached user data from UserService
+      await UserService.instance.clearUserData();
+      
+      // Clear all wallet and socket states
+      await UnifiedWalletService.clearState();
+      SocketService.disconnect();
+      SpotSocketService.reset();
+      TempWalletSocketService.disconnect();
 
       return {'success': true, 'message': 'Logout successful'};
     } catch (e) {
@@ -670,5 +830,49 @@ class AuthService {
       return userData['email']?.toString();
     }
     return null;
+  }
+
+  // Initialize wallet service and connect socket for balance fetching after login
+  static Future<void> _initializeWalletAndSocket() async {
+    try {
+      debugPrint('AuthService: Initializing wallet service and socket connection...');
+      
+      // Initialize the unified wallet service
+      await UnifiedWalletService.initialize();
+      
+      // Connect to the main wallet socket
+      await SocketService.connect();
+      
+      // Connect to spot socket for real-time balance updates
+      await SpotSocketService.connect();
+      
+      // Request wallet summary immediately after connection
+      SocketService.requestWalletSummary();
+      
+      debugPrint('AuthService: Wallet service and socket initialized successfully');
+    } catch (e) {
+      debugPrint('AuthService: Error initializing wallet service and socket: $e');
+      // Don't fail login if wallet initialization fails
+    }
+  }
+
+  // Fetch wallet data immediately after login
+  static Future<void> _updateWalletFromLoginResponse(Map<String, dynamic> loginData) async {
+    try {
+      debugPrint('AuthService: Fetching wallet data after login...');
+      
+      // Call wallet API directly to get fresh balance data
+      final result = await UnifiedWalletService.refreshWalletSummary();
+      
+      if (result['success'] == true) {
+        debugPrint('AuthService: Wallet data fetched successfully after login');
+        debugPrint('AuthService: Wallet data: ${result['data']}');
+      } else {
+        debugPrint('AuthService: Failed to fetch wallet data after login: ${result['error']}');
+      }
+    } catch (e) {
+      debugPrint('AuthService: Error fetching wallet after login: $e');
+      // Don't fail login if wallet fetch fails
+    }
   }
 }

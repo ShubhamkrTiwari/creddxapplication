@@ -6,6 +6,10 @@ import 'bot_algorithm_screen.dart';
 import 'bot_positions_screen.dart';
 import 'subscription_screen.dart';
 import '../main_navigation.dart';
+import '../services/user_service.dart';
+import '../utils/kyc_unlock_mixin.dart';
+import 'user_profile_screen.dart';
+import 'kyc_digilocker_instruction_screen.dart';
 
 class BotMainScreen extends StatefulWidget {
   const BotMainScreen({super.key});
@@ -14,9 +18,126 @@ class BotMainScreen extends StatefulWidget {
   State<BotMainScreen> createState() => _BotMainScreenState();
 }
 
-class _BotMainScreenState extends State<BotMainScreen> {
+class _BotMainScreenState extends State<BotMainScreen> with KYCUnlockMixin {
   // Start with index 1 (Dashboard) as the default active tab
   int _selectedIndex = 1;
+  final UserService _userService = UserService();
+
+  @override
+  void initState() {
+    super.initState();
+    // Refresh KYC status to ensure we have the latest status
+    refreshKYCStatus();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Check if we have an initial index from route arguments
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is int && args >= 0 && args < _screens.length) {
+      setState(() {
+        _selectedIndex = args;
+      });
+    }
+  }
+
+  // Check if KYC is completed
+  bool _isKYCCompleted() {
+    return isKYCCompleted(); // Use the mixin method
+  }
+
+  // Check if profile is complete
+  bool _isProfileComplete() {
+    return _userService.hasEmail() && 
+           _userService.userPhone != null && 
+           _userService.userPhone!.isNotEmpty;
+  }
+
+  // Show KYC verification required dialog
+  void _showKYCRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text(
+            'KYC Verification Required',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'You need to complete KYC verification to access algorithmic trading features. Please complete your KYC process first.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Later', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
+              child: const Text('Complete KYC', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Show profile completion required dialog
+  void _showProfileRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text(
+            'Profile Completion Required',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'Please complete your profile information (email and phone number) to access algorithmic trading features.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Later', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const UserProfileScreen()));
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
+              child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Validate KYC and profile before proceeding
+  bool _validateUserRequirements() {
+    if (!_isKYCCompleted()) {
+      _showKYCRequiredDialog();
+      return false;
+    }
+    
+    if (!_isProfileComplete()) {
+      _showProfileRequiredDialog();
+      return false;
+    }
+    
+    return true;
+  }
 
   final List<Widget> _screens = [
     const SizedBox.shrink(), // Home icon navigation trigger
@@ -33,11 +154,19 @@ class _BotMainScreenState extends State<BotMainScreen> {
         MaterialPageRoute(builder: (context) => const MainNavigation()),
         (route) => false,
       );
-    } else {
-      setState(() {
-        _selectedIndex = index;
-      });
+      return;
     }
+    
+    // Validate requirements for Algos (2), Positions (3), and Subscribe (4)
+    if (index >= 2) {
+      if (!_validateUserRequirements()) {
+        return;
+      }
+    }
+
+    setState(() {
+      _selectedIndex = index;
+    });
   }
 
   @override

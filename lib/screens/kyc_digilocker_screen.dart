@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'dart:async';
 import 'kyc_selfie_screen.dart';
 import '../services/user_service.dart';
 
@@ -14,10 +15,15 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen> with WidgetsB
   bool _isDigiLockerConnected = false;
   bool _isLoading = false;
   Map<String, dynamic>? _fetchedDocuments;
+  Map<String, dynamic>? _kycUserData;
   final UserService _userService = UserService();
 
   String? _clientId;
   String? _requestId;
+  String? _lastOpenedUrl;
+  bool _hasOpenedUrl = false;
+  bool _statusCheckedAndVerified = false;
+  Timer? _autoRefreshTimer;
 
   @override
   void initState() {
@@ -28,16 +34,92 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen> with WidgetsB
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _autoRefreshTimer?.cancel();
     super.dispose();
   }
 
   bool _isCheckingStatus = false;
 
+  // Start auto refresh when status is pending
+  void _startAutoRefresh() {
+    _stopAutoRefresh(); // Clear any existing timer
+    
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
+      if (!_statusCheckedAndVerified && _requestId != null) {
+        print('Auto refreshing KYC status via API...');
+        await _checkKYCStatusViaAPI();
+      } else {
+        _stopAutoRefresh(); // Stop when verified or no request ID
+      }
+    });
+  }
+
+  // Stop auto refresh timer
+  void _stopAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = null;
+  }
+
+  // Check KYC status via /auth/me endpoint for auto refresh
+  Future<void> _checkKYCStatusViaAPI() async {
+    if (_isCheckingStatus) return;
+    
+    try {
+      // Check KYC status from /auth/me endpoint
+      await _userService.fetchProfileDataFromAPI();
+      
+      final status = _userService.kycStatus.toLowerCase();
+      
+      print('Auto-refresh KYC Status from /auth/me: $status');
+      
+      // Check if KYC is completed
+      bool isCompleted = status == 'completed';
+      
+      if (isCompleted) {
+        if (mounted) {
+          setState(() {
+            _isDigiLockerConnected = true;
+            _statusCheckedAndVerified = true;
+            _hasOpenedUrl = false;
+            _lastOpenedUrl = null;
+          });
+
+          // Stop auto refresh since status is now verified
+          _stopAutoRefresh();
+
+          // Show success message and redirect immediately to selfie screen
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Document shared successfully! Redirecting to selfie upload...'),
+              backgroundColor: Color(0xFF84BD00),
+            ),
+          );
+
+          // Immediate redirect to selfie screen
+          if (mounted) {
+            _proceedToSelfie();
+          }
+        }
+      }
+    } catch (e) {
+      print('Auto-refresh error: $e');
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Automatically check status when user returns to the app from the browser
-    if (state == AppLifecycleState.resumed && _isLoading) {
-      _checkDigiLockerStatus();
+    if (state == AppLifecycleState.resumed && (_isLoading || _hasOpenedUrl)) {
+      // Add a small delay to ensure the app is fully resumed
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          _checkDigiLockerStatus();
+          // Start auto refresh if DigiLocker was opened but status not verified
+          if (_hasOpenedUrl && !_statusCheckedAndVerified) {
+            _startAutoRefresh();
+          }
+        }
+      });
     }
   }
 
@@ -64,11 +146,16 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen> with WidgetsB
         print('DigiLocker RequestId: $_requestId');
 
         if (digiLockerUrl != null && digiLockerUrl.isNotEmpty) {
-          await _openDigiLockerUrl(digiLockerUrl);
+          // Modify URL to use app callback scheme instead of website redirect
+          String modifiedUrl = digiLockerUrl;
+          if (digiLockerUrl.contains('redirect_url=')) {
+            modifiedUrl = digiLockerUrl.replaceAll(RegExp(r'redirect_url=[^&]*'), 'redirect_url=creddx://kyc/callback');
+          }
+          await _openDigiLockerUrl(modifiedUrl);
           return;
         } else if (token != null && token.isNotEmpty) {
-          // Construct URL using the fresh token from API
-          final String constructedUrl = 'https://digilocker.mannit.in/?token=$token';
+          // Construct URL using the fresh token from API with app callback
+          final String constructedUrl = 'https://digilocker.mannit.in/?token=$token&redirect_url=creddx://kyc/callback';
           print('Constructed DigiLocker URL: $constructedUrl');
           await _openDigiLockerUrl(constructedUrl);
           return;
@@ -115,8 +202,15 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen> with WidgetsB
       );
 
       if (launched && mounted) {
+        // Store the URL for potential reopening
+        setState(() {
+          _lastOpenedUrl = url;
+          _hasOpenedUrl = true;
+        });
         // Keep _isLoading true so didChangeAppLifecycleState can trigger status check
         _showReturnDialog();
+        // Start auto refresh to continuously check API status
+        _startAutoRefresh();
       } else {
         setState(() => _isLoading = false);
         throw 'Could not launch $url';
@@ -160,8 +254,23 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen> with WidgetsB
               setState(() => _isLoading = false);
             },
             child: const Text(
-              'Cancel',
+              'Close',
               style: TextStyle(color: Colors.white54),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              if (Navigator.of(dialogContext).canPop()) {
+                Navigator.of(dialogContext).pop();
+              }
+              // Reopen the same URL
+              if (_lastOpenedUrl != null) {
+                _openDigiLockerUrl(_lastOpenedUrl!);
+              }
+            },
+            child: const Text(
+              'Reopen URL',
+              style: TextStyle(color: Color(0xFF84BD00)),
             ),
           ),
           ElevatedButton(
@@ -191,19 +300,16 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen> with WidgetsB
     });
 
     try {
-      // Step 1: Check general KYC status via POST as requested
-      final statusResult = await _userService.checkKYCStatusPost();
+      // Step 1: Check KYC status from /auth/me endpoint
+      await _userService.fetchProfileDataFromAPI();
       
       bool isSuccess = false;
       
-      if (statusResult['success'] == true) {
-        final data = statusResult['data'];
-        String status = (data?['status'] ?? '').toString().toLowerCase();
-        
-        // If status is anything other than 'not_started', it means DigiLocker part is done
-        if (status != 'not_started' && status != '') {
-          isSuccess = true;
-        }
+      final status = _userService.kycStatus.toLowerCase();
+      print('KYC Status from /auth/me: $status');
+      
+      if (status == 'completed') {
+        isSuccess = true;
       }
 
       // Step 2: Fallback to specific DigiLocker request status if needed
@@ -227,19 +333,33 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen> with WidgetsB
             _isDigiLockerConnected = true;
             _isLoading = false;
             _isCheckingStatus = false;
+            _statusCheckedAndVerified = true;
+            _hasOpenedUrl = false;
+            _lastOpenedUrl = null;
           });
 
+          // Stop auto refresh since status is now verified
+          _stopAutoRefresh();
+
+          // Show success message and redirect immediately to selfie screen
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('DigiLocker verification completed! Proceeding to selfie...'),
+              content: Text('Document shared successfully! Redirecting to selfie upload...'),
               backgroundColor: Color(0xFF84BD00),
             ),
           );
-          
-          // Auto-proceed to selfie screen
-          _proceedToSelfie();
+
+          // Immediate redirect to selfie screen
+          if (mounted) {
+            _proceedToSelfie();
+          }
         }
       } else {
+        // If status check failed, start auto refresh if DigiLocker was opened
+        if (_hasOpenedUrl && !_statusCheckedAndVerified) {
+          _startAutoRefresh();
+        }
+        
         setState(() {
           _isLoading = false;
           _isCheckingStatus = false;
@@ -300,18 +420,19 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen> with WidgetsB
     return 'XXXX-XXXX-${number.substring(number.length - 4)}';
   }
 
-  void _proceedToSelfie() {
-    if (!_isDigiLockerConnected) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please connect DigiLocker first'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
+  void _resetDigiLockerConnection() {
+    setState(() {
+      _requestId = null;
+      _clientId = null;
+      _lastOpenedUrl = null;
+      _hasOpenedUrl = false;
+      _isLoading = false;
+      _isCheckingStatus = false;
+    });
+  }
 
-    // Navigate to selfie verification
+  void _proceedToSelfie() {
+    // Navigate directly to selfie verification
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -362,7 +483,28 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen> with WidgetsB
               children: [
                 _buildDigiLockerSection(),
                 const SizedBox(height: 32),
-                if (_requestId != null && !_isDigiLockerConnected) ...[
+                if (_requestId != null && (!_isDigiLockerConnected || (_isDigiLockerConnected && !_statusCheckedAndVerified))) ...[
+                  if (_hasOpenedUrl && _lastOpenedUrl != null) ...[
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: _isLoading ? null : () => _openDigiLockerUrl(_lastOpenedUrl!),
+                        icon: const Icon(Icons.open_in_browser, color: Colors.black),
+                        label: const Text(
+                          'Reopen DigiLocker URL',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF007AFF),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
@@ -378,7 +520,11 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen> with WidgetsB
                             )
                           : const Icon(Icons.refresh, color: Colors.black),
                       label: Text(
-                        _isLoading ? 'Checking...' : 'Check DigiLocker Status',
+                        _isLoading 
+                            ? 'Checking...' 
+                            : _isDigiLockerConnected 
+                                ? 'Confirm Status & Enable Next'
+                                : 'Check DigiLocker Status',
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                       ),
                       style: ElevatedButton.styleFrom(
@@ -444,8 +590,12 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen> with WidgetsB
           const SizedBox(height: 12),
           Text(
             _isDigiLockerConnected
-                ? 'Your documents have been successfully fetched from DigiLocker.'
-                : 'Verify your identity using DigiLocker. We will fetch your Aadhaar and PAN details securely.',
+                ? _statusCheckedAndVerified
+                    ? 'Your documents have been successfully fetched from DigiLocker.'
+                    : 'DigiLocker verification completed! Please click "Check Status" to confirm and proceed.'
+                : _hasOpenedUrl
+                    ? 'DigiLocker URL opened. Please complete verification or reopen the URL if needed.'
+                    : 'Verify your identity using DigiLocker. We will fetch your Aadhaar and PAN details securely.',
             textAlign: TextAlign.center,
             style: const TextStyle(
               color: Colors.white70,
@@ -488,26 +638,49 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen> with WidgetsB
               ),
             )
           else
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: const Color(0xFF84BD00).withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.check_circle, color: Color(0xFF84BD00), size: 20),
-                  SizedBox(width: 8),
-                  Text(
-                    'Connected',
-                    style: TextStyle(
-                      color: Color(0xFF84BD00),
-                      fontWeight: FontWeight.w600,
+            Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF84BD00).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.check_circle, color: Color(0xFF84BD00), size: 20),
+                      SizedBox(width: 8),
+                      Text(
+                        'Connected',
+                        style: TextStyle(
+                          color: Color(0xFF84BD00),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _proceedToSelfie,
+                    icon: const Icon(Icons.camera_alt, color: Colors.black),
+                    label: const Text(
+                      'Upload Selfie Now',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF84BD00),
+                      foregroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
         ],
       ),
@@ -515,6 +688,55 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen> with WidgetsB
   }
 
   Widget _buildFetchedDocumentsSection() {
+    // Show KYC user data if available from the new /user/v1/kyc/status endpoint (Image 1)
+    if (_kycUserData != null && _kycUserData!.isNotEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Verified Identity Details',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 16),
+          _buildKycInfoCard(
+            icon: Icons.person,
+            title: 'Full Name',
+            value: _kycUserData!['name'] ?? 'N/A',
+          ),
+          const SizedBox(height: 12),
+          _buildKycInfoCard(
+            icon: Icons.cake,
+            title: 'Date of Birth',
+            value: _kycUserData!['dob'] ?? 'N/A',
+          ),
+          const SizedBox(height: 12),
+          _buildKycInfoCard(
+            icon: Icons.wc,
+            title: 'Gender',
+            value: _kycUserData!['gender'] ?? 'N/A',
+          ),
+          const SizedBox(height: 12),
+          _buildKycInfoCard(
+            icon: Icons.home,
+            title: 'Address',
+            value: _kycUserData!['address'] ?? 'N/A',
+          ),
+          const SizedBox(height: 12),
+          _buildKycInfoCard(
+            icon: Icons.credit_card,
+            title: 'Aadhaar Number',
+            value: _kycUserData!['aadhaarNumber'] ?? 'N/A',
+            isVerified: true,
+          ),
+          const SizedBox(height: 32),
+        ],
+      );
+    }
+
     if (_fetchedDocuments == null) return const SizedBox.shrink();
 
     return Column(
@@ -607,6 +829,57 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen> with WidgetsB
     );
   }
 
+  Widget _buildKycInfoCard({
+    required IconData icon,
+    required String title,
+    required String value,
+    bool isVerified = false,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: const Color(0xFF84BD00), size: 20),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (isVerified)
+            const Icon(Icons.verified, color: Color(0xFF84BD00), size: 20),
+        ],
+      ),
+    );
+  }
+
   Widget _buildNavigationButtons() {
     return Row(
       children: [
@@ -633,7 +906,7 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen> with WidgetsB
         const SizedBox(width: 16),
         Expanded(
           child: ElevatedButton(
-            onPressed: _isDigiLockerConnected ? _proceedToSelfie : null,
+            onPressed: _proceedToSelfie,
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF84BD00),
               foregroundColor: Colors.black,
@@ -643,7 +916,7 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen> with WidgetsB
               disabledBackgroundColor: const Color(0xFF84BD00).withValues(alpha: 0.3),
             ),
             child: const Text(
-              'Next',
+              'Selfie',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             ),
           ),

@@ -161,6 +161,10 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
             _buildTopStrategies(),
             const SizedBox(height: 24),
 
+            // Comparison with BTC/ETH Section
+            _buildBtcEthComparisonSection(),
+            const SizedBox(height: 24),
+            
             // Trade History Section
             _buildTradeHistorySection(),
           ],
@@ -626,6 +630,225 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildBtcEthComparisonSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF2C2C2E)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Comparison with BTC/ETH',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 16),
+          _buildBenchmarkComparison(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBenchmarkComparison() {
+    return GestureDetector(
+      onTap: _showBenchmarkComparisonDialog,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF2C2C2E),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Benchmark Comparison',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF84BD00).withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Text(
+                    'This Week',
+                    style: TextStyle(
+                      color: Color(0xFF84BD00),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _buildComparisonSummary(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildComparisonSummary() {
+    // Mock data for demonstration - in real app, this would come from API
+    final botRoi = 0.60;
+    final btcRoi = 3.70;
+    final ethRoi = 0.61;
+    
+    final botVsBtc = botRoi - btcRoi;
+    final botVsEth = botRoi - ethRoi;
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'Omega-3X Bot ROI',
+              style: TextStyle(
+                color: Color(0xFF8E8E93),
+                fontSize: 12,
+              ),
+            ),
+            Text(
+              '${botRoi.toStringAsFixed(2)}%',
+              style: const TextStyle(
+                color: Color(0xFF84BD00),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'BTC ROI',
+              style: TextStyle(
+                color: Color(0xFF8E8E93),
+                fontSize: 12,
+              ),
+            ),
+            Text(
+              '${btcRoi.toStringAsFixed(2)}%',
+              style: const TextStyle(
+                color: Color(0xFF84BD00),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'ETH ROI',
+              style: TextStyle(
+                color: Color(0xFF8E8E93),
+                fontSize: 12,
+              ),
+            ),
+            Text(
+              '${ethRoi.toStringAsFixed(2)}%',
+              style: const TextStyle(
+                color: Color(0xFF84BD00),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Container(
+          height: 1,
+          color: const Color(0xFF2C2C2E),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Icon(
+              botVsBtc >= 0 && botVsEth >= 0 ? Icons.check_circle : Icons.info,
+              color: botVsBtc >= 0 && botVsEth >= 0 ? const Color(0xFF84BD00) : const Color(0xFFFF9500),
+              size: 16,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Bot outperformed BTC by ${botVsBtc.toStringAsFixed(2)}%, ETH by ${botVsEth.toStringAsFixed(2)}%',
+                style: TextStyle(
+                  color: botVsBtc >= 0 && botVsEth >= 0 ? const Color(0xFF84BD00) : const Color(0xFFFF9500),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  void _showBenchmarkComparisonDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1C1C1E),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: const Text(
+          'Benchmark Comparison (This Week)',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Container(
+          width: double.maxFinite,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFF2C2C2E),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: _buildComparisonSummary(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'Close',
+              style: TextStyle(
+                color: Color(0xFF84BD00),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

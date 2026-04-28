@@ -9,9 +9,10 @@ import 'dart:math' show pi, cos, sin, min, max, Random;
 import 'coming_soon_screen.dart';
 import 'deposit_screen.dart';
 import 'internal_deposit_screen.dart';
+import 'send_screen.dart';
 import 'notification_screen.dart';
 import 'p2p_trading_screen.dart';
-import 'internal_transfer_screen.dart';
+import 'wallet_transfer_screen.dart';
 import 'wallet_history_screen.dart';
 import 'invite_friends_screen.dart';
 import 'withdraw_screen.dart';
@@ -299,7 +300,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _balanceSubscription = unified.UnifiedWalletService.walletBalanceStream.listen((balance) {
       if (mounted) {
         setState(() {
-          _totalBalance = balance?.totalBalance ?? 0.0;
+          _totalBalance = balance?.totalEquityUSDT ?? 0.0;
         });
       }
     });
@@ -445,9 +446,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _fetchWalletBalance() async {
     try {
       await unified.UnifiedWalletService.refreshAllBalances();
+
       if (mounted) {
         setState(() {
-          _totalBalance = unified.UnifiedWalletService.totalUSDTBalance;
+          _totalBalance = unified.UnifiedWalletService.totalEquityUSDT;
         });
       }
     } catch (e) {
@@ -674,7 +676,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } else if (action == 'Withdraw') {
       _showWithdrawalSelectionMenu();
     } else if (action == 'Internal Deposit' || action == 'Inter send') {
-      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const InternalDepositScreen()));
+      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const SendScreen()));
     } else if (action == 'Receive') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const ComingSoonScreen()));
     } else if (action == 'P2P') {
@@ -712,7 +714,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _buildBalanceCard(),
             _buildActionGrid(),
             _buildPromoBanner(),
-            // Scrollable section - tabs + crypto list
+            // Scrollable section - coin balances + tabs + crypto list
             Expanded(
               child: CryptoRefreshIndicator(
                 onRefresh: _fetchInitialData,

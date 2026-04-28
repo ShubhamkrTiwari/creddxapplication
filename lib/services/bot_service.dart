@@ -937,6 +937,48 @@ class BotService {
     }
   }
 
+  // Get user income data (trading and subscription income)
+  static Future<Map<String, dynamic>> getUserIncome() async {
+    try {
+      debugPrint('=== FETCHING USER INCOME ===');
+      final response = await http.get(
+        Uri.parse('$baseUrl/bot/v1/api/user/income'),
+        headers: await _getHeaders(),
+      );
+
+      debugPrint('Income API URL: $baseUrl/bot/v1/api/user/income');
+      debugPrint('Income API Response Status: ${response.statusCode}');
+      debugPrint('Income API Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          return {
+            'success': true,
+            'tradingIncome': data['tradingIncome'] ?? {},
+            'subscriptionIncome': data['subscriptionIncome'] ?? {},
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to fetch income data',
+          };
+        }
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching user income: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
   // Get subscription details from user API
   static Future<Map<String, dynamic>> getSubscriptionDetails() async {
     try {
@@ -976,7 +1018,7 @@ class BotService {
               final endDate = DateTime.tryParse(endDateStr);
               if (endDate != null) {
                 final currentDate = DateTime.now();
-                final difference = endDate.difference(currentDate).inDays;
+                final difference = endDate.difference(currentDate).inDays + 1;
                 remainingDays = difference;
 
                 // Expired case
@@ -1165,7 +1207,7 @@ class BotService {
         if (days != null) 'days': days.toString(),
       };
 
-      final uri = Uri.parse('$baseUrl/bot/v1/bingxTrade/balance-history')
+      final uri = Uri.parse('$baseUrl/bot/v1/api/user/balance-history')
           .replace(queryParameters: queryParams);
 
       debugPrint('Fetching bot balance history from: $uri');
@@ -1180,10 +1222,12 @@ class BotService {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['success'] == true) {
+          // API returns data array directly as specified in the requirement
+          final List<dynamic> balanceData = data['data'] ?? [];
           return {
             'success': true,
-            'data': data['data'] ?? data,
-            'history': data['data']?['history'] ?? data['history'] ?? [],
+            'data': balanceData,
+            'history': balanceData, // Keep backward compatibility
           };
         } else {
           return {
@@ -1836,6 +1880,7 @@ class BotTrade {
   final double? uplineShare;
   final List<Map<String, dynamic>>? distribution;
   final String? rawTime; // Store raw time string from API
+  final String strategy;
 
   BotTrade({
     required this.id,
@@ -1849,6 +1894,7 @@ class BotTrade {
     required this.botName,
     required this.multiplier,
     required this.investment,
+    required this.strategy,
     this.positionId,
     this.positionSide,
     this.avgPrice,
@@ -1962,6 +2008,7 @@ class BotTrade {
             ? List<Map<String, dynamic>>.from(json['distribution'])
             : null,
         rawTime: rawTimeString,
+        strategy: strategyName,
       );
     } else {
       // Legacy API format (fallback)
@@ -1977,6 +2024,7 @@ class BotTrade {
         botName: json['botName']?.toString() ?? '',
         multiplier: json['multiplier']?.toString() ?? '',
         investment: double.tryParse(json['investment']?.toString() ?? '0') ?? 0.0,
+        strategy: json['strategy']?.toString() ?? '',
       );
     }
   }

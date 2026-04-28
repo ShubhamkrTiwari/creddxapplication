@@ -36,7 +36,7 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
         if (startDate != null) {
           final endDate = startDate.add(Duration(days: duration));
           final now = DateTime.now();
-          final daysLeft = endDate.difference(now).inDays;
+          final daysLeft = endDate.difference(now).inDays + 1;
           
           if (daysLeft > 0) {
             setState(() {

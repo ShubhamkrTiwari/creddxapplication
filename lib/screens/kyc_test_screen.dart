@@ -88,6 +88,7 @@ class _KYCTestScreenState extends State<KYCTestScreen> {
       final result = await KYCService.submitKYC(
         documentType: 'Test Document',
         documentId: _docIdController.text,
+        idNumber: 'TEST123456', // Test ID number
         frontImage: _frontImage!,
         backImage: _backImage!,
         selfieImage: _frontImage!, // Using front image as selfie for test

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
@@ -24,7 +25,7 @@ class KYCService {
       }
 
       final response = await http.post(
-        Uri.parse('$_baseUrl/v1/kyc/status'),
+        Uri.parse('https://api11.hathmetech.com/api/user/v1/kyc/status'),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',

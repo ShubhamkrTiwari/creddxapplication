@@ -15,8 +15,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
     }
 
     defaultConfig {
@@ -24,13 +26,18 @@ android {
         applicationId = "com.creddx.android"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        minSdk = 24  // Android 7.0+ for better security and features
+        targetSdk = 34  // Android 14 for Play Store compliance
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        
+        // Play Store optimization
+        multiDexEnabled = true
     }
 
     signingConfigs {
+
+
         create("release") {
             storeFile = file("../coinCredProJks")
             storePassword = "123456"
@@ -42,9 +49,21 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = false
+            isShrinkResources = false
+        }
+        debug {
+            isDebuggable = true
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
         }
     }
 }
+
+dependencies {
+    implementation("com.google.android.play:core:1.10.3")
+}
+
 
 flutter {
     source = "../.."

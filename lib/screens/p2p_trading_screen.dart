@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../services/p2p_service.dart';
 import '../services/auth_service.dart';
+import '../services/user_service.dart';
+import '../utils/kyc_unlock_mixin.dart';
 import 'login_screen.dart';
 import 'order_history_screen.dart';
 import 'p2p_chat_list_screen.dart';
@@ -10,6 +12,8 @@ import 'p2p_place_order_screen.dart';
 import 'p2p_buy_screen.dart';
 import 'p2p_sell_screen.dart';
 import 'p2p_trading_orders_screen.dart';
+import 'kyc_digilocker_instruction_screen.dart';
+import 'kyc_document_screen.dart';
 
 // Refresh Status Enum for UI state management
 enum RefreshStatus { idle, loading, success, error }
@@ -38,7 +42,7 @@ class P2PTradingScreen extends StatefulWidget {
   State<P2PTradingScreen> createState() => _P2PTradingScreenState();
 }
 
-class _P2PTradingScreenState extends State<P2PTradingScreen> with SingleTickerProviderStateMixin {
+class _P2PTradingScreenState extends State<P2PTradingScreen> with SingleTickerProviderStateMixin, KYCUnlockMixin {
   final bool _isComingSoon = true;
   late AnimationController _comingSoonController;
   late Animation<double> _bounceAnimation;
@@ -62,6 +66,8 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with SingleTickerPr
   
   // Pull to refresh controller
   final GlobalKey<RefreshIndicatorState> _refreshIndicatorKey = GlobalKey<RefreshIndicatorState>();
+  
+  final UserService _userService = UserService();
 
   @override
   void initState() {
@@ -260,6 +266,111 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with SingleTickerPr
     }
   }
 
+  // Check if KYC is completed
+  bool _isKYCCompleted() {
+    return isKYCCompleted(); // Use the mixin method
+  }
+
+  // Check if profile is complete
+  bool _isProfileComplete() {
+    return _userService.hasEmail() && 
+           _userService.userPhone != null && 
+           _userService.userPhone!.isNotEmpty;
+  }
+
+  // Validate KYC and profile before proceeding
+  bool _validateUserRequirements() {
+    if (!_isKYCCompleted()) {
+      _showKYCRequiredDialog();
+      return false;
+    }
+    
+    if (!_isProfileComplete()) {
+      _showProfileRequiredDialog();
+      return false;
+    }
+    
+    return true;
+  }
+
+  // Show KYC required dialog
+  void _showKYCRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1C1C1E),
+        title: const Text(
+          'KYC Verification Required',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          'You need to complete KYC verification to access P2P trading features.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => const KYCDocumentScreen(),
+                ),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF84BD00),
+            ),
+            child: const Text('Complete KYC', style: TextStyle(color: Colors.black)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Show profile required dialog
+  void _showProfileRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1C1C1E),
+        title: const Text(
+          'Profile Incomplete',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          'Please complete your profile (email and phone number) to access P2P trading features.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => const UserProfileScreen(),
+                ),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF84BD00),
+            ),
+            child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isComingSoon) {
@@ -295,7 +406,11 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with SingleTickerPr
             ),
           IconButton(
             icon: const Icon(Icons.add_circle_outline, color: Color(0xFF84BD00)),
-            onPressed: _showCreateAdDialog,
+            onPressed: () {
+              if (_validateUserRequirements()) {
+                _showCreateAdDialog();
+              }
+            },
           ),
         ],
       ),
@@ -899,7 +1014,9 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with SingleTickerPr
               title: const Text('Buy USDT', style: TextStyle(color: Colors.white)),
               onTap: () {
                 Navigator.pop(context);
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const P2PBuyScreen()));
+                if (_validateUserRequirements()) {
+                  Navigator.push(context, MaterialPageRoute(builder: (context) => const P2PBuyScreen()));
+                }
               },
             ),
             ListTile(
@@ -907,7 +1024,9 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with SingleTickerPr
               title: const Text('Sell USDT', style: TextStyle(color: Colors.white)),
               onTap: () {
                 Navigator.pop(context);
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const P2PSellScreen()));
+                if (_validateUserRequirements()) {
+                  Navigator.push(context, MaterialPageRoute(builder: (context) => const P2PSellScreen()));
+                }
               },
             ),
             ListTile(
@@ -1033,4 +1152,8 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with SingleTickerPr
       ),
     );
   }
+}
+
+class KYCDocumentInstructionScreen {
+  const KYCDocumentInstructionScreen();
 }

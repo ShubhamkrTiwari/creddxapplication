@@ -133,22 +133,6 @@ class _SplashScreenState extends State<SplashScreen>
                   ),
                 ),
               ),
-              const Positioned(
-                bottom: 50,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: Text(
-                    'v.1.1.1',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w400,
-                      color: Colors.white54,
-                      letterSpacing: 1,
-                    ),
-                  ),
-                ),
-              ),
             ],
           ),
         ),

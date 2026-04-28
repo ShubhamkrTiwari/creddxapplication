@@ -152,7 +152,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             final endDate = DateTime.tryParse(subscription['endDate'].toString());
             if (endDate != null) {
               final currentDate = DateTime.now();
-              remainingDays = endDate.difference(currentDate).inDays;
+              remainingDays = endDate.difference(currentDate).inDays + 1;
 
               // 5. Expired case
               if (remainingDays <= 0) {

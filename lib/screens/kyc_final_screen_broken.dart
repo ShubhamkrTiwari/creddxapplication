@@ -163,7 +163,8 @@ class _KYCFinalScreenState extends State<KYCFinalScreen> {
             ),
           ),
         ),
-      );
+      ),
+    );
   }
 
   Widget _buildNavigationButtons() {

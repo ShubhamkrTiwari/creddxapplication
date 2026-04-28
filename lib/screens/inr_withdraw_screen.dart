@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'inr_withdraw_bank_screen.dart';
-import 'inr_withdraw_upi_screen.dart';
 
 class InrWithdrawScreen extends StatefulWidget {
   const InrWithdrawScreen({super.key});
@@ -11,9 +10,9 @@ class InrWithdrawScreen extends StatefulWidget {
 
 class _InrWithdrawScreenState extends State<InrWithdrawScreen> {
   final TextEditingController _amountController = TextEditingController();
-  String _selectedPaymentMode = 'UPI Payment';
+  String _selectedPaymentMode = 'Bank Transfer';
 
-  final List<String> _paymentModes = ['Bank Transfer', 'UPI Payment'];
+  final List<String> _paymentModes = ['Bank Transfer'];
 
   @override
   void dispose() {
@@ -22,22 +21,13 @@ class _InrWithdrawScreenState extends State<InrWithdrawScreen> {
   }
 
   Future<void> _submitWithdrawal() async {
-    // Navigate to appropriate screen based on payment mode (amount will be entered on next screen)
-    if (_selectedPaymentMode == 'Bank Transfer') {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => const InrWithdrawBankScreen(),
-        ),
-      );
-    } else if (_selectedPaymentMode == 'UPI Payment') {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => const InrWithdrawUpiScreen(),
-        ),
-      );
-    }
+    // Navigate to bank withdrawal screen (amount will be entered on next screen)
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const InrWithdrawBankScreen(),
+      ),
+    );
   }
 
   void _showError(String message) {
@@ -75,8 +65,6 @@ class _InrWithdrawScreenState extends State<InrWithdrawScreen> {
             _buildLabel('Payment Mode'),
             const SizedBox(height: 8),
             _buildRadioOption('Bank Transfer'),
-            const SizedBox(height: 12),
-            _buildRadioOption('UPI Payment'),
           ],
         ),
       ),

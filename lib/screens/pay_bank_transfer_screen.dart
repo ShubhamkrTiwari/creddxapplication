@@ -53,21 +53,6 @@ class _PayBankTransferScreenState extends State<PayBankTransferScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Timer
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Text(
-                  'Order will be cancelled in ',
-                  style: TextStyle(color: Colors.white, fontSize: 14),
-                ),
-                const Text(
-                  '14:59',
-                  style: TextStyle(color: Colors.red, fontSize: 14, fontWeight: FontWeight.w600),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
             // Bank Details Card
             Container(
               width: double.infinity,

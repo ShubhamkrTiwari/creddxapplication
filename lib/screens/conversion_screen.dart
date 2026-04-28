@@ -1,12 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
 import 'dart:async';
-import '../services/socket_service.dart';
-import '../services/auth_service.dart';
 import '../services/wallet_service.dart';
 import '../services/unified_wallet_service.dart' as unified;
+import '../services/socket_service.dart';
 
 class ConversionScreen extends StatefulWidget {
   const ConversionScreen({super.key});
@@ -21,64 +18,58 @@ class _ConversionScreenState extends State<ConversionScreen> {
   
   String _fromCurrency = 'INR';
   String _toCurrency = 'USDT';
-  double _fromAmount = 0.00;
   double _toAmount = 0;
-  double _inrToUsdtRate = 0.011; // Fixed conversion rate: 1 INR = 0.011 USDT (1/90)
-  double _usdtToInrRate = 90.0; // Fixed conversion rate: 1 USDT = 90 INR
+  double _inrToUsdtRate = 0.011; // Fixed conversion rate
+  double _usdtToInrRate = 90.0; // Fixed conversion rate
   double _inrBalance = 0.00;
   double _usdtBalance = 0.00;
-  double _totalUsdtBalance = 0.00; // Total USDT across all wallets
   bool _isLoading = false;
   bool _isLoadingRate = false;
   StreamSubscription? _balanceSubscription;
   StreamSubscription? _socketBalanceSubscription;
 
-  // Conversion API endpoints
-  static const String _baseUrl = 'https://api11.hathmetech.com';
-  static const String _inrToUsdtApiUrl = '$_baseUrl/api/v1/wallet/inr/convert/inr-to-usdt';
-  static const String _usdtToInrApiUrl = '$_baseUrl/api/v1/wallet/inr/convert/usdt-to-inr';
+  Future<void> _bruteForceBalanceFetch() async {
+    try {
+      final bruteForce = await WalletService.getINRBalance();
+      if (bruteForce['success'] == true && mounted) {
+        setState(() {
+          _inrBalance = bruteForce['inrBalance'] ?? 0.0;
+        });
+        debugPrint('ConversionScreen: Brute-force INR fetch successful: $_inrBalance');
+      }
+    } catch (e) {
+      debugPrint('ConversionScreen: Brute-force error: $e');
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     _fromController.addListener(_calculateConversion);
     _loadConversionRates();
-    // Setup streams first to catch all updates
     _setupStreams();
-    // Initialize and fetch fresh balances from server right away
+    
+    // Immediate brute-force fetch
+    _bruteForceBalanceFetch();
+    
+    // Trigger socket requests to force immediate balance update
+    SocketService.requestWalletSummary();
+    SocketService.requestWalletBalance();
+
+    // Regular initialization
     unified.UnifiedWalletService.initialize().then((_) {
       unified.UnifiedWalletService.refreshAllBalances();
-      _fetchINRFromApi(); // Also fetch specifically using the INR API logic
-      // Manually set initial values after initialization
+      
       if (mounted) {
         setState(() {
-          _inrBalance = unified.UnifiedWalletService.mainINRBalance;
+          _inrBalance = unified.UnifiedWalletService.totalINRBalance;
           _usdtBalance = unified.UnifiedWalletService.mainUSDTBalance;
-          _totalUsdtBalance = unified.UnifiedWalletService.totalUSDTBalance;
         });
-        debugPrint('ConversionScreen: Initial values set after init — INR: $_inrBalance, USDT: $_usdtBalance');
       }
     });
-  }
 
-  Future<void> _fetchINRFromApi() async {
-    try {
-      final result = await WalletService.getINRBalance();
-      if (result['success'] == true && mounted) {
-        // Only update if INR balance is 0 (initial state)
-        // Don't overwrite socket value
-        if (_inrBalance == 0.0) {
-          setState(() {
-            _inrBalance = result['inrBalance'] ?? 0.0;
-          });
-          debugPrint('ConversionScreen: INR fetched from dedicated API: $_inrBalance (source: ${result['source']})');
-        } else {
-          debugPrint('ConversionScreen: Skipping API INR update, socket value already set: $_inrBalance');
-        }
-      }
-    } catch (e) {
-      debugPrint('ConversionScreen: Error fetching INR from dedicated API: $e');
-    }
+    // Secondary brute-force after delay
+    Future.delayed(const Duration(seconds: 2), _bruteForceBalanceFetch);
   }
 
   /// Set up real-time balance streams — mirrors WalletScreen._setupStreams()
@@ -86,96 +77,24 @@ class _ConversionScreenState extends State<ConversionScreen> {
     // 1. Listen to UnifiedWalletService stream for real-time balance updates
     _balanceSubscription = unified.UnifiedWalletService.walletBalanceStream.listen((balance) {
       if (mounted) {
-        final newInrBalance = unified.UnifiedWalletService.mainINRBalance;
+        // Use totalINRBalance to ensure we see all available INR (Main + Bot + Spot)
+        final newInrBalance = unified.UnifiedWalletService.totalINRBalance;
         final newUsdtBalance = unified.UnifiedWalletService.mainUSDTBalance;
-        final newTotalUsdtBalance = unified.UnifiedWalletService.totalUSDTBalance;
-
-        debugPrint('ConversionScreen: Stream received - mainINRBalance: $newInrBalance, mainUSDTBalance: $newUsdtBalance');
 
         setState(() {
           _inrBalance = newInrBalance;
           _usdtBalance = newUsdtBalance;
-          _totalUsdtBalance = newTotalUsdtBalance;
         });
-        debugPrint('ConversionScreen: Balance Stream Update — INR: $_inrBalance, USDT: $_usdtBalance, Total USDT: $_totalUsdtBalance');
       }
     });
 
-    // 2. On any wallet_summary socket event, extract INR balance directly
-    _socketBalanceSubscription = SocketService.balanceStream.listen((data) {
-      debugPrint('ConversionScreen: Socket data received: $data');
-
-      if (mounted) {
-        // Extract INR balance directly from socket data
-        // Try both data['data'] and direct data access
-        dynamic socketData = data['data'] ?? data;
-
-        debugPrint('ConversionScreen: Socket data to parse: $socketData (type: ${socketData.runtimeType})');
-
-        if (socketData != null && socketData is Map) {
-          final mainBalance = socketData['mainBalance'] ?? socketData['main'];
-          debugPrint('ConversionScreen: mainBalance: $mainBalance (type: ${mainBalance?.runtimeType})');
-
-          if (mainBalance != null && mainBalance is Map) {
-            // Try multiple ways to extract INR
-            final inrValue = mainBalance['INR'] ?? mainBalance['inr'] ?? mainBalance['Inr'];
-            debugPrint('ConversionScreen: INR value raw: $inrValue (type: ${inrValue?.runtimeType})');
-
-            if (inrValue != null) {
-              double newInrBalance = 0.0;
-              if (inrValue is num) {
-                newInrBalance = inrValue.toDouble();
-              } else if (inrValue is String) {
-                newInrBalance = double.tryParse(inrValue) ?? 0.0;
-              }
-              debugPrint('ConversionScreen: Setting INR balance to: $newInrBalance');
-              setState(() {
-                _inrBalance = newInrBalance;
-              });
-              debugPrint('ConversionScreen: INR balance updated from socket: $_inrBalance');
-            } else {
-              debugPrint('ConversionScreen: INR key not found in mainBalance. Keys: ${mainBalance.keys.toList()}');
-            }
-
-            // Also extract USDT from socket
-            final usdtValue = mainBalance['USDT'] ?? mainBalance['usdt'] ?? mainBalance['Usdt'];
-            debugPrint('ConversionScreen: USDT value raw: $usdtValue (type: ${usdtValue?.runtimeType})');
-            if (usdtValue != null) {
-              double newUsdtBalance = 0.0;
-              if (usdtValue is num) {
-                newUsdtBalance = usdtValue.toDouble();
-              } else if (usdtValue is String) {
-                newUsdtBalance = double.tryParse(usdtValue) ?? 0.0;
-              }
-              setState(() {
-                _usdtBalance = newUsdtBalance;
-              });
-              debugPrint('ConversionScreen: USDT balance updated from socket: $_usdtBalance');
-            }
-          } else {
-            debugPrint('ConversionScreen: mainBalance is null or not a Map');
-          }
-        } else {
-          debugPrint('ConversionScreen: socketData is null or not a Map (type: ${socketData?.runtimeType})');
-        }
-      }
-    });
-
-    // 3. Seed from current cache immediately and update UI with setState
-    final cachedInr = unified.UnifiedWalletService.mainINRBalance;
+    // 2. Initial value from service cache
+    final cachedInr = unified.UnifiedWalletService.totalINRBalance;
     final cachedUsdt = unified.UnifiedWalletService.mainUSDTBalance;
-    final cachedTotal = unified.UnifiedWalletService.totalUSDTBalance;
 
-    // Schedule setState after build completes to use cached values
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        setState(() {
-          _inrBalance = cachedInr;
-          _usdtBalance = cachedUsdt;
-          _totalUsdtBalance = cachedTotal;
-        });
-        debugPrint('ConversionScreen: Initial values seeded from cache — INR: $_inrBalance, USDT: $_usdtBalance');
-      }
+    setState(() {
+      _inrBalance = cachedInr;
+      _usdtBalance = cachedUsdt;
     });
   }
 
@@ -202,10 +121,11 @@ class _ConversionScreenState extends State<ConversionScreen> {
       debugPrint('=== Using fixed conversion rates ===');
       setState(() => _isLoadingRate = true);
       
-      // Use fixed rates as specified
-      // 1 USDT = 90 INR, so 1 INR = 1/90 USDT ≈ 0.011 USDT
-      const fixedInrToUsdtRate = 0.011; // 1 INR = 0.011 USDT (1/90)
-      const fixedUsdtToInrRate = 90.0; // 1 USDT = 90 INR
+      // Use fixed rates as specified: 
+      // INR to USDT buy rate: 92
+      // USDT to INR sell rate: 90
+      const fixedInrToUsdtRate = 92.0; 
+      const fixedUsdtToInrRate = 90.0; 
       
       if (mounted) {
         setState(() {
@@ -213,6 +133,7 @@ class _ConversionScreenState extends State<ConversionScreen> {
           _usdtToInrRate = fixedUsdtToInrRate;
           _isLoadingRate = false;
         });
+
         // Recalculate conversion with fixed rates
         _calculateConversion();
       }
@@ -221,106 +142,6 @@ class _ConversionScreenState extends State<ConversionScreen> {
       debugPrint('1 USDT = $_usdtToInrRate INR');
     } catch (e) {
       debugPrint('Error setting conversion rates: $e');
-      if (mounted) {
-        setState(() => _isLoadingRate = false);
-      }
-    }
-  }
-  
-  // Fetch local conversion rates as fallback
-  Future<void> _fetchLocalConversionRates() async {
-    try {
-      final token = await AuthService.getToken();
-
-      // Fetch INR to USDT rate
-      final inrResponse = await http.get(
-        Uri.parse(_inrToUsdtApiUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-        },
-      ).timeout(const Duration(seconds: 10));
-      
-      debugPrint('Local INR to USDT API Response Status: ${inrResponse.statusCode}');
-      debugPrint('Local INR to USDT API Response Body: ${inrResponse.body}');
-      
-      // Fetch USDT to INR rate
-      final usdtResponse = await http.get(
-        Uri.parse(_usdtToInrApiUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-        },
-      ).timeout(const Duration(seconds: 10));
-      
-      debugPrint('Local USDT to INR API Response Status: ${usdtResponse.statusCode}');
-      debugPrint('Local USDT to INR API Response Body: ${usdtResponse.body}');
-      
-      double newInrToUsdtRate = 52.0; // fallback rate
-      double newUsdtToInrRate = 1.0 / 52.0; // fallback rate
-      
-      // Parse INR to USDT response
-      if (inrResponse.statusCode == 200) {
-        final data = json.decode(inrResponse.body);
-        debugPrint('Parsed local INR to USDT data: $data');
-        
-        if (data['success'] == true && data['data'] != null) {
-          final rateData = data['data'];
-          if (rateData['rate'] != null) {
-            newInrToUsdtRate = double.tryParse(rateData['rate'].toString()) ?? 52.0;
-          } else if (rateData['conversion_rate'] != null) {
-            newInrToUsdtRate = double.tryParse(rateData['conversion_rate'].toString()) ?? 52.0;
-          } else if (rateData['inr_to_usdt'] != null) {
-            newInrToUsdtRate = double.tryParse(rateData['inr_to_usdt'].toString()) ?? 52.0;
-          }
-        } else if (data['rate'] != null) {
-          newInrToUsdtRate = double.tryParse(data['rate'].toString()) ?? 52.0;
-        } else if (data['conversion_rate'] != null) {
-          newInrToUsdtRate = double.tryParse(data['conversion_rate'].toString()) ?? 52.0;
-        } else if (data['inr_to_usdt'] != null) {
-          newInrToUsdtRate = double.tryParse(data['inr_to_usdt'].toString()) ?? 52.0;
-        }
-      }
-      
-      // Parse USDT to INR response
-      if (usdtResponse.statusCode == 200) {
-        final data = json.decode(usdtResponse.body);
-        debugPrint('Parsed local USDT to INR data: $data');
-        
-        if (data['success'] == true && data['data'] != null) {
-          final rateData = data['data'];
-          if (rateData['rate'] != null) {
-            newUsdtToInrRate = double.tryParse(rateData['rate'].toString()) ?? (1.0 / 52.0);
-          } else if (rateData['conversion_rate'] != null) {
-            newUsdtToInrRate = double.tryParse(rateData['conversion_rate'].toString()) ?? (1.0 / 52.0);
-          } else if (rateData['usdt_to_inr'] != null) {
-            newUsdtToInrRate = double.tryParse(rateData['usdt_to_inr'].toString()) ?? (1.0 / 52.0);
-          }
-        } else if (data['rate'] != null) {
-          newUsdtToInrRate = double.tryParse(data['rate'].toString()) ?? (1.0 / 52.0);
-        } else if (data['conversion_rate'] != null) {
-          newUsdtToInrRate = double.tryParse(data['conversion_rate'].toString()) ?? (1.0 / 52.0);
-        } else if (data['usdt_to_inr'] != null) {
-          newUsdtToInrRate = double.tryParse(data['usdt_to_inr'].toString()) ?? (1.0 / 52.0);
-        }
-      }
-      
-      if (mounted) {
-        setState(() {
-          _inrToUsdtRate = newInrToUsdtRate;
-          _usdtToInrRate = newUsdtToInrRate;
-          _isLoadingRate = false;
-        });
-        // Recalculate conversion with new rates
-        _calculateConversion();
-      }
-      debugPrint('Updated local conversion rates:');
-      debugPrint('INR to USDT: $_inrToUsdtRate');
-      debugPrint('USDT to INR: $_usdtToInrRate');
-    } catch (e) {
-      debugPrint('Error fetching local conversion rates: $e');
       if (mounted) {
         setState(() => _isLoadingRate = false);
       }
@@ -340,7 +161,7 @@ class _ConversionScreenState extends State<ConversionScreen> {
     setState(() => _isLoading = true);
     
     // We only care about main balances for conversion
-    final liveInrBalance = unified.UnifiedWalletService.mainINRBalance;
+    final liveInrBalance = unified.UnifiedWalletService.totalINRBalance;
     final liveMainUsdt = unified.UnifiedWalletService.mainUSDTBalance;
 
     debugPrint('_performConversion: liveINR=$liveInrBalance, liveMainUSDT=$liveMainUsdt, amount=$amount, from=$_fromCurrency');
@@ -350,7 +171,6 @@ class _ConversionScreenState extends State<ConversionScreen> {
       setState(() {
         _inrBalance = liveInrBalance;
         _usdtBalance = liveMainUsdt;
-        _totalUsdtBalance = unified.UnifiedWalletService.totalUSDTBalance;
       });
     }
 
@@ -378,100 +198,48 @@ class _ConversionScreenState extends State<ConversionScreen> {
     }
     
     try {
-      final token = await AuthService.getToken();
       final isInrToUsdt = _fromCurrency == 'INR';
-      
-      // Calculate expected amount using fixed rates
-      double expectedAmount = 0.0;
+      Map<String, dynamic> result;
+
       if (isInrToUsdt) {
-        expectedAmount = amount / _usdtToInrRate; // INR to USDT: divide by 90
+        result = await WalletService.convertINRtoUSDT(amount: amount);
       } else {
-        expectedAmount = amount * _usdtToInrRate; // USDT to INR: multiply by 90
+        result = await WalletService.convertUSDTtoINR(amount: amount);
       }
       
-      debugPrint('Converting $amount $_fromCurrency using fixed rates');
-      debugPrint('Expected to receive: $expectedAmount $_toCurrency');
-      
-      // Use local API for actual conversion transaction
-      final endpoint = isInrToUsdt 
-          ? _inrToUsdtApiUrl
-          : _usdtToInrApiUrl;
-      
-      final response = await http.post(
-        Uri.parse(endpoint),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-        body: json.encode({
-          'amount': amount,
-          'use_fixed_rate': true, // Use fixed rates
-          'inr_to_usdt_rate': _inrToUsdtRate, // 92
-          'usdt_to_inr_rate': _usdtToInrRate, // 90
-          'fee': 0.0, // Conversion fee (0% as shown in UI)
-        }),
-      ).timeout(const Duration(seconds: 30));
-      
-      debugPrint('Conversion API Response: ${response.statusCode}');
-      debugPrint('Response Body: ${response.body}');
-      
-      final data = json.decode(response.body);
-      
-      if (response.statusCode == 200 && data['success'] == true) {
-        // Verify the conversion used fixed rates
-        final actualAmount = data['data']?['converted_amount'] ?? expectedAmount;
-        final usedRate = data['data']?['rate'] ?? (isInrToUsdt ? _inrToUsdtRate : _usdtToInrRate);
+      if (result['success'] == true) {
+        if (!mounted) return;
         
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Conversion successful! Fixed rate: $usedRate'),
-            backgroundColor: const Color(0xFF84BD00),
+          const SnackBar(
+            content: Text('Conversion successful!'),
+            backgroundColor: Color(0xFF84BD00),
           ),
         );
-        
-        debugPrint('Conversion completed with fixed rate: $usedRate');
-        debugPrint('Actual amount received: $actualAmount');
         
         await unified.UnifiedWalletService.refreshAllBalances();
         if (mounted) {
           setState(() {
             _inrBalance = unified.UnifiedWalletService.mainINRBalance;
             _usdtBalance = unified.UnifiedWalletService.mainUSDTBalance;
-            _totalUsdtBalance = unified.UnifiedWalletService.totalUSDTBalance;
           });
-          debugPrint('ConversionScreen: Balances updated after conversion — INR: $_inrBalance, USDT: $_usdtBalance');
         }
         _fromController.clear();
         _toController.text = '0';
       } else {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(data['message'] ?? 'Conversion failed'),
+            content: Text(result['error'] ?? 'Conversion failed'),
             backgroundColor: Colors.red,
           ),
         );
       }
     } catch (e) {
       debugPrint('Conversion error: $e');
-      String errorMessage = 'Conversion failed';
-      
-      if (e.toString().contains('SocketException')) {
-        errorMessage = 'Network error. Please check your connection.';
-      } else if (e.toString().contains('TimeoutException')) {
-        errorMessage = 'Request timed out. Please try again.';
-      } else if (e.toString().contains('401')) {
-        errorMessage = 'Authentication failed. Please login again.';
-      } else if (e.toString().contains('403')) {
-        errorMessage = 'Permission denied. Please contact support.';
-      } else if (e.toString().contains('404')) {
-        errorMessage = 'Conversion service unavailable. Please try again later.';
-      } else if (e.toString().contains('500')) {
-        errorMessage = 'Server error. Please try again later.';
-      }
-      
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(errorMessage),
+          content: Text('Error: $e'),
           backgroundColor: Colors.red,
         ),
       );
@@ -483,16 +251,15 @@ class _ConversionScreenState extends State<ConversionScreen> {
   void _calculateConversion() {
     final amount = double.tryParse(_fromController.text) ?? 0;
     setState(() {
-      _fromAmount = amount;
-      
       // Use dynamic conversion rates
       if (_fromCurrency == 'INR' && _toCurrency == 'USDT') {
-        // INR to USDT: divide amount by USDT rate (90)
-        _toAmount = amount / _usdtToInrRate;
+        // INR to USDT: divide amount by the buy rate (92)
+        _toAmount = amount / _inrToUsdtRate;
       } else if (_fromCurrency == 'USDT' && _toCurrency == 'INR') {
-        // USDT to INR: multiply amount by USDT rate (90)
+        // USDT to INR: multiply amount by the sell rate (90)
         _toAmount = amount * _usdtToInrRate;
       } else {
+
         _toAmount = amount; // fallback
       }
       
@@ -513,7 +280,15 @@ class _ConversionScreenState extends State<ConversionScreen> {
 
   @override
   Widget build(BuildContext context) {
-    debugPrint('ConversionScreen: BUILD — _inrBalance: $_inrBalance, _fromCurrency: $_fromCurrency');
+    // Force sync if local balance is 0 but service has value
+    if (_inrBalance == 0.0 && unified.UnifiedWalletService.totalINRBalance > 0) {
+      _inrBalance = unified.UnifiedWalletService.totalINRBalance;
+    }
+    if (_usdtBalance == 0.0 && unified.UnifiedWalletService.mainUSDTBalance > 0) {
+      _usdtBalance = unified.UnifiedWalletService.mainUSDTBalance;
+    }
+
+    debugPrint('ConversionScreen: BUILD — _inrBalance: $_inrBalance, serviceInr: ${unified.UnifiedWalletService.totalINRBalance}');
     return Scaffold(
       backgroundColor: const Color(0xFF0D0D0D),
       appBar: AppBar(
@@ -531,66 +306,91 @@ class _ConversionScreenState extends State<ConversionScreen> {
             fontWeight: FontWeight.w600,
           ),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Colors.white),
+            onPressed: () async {
+              await unified.UnifiedWalletService.refreshAllBalances();
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Balances refreshed')),
+                );
+              }
+            },
+          ),
+        ],
         centerTitle: true,
       ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Info Banner
-              _buildInfoBanner(),
-              const SizedBox(height: 20),
 
-              // From Card
-              _buildConversionCard(
-                label: 'From',
-                available: _fromCurrency == 'INR' 
-                    ? 'Available: ₹${_inrBalance.toStringAsFixed(2)}' 
-                    : 'Available: ${_usdtBalance.toStringAsFixed(4)} USDT',
-                controller: _fromController,
-                currency: _fromCurrency,
-                onCurrencyChanged: (value) {
-                  setState(() => _fromCurrency = value!);
-                },
-              ),
-              
-              // Swap Button
-              _buildSwapButton(),
-              
-              // To Card
-              _buildConversionCard(
-                label: 'To',
-                available: _toCurrency == 'INR' 
-                    ? 'Available: ₹${_inrBalance.toStringAsFixed(2)}' 
-                    : 'Available: ${_usdtBalance.toStringAsFixed(4)} USDT',
-                controller: _toController,
-                currency: _toCurrency,
-                onCurrencyChanged: (value) {
-                  setState(() => _toCurrency = value!);
-                },
-                isReadOnly: true,
-              ),
-              
-              const SizedBox(height: 20),
-              
-              // Conversion Details
-              _buildConversionDetails(),
-              
-              const SizedBox(height: 30),
-              
-              // Conversion Button
-              _buildConversionButton(),
-              
-              const SizedBox(height: 16),
-              
-              // Disclaimer
-              _buildDisclaimer(),
-            ],
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: () async {
+            await unified.UnifiedWalletService.refreshAllBalances();
+          },
+          color: const Color(0xFF84BD00),
+          backgroundColor: const Color(0xFF1A1A1A),
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Info Banner
+                _buildInfoBanner(),
+                const SizedBox(height: 20),
+
+                // From Card
+                _buildConversionCard(
+                  label: 'From',
+                  available: _fromCurrency == 'INR' 
+                      ? (_inrBalance > 0 ? 'INR = ${_inrBalance.toStringAsFixed(2)}' : (_isLoading ? 'Syncing INR...' : 'INR = 0.00'))
+                      : (_usdtBalance > 0 ? 'USDT = ${_usdtBalance.toStringAsFixed(4)}' : (_isLoading ? 'Syncing USDT...' : 'USDT = 0.00')),
+
+                  controller: _fromController,
+                  currency: _fromCurrency,
+                  onCurrencyChanged: (value) {
+                    setState(() => _fromCurrency = value!);
+                  },
+                ),
+                
+                // Swap Button
+                _buildSwapButton(),
+                
+                // To Card
+                _buildConversionCard(
+                  label: 'To',
+                  available: _toCurrency == 'INR' 
+                      ? 'INR = ${_inrBalance.toStringAsFixed(2)}' 
+                      : 'USDT = ${_usdtBalance.toStringAsFixed(4)}',
+
+                  controller: _toController,
+                  currency: _toCurrency,
+                  onCurrencyChanged: (value) {
+                    setState(() => _toCurrency = value!);
+                  },
+                  isReadOnly: true,
+                ),
+                
+                const SizedBox(height: 20),
+                
+                // Conversion Details
+                _buildConversionDetails(),
+                
+                const SizedBox(height: 30),
+                
+                // Conversion Button
+                _buildConversionButton(),
+                
+                const SizedBox(height: 16),
+                
+                // Disclaimer
+                _buildDisclaimer(),
+              ],
+            ),
           ),
         ),
       ),
+
     );
   }
 
@@ -649,19 +449,23 @@ class _ConversionScreenState extends State<ConversionScreen> {
                   Text(
                     available,
                     style: const TextStyle(
-                      color: Colors.white54,
+                      color: Color(0xFF84BD00), // Change to brand green for better visibility
                       fontSize: 12,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
+
                   if (!isReadOnly) ...[
                     const SizedBox(width: 8),
                     GestureDetector(
                       onTap: () {
-                        final val = available.replaceAll(RegExp(r'[^0-9.]'), '');
-                        if (val.isNotEmpty) {
-                          controller.text = val;
+                        if (currency == 'INR') {
+                          controller.text = _inrBalance.toStringAsFixed(2);
+                        } else {
+                          controller.text = _usdtBalance.toStringAsFixed(4);
                         }
                       },
+
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
@@ -806,12 +610,13 @@ class _ConversionScreenState extends State<ConversionScreen> {
           _buildDetailRow(
             'Exchange Rate', 
             _fromCurrency == 'INR' 
-                ? '1 INR = ${_inrToUsdtRate.toStringAsFixed(4)} USDT'
+                ? '1 USDT = ${_inrToUsdtRate.toStringAsFixed(2)} INR'
                 : '1 USDT = ${_usdtToInrRate.toStringAsFixed(2)} INR',
             isGreen: true,
           ),
+
           const Divider(color: Color(0xFF2A2A2C), height: 16),
-          _buildDetailRow('You will receive', '${_toAmount.toStringAsFixed(4)} ${_toCurrency}', isBold: true),
+          _buildDetailRow('You will receive', '${_toAmount.toStringAsFixed(4)} $_toCurrency', isBold: true),
         ],
       ),
     );

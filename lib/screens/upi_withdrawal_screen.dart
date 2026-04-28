@@ -86,8 +86,12 @@ class _UpWithdrawalScreenState extends State<UpWithdrawalScreen> {
               message: 'Your UPI withdrawal of ₹${_amountController.text} to ${_upiController.text} was submitted successfully.',
               type: NotificationType.transaction,
             );
-            _showSuccess('UPI withdrawal request submitted successfully');
-            Navigator.of(context).popUntil((route) => route.isFirst);
+            // Navigate to success screen instead of popping
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (context) => _buildSuccessScreen(),
+              ),
+            );
           }
         }
       } else {
@@ -115,6 +119,97 @@ class _UpWithdrawalScreenState extends State<UpWithdrawalScreen> {
   void _showSuccess(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), backgroundColor: const Color(0xFF84BD00)),
+    );
+  }
+
+  Widget _buildSuccessScreen() {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0D0D0D),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF84BD00).withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check_circle_rounded,
+                  color: Color(0xFF84BD00),
+                  size: 100,
+                ),
+              ),
+              const SizedBox(height: 32),
+              const Text(
+                'Withdrawal Initiated',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Your UPI withdrawal request of ₹${_amountController.text} has been submitted successfully.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 16,
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1C1C1E),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  children: [
+                    _buildSuccessDetailRow('UPI ID', _upiController.text),
+                    const SizedBox(height: 8),
+                    _buildSuccessDetailRow('Account Holder', _nameController.text),
+                    const SizedBox(height: 8),
+                    _buildSuccessDetailRow('Amount', '₹${_amountController.text}'),
+                  ],
+                ),
+              ),
+              const Spacer(),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF84BD00),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text(
+                    'Done',
+                    style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSuccessDetailRow(String label, String value) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 14)),
+        Text(value, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+      ],
     );
   }
 
@@ -170,7 +265,7 @@ class _UpWithdrawalScreenState extends State<UpWithdrawalScreen> {
                 ),
                 child: _isLoading
                     ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.black, strokeWidth: 2))
-                    : const Text('Submit Withdrawal', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16)),
+                    : const Text('Confirm & Send OTP', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16)),
               ),
             ),
           ],

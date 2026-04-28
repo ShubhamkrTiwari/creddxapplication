@@ -6,9 +6,13 @@ import 'dart:async';
 import '../services/socket_service.dart';
 import '../services/wallet_service.dart';
 import '../services/auth_service.dart';
+import '../services/user_service.dart';
 import '../services/notification_service.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 import '../utils/coin_icon_mapper.dart';
+import 'user_profile_screen.dart';
+import 'kyc_digilocker_instruction_screen.dart';
+import '../utils/kyc_unlock_mixin.dart';
 
 class WithdrawScreen extends StatefulWidget {
   const WithdrawScreen({super.key});
@@ -17,7 +21,7 @@ class WithdrawScreen extends StatefulWidget {
   State<WithdrawScreen> createState() => _WithdrawScreenState();
 }
 
-class _WithdrawScreenState extends State<WithdrawScreen> {
+class _WithdrawScreenState extends State<WithdrawScreen> with KYCUnlockMixin {
   final _addressController = TextEditingController();
   final _amountController = TextEditingController();
   String _selectedCoin = 'BTC';
@@ -34,11 +38,14 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   bool _isLoadingTransactions = false;
   StreamSubscription? _balanceSubscription;
   
+  final UserService _userService = UserService();
+  
   @override
   void initState() {
     super.initState();
     _fetchData();
     _subscribeToBalanceUpdates();
+    _userService.fetchProfileDataFromAPI(); // Refresh KYC status from /auth/me
   }
 
   void _subscribeToBalanceUpdates() {
@@ -220,6 +227,103 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
       _fetchWithdrawalFees();
     }
   }
+
+  // Check if KYC is completed
+  bool _isKYCCompleted() {
+    return isKYCCompleted(); // Now available from KYCUnlockMixin
+  }
+
+  // Check if profile is complete
+  bool _isProfileComplete() {
+    return _userService.hasEmail() && 
+           _userService.userPhone != null && 
+           _userService.userPhone!.isNotEmpty;
+  }
+
+  // Show KYC verification required dialog
+  void _showKYCRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text(
+            'KYC Verification Required',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'You need to complete KYC verification to withdraw funds. Please complete your KYC process first.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Later', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
+              child: const Text('Complete KYC', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Show profile completion required dialog
+  void _showProfileRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text(
+            'Profile Completion Required',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'Please complete your profile information (email and phone number) to withdraw funds.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Later', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const UserProfileScreen()));
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
+              child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Validate KYC and profile before proceeding
+  bool _validateUserRequirements() {
+    if (!_isKYCCompleted()) {
+      _showKYCRequiredDialog();
+      return false;
+    }
+    
+    if (!_isProfileComplete()) {
+      _showProfileRequiredDialog();
+      return false;
+    }
+    
+    return true;
+  }
   
   Future<void> _scanQRCode() async {
     final result = await Navigator.push(
@@ -235,6 +339,11 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   }
   
   Future<void> _handleWithdraw() async {
+    // Check KYC and profile requirements first
+    if (!_validateUserRequirements()) {
+      return;
+    }
+
     if (_addressController.text.isEmpty || _amountController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -455,6 +564,95 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
                   ],
                 ),
               ),
+              
+              const SizedBox(height: 24),
+
+              // KYC Requirement Warning
+              if (!_isKYCCompleted())
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.orange.withOpacity(0.15), Colors.red.withOpacity(0.1)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Colors.orange.withOpacity(0.3),
+                      width: 1,
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(
+                              Icons.verified_user_outlined,
+                              color: Colors.orange,
+                              size: 24,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'KYC Verification Required',
+                                  style: TextStyle(
+                                    color: Colors.orange,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                const Text(
+                                  'Complete KYC verification to withdraw funds',
+                                  style: TextStyle(
+                                    color: Colors.orange,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: ElevatedButton(
+                          onPressed: () {
+                            Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orange,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: const Text(
+                            'Complete KYC Now',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               
               const SizedBox(height: 24),
               

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
-import 'bot_balance_history_screen.dart';
+import '../widgets/balance_growth_chart.dart';
 import 'dart:math' as math;
 
 class BotPositionsScreen extends StatefulWidget {
@@ -17,6 +17,9 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
   List<BotPosition> _positions = [];
   String? _errorMessage;
   Map<String, dynamic>? _positionData;
+  bool _showBalanceChart = false;
+  List<Map<String, dynamic>> _balanceHistory = [];
+  bool _isLoadingBalance = false;
 
   final List<String> _timeframes = ['1m', '30m', '1h', '3m', '15m', '4h', '1d'];
 
@@ -33,26 +36,15 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
     });
 
     try {
-      String strategy;
-      String symbol;
+      // Define strategy mappings to match the API format
+      final pairMappings = {
+        'BTC-USDT': 'Omega-3X',
+        'ETH-USDT': 'Omega-3X',
+        'SOL-USDT': 'Omega-3X',
+      };
       
-      switch (_selectedPair) {
-        case 'BTC-USDT':
-          strategy = 'Omega';
-          symbol = 'BTCUSDT';
-          break;
-        case 'ETH-USDT':
-          strategy = 'Alpha';
-          symbol = 'ETHUSDT';
-          break;
-        case 'SOL-USDT':
-          strategy = 'Ranger';
-          symbol = 'SOLUSDT';
-          break;
-        default:
-          strategy = 'Omega';
-          symbol = 'BTCUSDT';
-      }
+      String strategy = pairMappings[_selectedPair] ?? 'Omega-3X';
+      String symbol = _selectedPair; // Use the exact format from API
 
       final result = await BotService.getUserBotPositions(
         strategy: strategy,
@@ -62,12 +54,33 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
       if (mounted) {
         if (result['success'] == true) {
           final data = result['data'];
-          final List<dynamic> positionsList = data['adjustedPositions'] ?? [];
-          setState(() {
-            _positions = positionsList.map((pos) => BotPosition.fromJson(pos)).toList();
-            _positionData = data;
-            _isLoading = false;
-          });
+          if (data != null) {
+            final List<dynamic> positionsList = data['adjustedPositions'] ?? [];
+            List<BotPosition> parsedPositions = [];
+            
+            for (var positionData in positionsList) {
+              try {
+                final position = BotPosition.fromJson(positionData);
+                parsedPositions.add(position);
+              } catch (e) {
+                debugPrint('Error parsing position: $e');
+                debugPrint('Position data: $positionData');
+                continue;
+              }
+            }
+            
+            setState(() {
+              _positions = parsedPositions;
+              _positionData = data;
+              _isLoading = false;
+              _errorMessage = null;
+            });
+          } else {
+            setState(() {
+              _errorMessage = 'No data received from server';
+              _isLoading = false;
+            });
+          }
         } else {
           setState(() {
             _errorMessage = result['error'] ?? 'Failed to load positions';
@@ -85,6 +98,46 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
     }
   }
 
+  Future<void> _loadBalanceHistory() async {
+    if (_positionData == null) return;
+    
+    setState(() {
+      _isLoadingBalance = true;
+    });
+
+    try {
+      final strategy = _positionData!['strategy']?.toString() ?? 'Omega';
+      final result = await BotService.getBotBalanceHistory(
+        strategy: strategy,
+        days: 90, // Get 90 days of data for weekly view
+      );
+
+      if (mounted) {
+        if (result['success'] == true) {
+          // New API returns data array directly
+          final List<Map<String, dynamic>> history = 
+              List<Map<String, dynamic>>.from(result['data'] ?? result['history'] ?? []);
+          setState(() {
+            _balanceHistory = history;
+            _isLoadingBalance = false;
+          });
+        } else {
+          setState(() {
+            _balanceHistory = [];
+            _isLoadingBalance = false;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _balanceHistory = [];
+          _isLoadingBalance = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -92,38 +145,53 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
       appBar: AppBar(
         backgroundColor: Colors.black,
         elevation: 0,
-        title: const Text(
-          'Open Positions',
-          style: TextStyle(
+        title: Text(
+          _showBalanceChart ? 'Balance Growth' : 'Open Positions',
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 18,
             fontWeight: FontWeight.bold,
           ),
         ),
+        leading: _showBalanceChart
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.white),
+                onPressed: () {
+                  setState(() {
+                    _showBalanceChart = false;
+                  });
+                },
+              )
+            : null,
       ),
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            _buildStrategyHeader(),
-            _buildTimeframeSelector(),
-            _buildTradingChart(),
-            _buildPositionDetails(),
-            const SizedBox(height: 20),
-            _isLoading
-              ? const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)))
-              : _errorMessage != null
-                ? _buildErrorWidget()
-                : _positions.isEmpty
-                  ? _buildEmptyWidget()
-                  : _buildPositionsList(),
-          ],
-        ),
-      ),
+      body: _showBalanceChart
+          ? _buildBalanceGrowthView()
+          : SingleChildScrollView(
+              child: Column(
+                children: [
+                  _buildStrategyHeader(),
+                  _buildTimeframeSelector(),
+                  _buildTradingChart(),
+                  _buildPositionDetails(),
+                  const SizedBox(height: 20),
+                  _isLoading
+                      ? const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)))
+                      : _errorMessage != null
+                          ? _buildErrorWidget()
+                          : _positions.isEmpty
+                              ? _buildEmptyWidget()
+                              : _buildPositionsList(),
+                ],
+              ),
+            ),
     );
   }
 
   Widget _buildStrategyHeader() {
-    if (_positionData == null) return const SizedBox();
+    final userInvestment = _positionData != null 
+        ? double.tryParse(_positionData!['userInvestment']?.toString() ?? '0') ?? 0.0
+        : 0.0;
+    final strategy = _positionData?['strategy'] ?? 'Omega-3X';
 
     return Container(
       margin: const EdgeInsets.all(16),
@@ -132,36 +200,144 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
         color: const Color(0xFF1C1C1E),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Strategy: ${_positionData!['strategy'] ?? 'Unknown'}',
-            style: const TextStyle(
-              color: Color(0xFF84BD00),
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final strategy = _positionData?['strategy']?.toString() ?? 'Omega';
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (context) => BotBalanceHistoryScreen(
-                    strategy: strategy,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  'Strategy: $strategy',
+                  style: const TextStyle(
+                    color: Color(0xFF84BD00),
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: () {
+                  setState(() {
+                    _showBalanceChart = true;
+                  });
+                  _loadBalanceHistory();
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF84BD00),
+                  foregroundColor: Colors.black,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-              );
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF84BD00),
-              foregroundColor: Colors.black,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+                child: const Text('Balance Growth'),
               ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Pair Selector
+          DropdownButtonFormField<String>(
+            initialValue: _selectedPair,
+            decoration: InputDecoration(
+              labelText: 'Select Trading Pair',
+              labelStyle: TextStyle(
+                color: Colors.white.withOpacity(0.5),
+                fontSize: 12,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(
+                  color: Colors.white.withOpacity(0.2),
+                ),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(
+                  color: Colors.white.withOpacity(0.2),
+                ),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(
+                  color: Color(0xFF84BD00),
+                ),
+              ),
+              filled: true,
+              fillColor: const Color(0xFF2C2C2E),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             ),
-            child: const Text('Balance Growth'),
+            dropdownColor: const Color(0xFF2C2C2E),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+            ),
+            items: const ['BTC-USDT', 'ETH-USDT', 'SOL-USDT'].map((pair) {
+              return DropdownMenuItem<String>(
+                value: pair,
+                child: Text(pair),
+              );
+            }).toList(),
+            onChanged: (value) {
+              if (value != null && value != _selectedPair) {
+                setState(() {
+                  _selectedPair = value;
+                });
+                _loadPositions();
+              }
+            },
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Current Symbol',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _selectedPair,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      'Your Investment',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '\$${userInvestment.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -544,6 +720,125 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
     );
   }
 
+  Widget _buildBalanceGrowthView() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          if (_isLoadingBalance)
+            const Center(
+              child: CircularProgressIndicator(color: Color(0xFF84BD00)),
+            )
+          else
+            BalanceGrowthChart(
+              data: _balanceHistory,
+              viewType: ChartViewType.weekly,
+              title: 'Performance',
+              lineColor: const Color(0xFF84BD00),
+            ),
+          const SizedBox(height: 20),
+          if (_balanceHistory.isNotEmpty) _buildPerformanceSummary(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPerformanceSummary() {
+    if (_balanceHistory.isEmpty) return const SizedBox();
+
+    // Sort by timestamp if available to ensure correct order
+    final sortedHistory = List<Map<String, dynamic>>.from(_balanceHistory);
+    sortedHistory.sort((a, b) {
+      final aTime = a['timestamp']?.toString() ?? '';
+      final bTime = b['timestamp']?.toString() ?? '';
+      if (aTime.isNotEmpty && bTime.isNotEmpty) {
+        return DateTime.tryParse(aTime)?.compareTo(DateTime.tryParse(bTime) ?? DateTime.now()) ?? 0;
+      }
+      return 0;
+    });
+
+    final firstBalance = double.tryParse(sortedHistory.first['balance']?.toString() ?? '0') ?? 0.0;
+    final lastBalance = double.tryParse(sortedHistory.last['balance']?.toString() ?? '0') ?? 0.0;
+    final totalProfit = lastBalance - firstBalance;
+    final roi = firstBalance > 0 ? (totalProfit / firstBalance) * 100 : 0.0;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Performance Summary',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _buildSummaryItem('Starting Balance', '\$${firstBalance.toStringAsFixed(2)}'),
+              ),
+              Expanded(
+                child: _buildSummaryItem('Current Balance', '\$${lastBalance.toStringAsFixed(2)}'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _buildSummaryItem(
+                  'Total Profit', 
+                  '${totalProfit >= 0 ? '+' : ''}\$${totalProfit.toStringAsFixed(2)}',
+                  totalProfit >= 0 ? const Color(0xFF84BD00) : const Color(0xFFFF3B30),
+                ),
+              ),
+              Expanded(
+                child: _buildSummaryItem(
+                  'ROI',
+                  '${roi >= 0 ? '+' : ''}${roi.toStringAsFixed(2)}%',
+                  roi >= 0 ? const Color(0xFF84BD00) : const Color(0xFFFF3B30),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSummaryItem(String label, String value, [Color? valueColor]) {
+    return Column(
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.6),
+            fontSize: 12,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(
+            color: valueColor ?? Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+
   Widget _buildEmptyWidget() {
     return const Center(
       child: Column(
@@ -580,11 +875,47 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
 class EnhancedTradingChartPainter extends CustomPainter {
   final List<BotPosition> positions;
   final String selectedTimeframe;
+  late double _minPrice;
+  late double _maxPrice;
   
   EnhancedTradingChartPainter({
     required this.positions,
     required this.selectedTimeframe,
-  });
+  }) {
+    _calculatePriceRange();
+  }
+
+  void _calculatePriceRange() {
+    if (positions.isEmpty) {
+      _minPrice = 0.0;
+      _maxPrice = 200.0;
+      return;
+    }
+
+    double min = double.infinity;
+    double max = double.negativeInfinity;
+
+    for (final pos in positions) {
+      if (pos.avgPrice < min) min = pos.avgPrice;
+      if (pos.markPrice < min) min = pos.markPrice;
+      if (pos.liqPrice > 0 && pos.liqPrice < min) min = pos.liqPrice;
+
+      if (pos.avgPrice > max) max = pos.avgPrice;
+      if (pos.markPrice > max) max = pos.markPrice;
+      if (pos.liqPrice > max) max = pos.liqPrice;
+    }
+
+    // Add padding (5%)
+    double padding = (max - min).abs();
+    if (padding == 0) padding = max * 0.1; // If all prices are same, use 10% of price
+    if (padding == 0) padding = 100.0; // Fallback if price is also 0
+
+    _minPrice = min - (padding * 0.5);
+    _maxPrice = max + (padding * 0.5);
+    
+    // Ensure min price doesn't go below 0
+    if (_minPrice < 0) _minPrice = 0;
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -814,13 +1145,15 @@ class EnhancedTradingChartPainter extends CustomPainter {
     if (positions.isNotEmpty) {
       final basePrice = positions.first.avgPrice;
       final currentPrice = positions.first.markPrice;
+      final priceSpread = (currentPrice - basePrice).abs();
+      final variationBase = priceSpread > 0 ? priceSpread * 0.2 : basePrice * 0.001;
       
       for (int i = 0; i < pointCount; i++) {
         final x = (size.width / (pointCount - 1)) * i;
         // Create realistic price movement
         final progress = i / (pointCount - 1);
-        final variation = math.sin(progress * math.pi * 2) * 5 + 
-                         math.sin(progress * math.pi * 4) * 2;
+        final variation = math.sin(progress * math.pi * 2) * variationBase + 
+                         math.sin(progress * math.pi * 4) * (variationBase * 0.4);
         final price = basePrice + (currentPrice - basePrice) * progress + variation;
         final y = _priceToY(price, size);
         points.add(Offset(x, y));
@@ -832,18 +1165,15 @@ class EnhancedTradingChartPainter extends CustomPainter {
 
   double _priceToY(double price, Size size) {
     // Map price range to Y coordinate (inverted because canvas Y starts at top)
-    final minPrice = 0.0;
-    final maxPrice = 200.0; // Adjust based on your price range
-    final normalizedPrice = (price - minPrice) / (maxPrice - minPrice);
+    if (_maxPrice == _minPrice) return size.height / 2;
+    final normalizedPrice = (price - _minPrice) / (_maxPrice - _minPrice);
     return size.height * (1 - normalizedPrice.clamp(0.0, 1.0));
   }
 
   double _yToPrice(double y, Size size) {
     // Map Y coordinate back to price
-    final minPrice = 0.0;
-    final maxPrice = 200.0;
     final normalizedY = 1 - (y / size.height);
-    return minPrice + normalizedY * (maxPrice - minPrice);
+    return _minPrice + normalizedY * (_maxPrice - _minPrice);
   }
 
   @override

@@ -27,7 +27,7 @@ class KYCDigiLockerInstructionScreen extends StatelessWidget {
               style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const Text(
-              'DigiLocker Setup (1/3)',
+              'DigiLocker Setup (1/2)',
               style: TextStyle(color: Colors.white70, fontSize: 12),
             ),
           ],

@@ -81,7 +81,15 @@ class _PaymentProofScreenState extends State<PaymentProofScreen> {
   }
 
   Future<void> _submitDeposit() async {
-    if (_transactionIdController.text.isEmpty) return;
+    if (_transactionIdController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Transaction ID is required'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
     
     setState(() {
       _isLoading = true;
@@ -150,9 +158,29 @@ class _PaymentProofScreenState extends State<PaymentProofScreen> {
           );
         }
       } else {
-        // Show error
+        // Parse and show backend error message
+        String errorMessage = 'Failed to submit deposit';
+        try {
+          final errorData = json.decode(response.body);
+          if (errorData is Map) {
+            // Try to extract error message from various possible fields
+            errorMessage = errorData['message']?.toString() ??
+                          errorData['error']?.toString() ??
+                          errorData['errors']?.toString() ??
+                          errorData['msg']?.toString() ??
+                          'Failed: ${response.body}';
+          } else if (errorData is String) {
+            errorMessage = errorData;
+          }
+        } catch (_) {
+          errorMessage = response.body.isNotEmpty ? response.body : 'Failed to submit deposit';
+        }
+        
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed: ${response.body}')),
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } catch (e) {

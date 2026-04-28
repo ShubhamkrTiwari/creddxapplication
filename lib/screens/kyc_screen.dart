@@ -171,7 +171,7 @@ class _KYCScreenState extends State<KYCScreen> {
               const SizedBox(height: 32),
               ElevatedButton(
                 onPressed: _isLoading ? null : _submitKYC,
-                style: ElevatedButton.fromMaterialPadding(
+                style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   backgroundColor: Theme.of(context).primaryColor,
                   foregroundColor: Colors.white,

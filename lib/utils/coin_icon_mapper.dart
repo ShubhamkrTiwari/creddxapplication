@@ -86,20 +86,16 @@ class CoinIconMapper {
   static Widget getCoinIcon(String symbol, {double size = 24, Color? fallbackColor}) {
     final iconPath = getCoinIconPath(symbol);
     
-    debugPrint('CoinIconMapper: Getting icon for $symbol, path: $iconPath');
-    
     if (iconPath.isNotEmpty) {
       return Image.asset(
         iconPath,
         width: size,
         height: size,
         errorBuilder: (context, error, stackTrace) {
-          debugPrint('CoinIconMapper: Error loading $iconPath: $error');
           return _buildFallbackIcon(symbol, size, fallbackColor);
         },
       );
     } else {
-      debugPrint('CoinIconMapper: No icon path found for $symbol');
       return _buildFallbackIcon(symbol, size, fallbackColor);
     }
   }

@@ -94,8 +94,13 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             Navigator.pop(context, true);
           }
         } else {
-          debugPrint('OTP verification failed: ${result['message']}'); // Debug log
-          _showError(result['message'] ?? 'Verification failed');
+          debugPrint('OTP verification failed: ${result['message'] ?? result['error']}'); // Debug log
+          // Try to get the most specific error message available
+          String errorMessage = result['message'] ?? 
+                                result['error'] ?? 
+                                result['details']?['message'] ?? 
+                                'Verification failed';
+          _showError(errorMessage);
         }
       } else {
         // Default login flow
@@ -141,7 +146,20 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
         }
         _focusNodes[0].requestFocus();
       } else {
-        _showError(result['message'] ?? 'Failed to resend OTP');
+        // Show detailed error message for OTP resend issues
+        String errorMessage = result['error'] ?? result['message'] ?? 'Failed to resend OTP';
+        
+        // Add specific guidance for common OTP resend issues
+        if (errorMessage.toLowerCase().contains('rate') || 
+            errorMessage.toLowerCase().contains('limit') ||
+            errorMessage.toLowerCase().contains('wait')) {
+          errorMessage += '\nPlease wait a few minutes before requesting another OTP.';
+        } else if (errorMessage.toLowerCase().contains('network') || 
+                   errorMessage.toLowerCase().contains('connection')) {
+          errorMessage += '\nPlease check your internet connection and try again.';
+        }
+        
+        _showError(errorMessage);
       }
     } catch (e) {
       _showError('Failed to resend OTP');

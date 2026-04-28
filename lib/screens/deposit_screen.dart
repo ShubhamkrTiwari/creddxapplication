@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'deposit_address_screen.dart';
+import 'crypto_deposit_history_screen.dart';
 import '../services/wallet_service.dart';
+import '../services/user_service.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
+import 'user_profile_screen.dart';
 
 class DepositScreen extends StatefulWidget {
   const DepositScreen({super.key});
@@ -16,6 +19,8 @@ class _DepositScreenState extends State<DepositScreen> {
   List<Coin> _coins = [];
   List<Network> _networks = [];
   bool _isLoading = true;
+  
+  final UserService _userService = UserService();
   
   @override
   void initState() {
@@ -83,6 +88,61 @@ class _DepositScreenState extends State<DepositScreen> {
         _selectedNetworkId = _networks.first.id;
       });
     }
+  }
+
+  // Check if profile is complete
+  bool _isProfileComplete() {
+    return _userService.hasEmail() && 
+           _userService.userPhone != null && 
+           _userService.userPhone!.isNotEmpty;
+  }
+
+  // Validate profile before proceeding
+  bool _validateUserRequirements() {
+    if (!_isProfileComplete()) {
+      _showProfileRequiredDialog();
+      return false;
+    }
+    return true;
+  }
+
+  // Show profile required dialog
+  void _showProfileRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1C1C1E),
+        title: const Text(
+          'Profile Incomplete',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          'Please complete your profile (email and phone number) to access deposit features.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => const UserProfileScreen(),
+                ),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF84BD00),
+            ),
+            child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -175,6 +235,8 @@ class _DepositScreenState extends State<DepositScreen> {
                   ),
                   const Spacer(),
                   _buildDepositButton(currentCoin, networkValue),
+                  const SizedBox(height: 12),
+                  _buildHistoryButton(),
                 ],
               ),
             ),
@@ -241,13 +303,15 @@ class _DepositScreenState extends State<DepositScreen> {
       height: 52,
       child: ElevatedButton(
         onPressed: (coin != null && networkId != null) ? () {
-          final network = _networks.firstWhere((n) => n.id == networkId);
-          Navigator.of(context).push(MaterialPageRoute(builder: (context) => DepositAddressScreen(
-            coin: coin.symbol, 
-            coinId: coin.id,
-            network: network.name,
-            networkId: network.id,
-          )));
+          if (_validateUserRequirements()) {
+            final network = _networks.firstWhere((n) => n.id == networkId);
+            Navigator.of(context).push(MaterialPageRoute(builder: (context) => DepositAddressScreen(
+              coin: coin.symbol, 
+              coinId: coin.id,
+              network: network.name,
+              networkId: network.id,
+            )));
+          }
         } : null,
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF84BD00),
@@ -255,6 +319,28 @@ class _DepositScreenState extends State<DepositScreen> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
         child: const Text('Deposit', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16)),
+      ),
+    );
+  }
+
+  Widget _buildHistoryButton() {
+    return SizedBox(
+      width: double.infinity,
+      height: 52,
+      child: OutlinedButton(
+        onPressed: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => const CryptoDepositHistoryScreen(),
+            ),
+          );
+        },
+        style: OutlinedButton.styleFrom(
+          backgroundColor: Colors.transparent,
+          side: const BorderSide(color: Color(0xFF84BD00)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        child: const Text('View History', style: TextStyle(color: Color(0xFF84BD00), fontWeight: FontWeight.bold, fontSize: 16)),
       ),
     );
   }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/p2p_service.dart';
+import '../services/kyc_service.dart';
 import 'login_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -48,7 +49,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       _userDetails = results[0];
       _tradesSummary = results[1];
       _feedbackStats = results[2];
-      _myAds = results[3]['docs']?['docs'] ?? []; // Based on common response structure
+      _myAds = results[3]?['docs']?['docs'] ?? []; // Based on common response structure
 
       // Fetch average times if we have a userId
       if (targetUserId != null) {
@@ -63,6 +64,9 @@ class _ProfileScreenState extends State<ProfileScreen>
         }
       }
 
+      // Fetch real-time KYC status from API
+      await _checkAndUpdateKYCStatus();
+
       if (mounted) {
         setState(() => _isLoading = false);
       }
@@ -71,6 +75,33 @@ class _ProfileScreenState extends State<ProfileScreen>
       if (mounted) {
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  Future<void> _checkAndUpdateKYCStatus() async {
+    try {
+      final kycResult = await KYCService.getKYCStatus();
+      if (kycResult['success'] == true) {
+        final responseData = kycResult['data'];
+        final status = responseData?['status']?.toString().toLowerCase() ?? '';
+        
+        // Update KYC status in user details based on API response
+        final bool isKycVerified = status == 'completed' || status == 'already_completed';
+        final bool isKycRejected = status == 'rejected';
+        
+        if (_userDetails != null && _userDetails!['userDetails'] != null) {
+          _userDetails!['userDetails']['isKycVerified'] = isKycVerified;
+          _userDetails!['userDetails']['kycStatus'] = status;
+          debugPrint('KYC Status updated from API: $status, isKycVerified: $isKycVerified, isKycRejected: $isKycRejected');
+          
+          // Update UI to reflect new KYC status
+          if (mounted) {
+            setState(() {});
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error checking KYC status from API: $e');
     }
   }
 
@@ -210,7 +241,9 @@ class _ProfileScreenState extends State<ProfileScreen>
     final user = _userDetails?['userDetails'] ?? {};
     final name = user['fullName'] ?? 'User';
     final registrationDays = _tradesSummary?['firstTradeDaysAgo'] ?? 'N/A';
-    final isKycVerified = user['isKycVerified'] ?? false;
+    final kycStatus = user['kycStatus']?.toString().toLowerCase() ?? '';
+    final isKycVerified = kycStatus == 'completed' || kycStatus == 'already_completed';
+    final isKycRejected = kycStatus == 'rejected';
 
     return Container(
       color: const Color(0xFF161618),
@@ -310,8 +343,9 @@ class _ProfileScreenState extends State<ProfileScreen>
               const SizedBox(width: 24),
               _buildStatusItem('Phone', 'Done', const Color(0xFF00C851)), // Assume phone is verified if logged in
               const SizedBox(width: 24),
-              _buildStatusItem('KYC', isKycVerified ? 'Done' : 'Pending', 
-                  isKycVerified ? const Color(0xFF00C851) : const Color(0xFFFF3B30)),
+              _buildStatusItem('KYC', 
+                  isKycVerified ? 'Complete' : (isKycRejected ? 'Rejected' : 'Pending'), 
+                  isKycVerified ? const Color(0xFF00C851) : (isKycRejected ? const Color(0xFFFF3B30) : const Color(0xFFFF9500))),
             ],
           ),
           const SizedBox(height: 12),
@@ -409,7 +443,6 @@ class _ProfileScreenState extends State<ProfileScreen>
             _buildDetailItem('Buy', buyTrades.toString(), color: const Color(0xFF00C851)),
             _buildDetailItem('Sell', sellTrades.toString(), color: const Color(0xFFFF3B30)),
             _buildDetailItem('Avg. Release Time', _avgReleaseTime),
-            _buildDetailItem('Avg. Pay Time', _avgPayTime),
           ],
         ),
       ),

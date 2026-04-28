@@ -4,7 +4,11 @@ import '../services/wallet_service.dart';
 import '../services/spot_service.dart';
 import '../services/socket_service.dart';
 import '../services/bot_service.dart';
+import '../services/user_service.dart';
+import '../services/unified_wallet_service.dart' as unified;
+import '../utils/kyc_unlock_mixin.dart';
 import 'package:intl/intl.dart';
+import 'user_profile_screen.dart';
 
 class InternalTransferScreen extends StatefulWidget {
   const InternalTransferScreen({super.key});
@@ -13,26 +17,27 @@ class InternalTransferScreen extends StatefulWidget {
   State<InternalTransferScreen> createState() => _InternalTransferScreenState();
 }
 
-class _InternalTransferScreenState extends State<InternalTransferScreen> {
+class _InternalTransferScreenState extends State<InternalTransferScreen> with KYCUnlockMixin {
   String _fromWallet = 'spot';
   String _toWallet = 'p2p';
   String _selectedCoin = 'USDT';
   final TextEditingController _amountController = TextEditingController();
   bool _isLoading = false;
   bool _isFetchingBalances = true;
-  bool _isFetchingHistory = false;
   bool _isFetchingCoins = true;
   Map<String, dynamic> _balances = {};
-  List<Map<String, dynamic>> _transferHistory = [];
   List<Map<String, dynamic>> _coins = [];
   Map<String, String> _coinSymbolToId = {};
   StreamSubscription? _balanceSubscription;
+  StreamSubscription? _unifiedWalletSubscription;
+  
+  final UserService _userService = UserService();
 
   final List<Map<String, String>> _walletTypes = [
-    {'code': 'main', 'name': 'Main Wallet (1)'},
-    {'code': 'p2p', 'name': 'P2P Wallet (2)'},
-    {'code': 'bot', 'name': 'Bot Wallet (3)'},
-    {'code': 'spot', 'name': 'Spot Wallet (4)'},
+    {'code': 'main', 'name': 'Main Wallet'},
+    {'code': 'p2p', 'name': 'P2P Wallet'},
+    {'code': 'bot', 'name': 'Bot Wallet'},
+    {'code': 'spot', 'name': 'Spot Wallet'},
   ];
 
   @override
@@ -40,15 +45,56 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
     super.initState();
     _fetchCoins();
     _fetchBalances();
-    _fetchTransferHistory();
     _subscribeToSocketBalance();
+    _subscribeToUnifiedWallet();
   }
 
   @override
   void dispose() {
     _balanceSubscription?.cancel();
+    _unifiedWalletSubscription?.cancel();
     _amountController.dispose();
     super.dispose();
+  }
+
+  void _subscribeToUnifiedWallet() {
+    _unifiedWalletSubscription = unified.UnifiedWalletService.walletBalanceStream.listen((walletBalance) {
+      if (mounted && walletBalance != null) {
+        setState(() {
+          // Update balances from UnifiedWalletService for consistency with WalletScreen
+          final spotBalance = unified.UnifiedWalletService.spotUSDTBalance;
+          final spotCoin = unified.UnifiedWalletService.usdtCoinBalance;
+          final spotAvailable = spotCoin?.free ?? spotBalance;
+          final spotLocked = spotCoin?.locked ?? 0.0;
+
+          _balances['spot'] = {
+            'available': spotAvailable.toStringAsFixed(2),
+            'locked': spotLocked.toStringAsFixed(2),
+            'total': (spotAvailable + spotLocked).toStringAsFixed(2),
+          };
+
+          _balances['main'] = {
+            'available': unified.UnifiedWalletService.mainUSDTBalance.toStringAsFixed(2),
+            'locked': '0.00',
+            'total': unified.UnifiedWalletService.mainUSDTBalance.toStringAsFixed(2),
+          };
+
+          _balances['p2p'] = {
+            'available': unified.UnifiedWalletService.p2pUSDTBalance.toStringAsFixed(2),
+            'locked': '0.00',
+            'total': unified.UnifiedWalletService.p2pUSDTBalance.toStringAsFixed(2),
+          };
+
+          _balances['bot'] = {
+            'available': unified.UnifiedWalletService.botUSDTBalance.toStringAsFixed(2),
+            'locked': '0.00',
+            'total': unified.UnifiedWalletService.botUSDTBalance.toStringAsFixed(2),
+          };
+
+          _isFetchingBalances = false;
+        });
+      }
+    });
   }
 
   void _subscribeToSocketBalance() {
@@ -192,13 +238,58 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
   Future<void> _fetchBalances() async {
     setState(() => _isFetchingBalances = true);
 
+    // Use UnifiedWalletService for consistent balance data (same as WalletScreen)
+    await unified.UnifiedWalletService.refreshAllBalances();
+
+    if (mounted) {
+      setState(() {
+        // Get balances from UnifiedWalletService for consistency
+        final spotBalance = unified.UnifiedWalletService.spotUSDTBalance;
+        final spotCoin = unified.UnifiedWalletService.usdtCoinBalance;
+        final spotAvailable = spotCoin?.free ?? spotBalance;
+        final spotLocked = spotCoin?.locked ?? 0.0;
+
+        _balances['spot'] = {
+          'available': spotAvailable.toStringAsFixed(2),
+          'locked': spotLocked.toStringAsFixed(2),
+          'total': (spotAvailable + spotLocked).toStringAsFixed(2),
+        };
+
+        _balances['main'] = {
+          'available': unified.UnifiedWalletService.mainUSDTBalance.toStringAsFixed(2),
+          'locked': '0.00',
+          'total': unified.UnifiedWalletService.mainUSDTBalance.toStringAsFixed(2),
+        };
+
+        _balances['p2p'] = {
+          'available': unified.UnifiedWalletService.p2pUSDTBalance.toStringAsFixed(2),
+          'locked': '0.00',
+          'total': unified.UnifiedWalletService.p2pUSDTBalance.toStringAsFixed(2),
+        };
+
+        _balances['bot'] = {
+          'available': unified.UnifiedWalletService.botUSDTBalance.toStringAsFixed(2),
+          'locked': '0.00',
+          'total': unified.UnifiedWalletService.botUSDTBalance.toStringAsFixed(2),
+        };
+
+        _isFetchingBalances = false;
+        debugPrint('Balances updated from UnifiedWalletService - Main: ${unified.UnifiedWalletService.mainUSDTBalance}, Spot: $spotAvailable (locked: $spotLocked), P2P: ${unified.UnifiedWalletService.p2pUSDTBalance}, Bot: ${unified.UnifiedWalletService.botUSDTBalance}');
+      });
+    }
+  }
+
+  // Fallback method for fetching balances directly from APIs (kept for reference if needed)
+  Future<void> _fetchBalancesFallback() async {
+    setState(() => _isFetchingBalances = true);
+
     // Fetch bot balance specifically from BotService to get availableBalance
     final botBalanceResult = await BotService.getBotBalance();
 
     // Fetch both WalletService and SpotService balances
     final result = await WalletService.getAllWalletBalances();
     final spotResult = await SpotService.getBalance();
-    
+
     if (mounted) {
       setState(() {
         _balances = {};
@@ -229,7 +320,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
           double spotAvailable = double.tryParse(spotData['usdt_available']?.toString() ?? '0.0') ?? 0.0;
           double spotLocked = double.tryParse(spotData['usdt_locked']?.toString() ?? '0.0') ?? 0.0;
           double spotTotal = spotAvailable + spotLocked;
-          
+
           _balances['spot'] = {
             'available': spotAvailable.toStringAsFixed(2),
             'locked': spotLocked.toStringAsFixed(2),
@@ -237,11 +328,11 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
           };
           debugPrint('SpotService spot balance - Available: $spotAvailable, Locked: $spotLocked, Total: $spotTotal');
         }
-        
+
         // Step 2: Fetch wallet balances from WalletService (main, p2p, bot, spot)
         if (result['success'] == true && result['data'] != null) {
           final data = result['data'];
-          
+
           // Parse spotBalance from API response if not already set from SpotService
           if (_balances['spot'] == null && data['spotBalance'] != null) {
             final spotTotal = double.tryParse(data['spotBalance'].toString()) ?? 0.0;
@@ -252,17 +343,17 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
             };
             debugPrint('Spot balance from WalletService API: $spotTotal');
           }
-          
+
           // Handle flat format: {mainBalance: {USDT: Y}, p2pBalance: Z, botBalance: W}
           final walletTypeMap = {
-            'main': 'mainBalance', 
+            'main': 'mainBalance',
             'p2p': 'p2pBalance',
             'bot': 'botBalance',
             'demo_bot': 'demoBalance',
           };
-          
+
           bool foundBalances = false;
-          
+
           for (String type in walletTypeMap.keys) {
             // Skip bot if already set from BotService (has correct availableBalance)
             if (type == 'bot' && _balances['bot'] != null) {
@@ -304,7 +395,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
               debugPrint('$type USDT - Available: $available, Total: $total, INR: $inrTotal');
             }
           }
-          
+
           // Fallback to nested format if flat format doesn't work
           if (!foundBalances) {
             // Extract USDT balances from all wallet types
@@ -345,48 +436,68 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
     }
   }
 
-  Future<void> _fetchTransferHistory() async {
-    setState(() => _isFetchingHistory = true);
-    final result = await WalletService.getWalletTransferHistory(
-      coin: _selectedCoin,
-      limit: 10,
-    );
-    if (mounted) {
-      setState(() {
-        if (result['success'] == true && result['data'] != null) {
-          final data = result['data'];
-          
-          if (data is List) {
-            // API returns data as a direct list of transfers
-            _transferHistory = List<Map<String, dynamic>>.from(data);
-          } else if (data is Map) {
-            // Handle nested formats
-            if (data['transfers'] != null && data['transfers'] is List) {
-              _transferHistory = List<Map<String, dynamic>>.from(data['transfers']);
-            } else if (data['data'] != null && data['data'] is List) {
-              _transferHistory = List<Map<String, dynamic>>.from(data['data']);
-            } else if (data['message'] == 'Success' && data['data'] is List) {
-              _transferHistory = List<Map<String, dynamic>>.from(data['data']);
-            } else {
-              _transferHistory = [];
-            }
-          } else {
-            _transferHistory = [];
-          }
-        } else {
-          _transferHistory = [];
-        }
-        _isFetchingHistory = false;
-      });
-    }
-  }
-
   void _swapWallets() {
     setState(() {
       final temp = _fromWallet;
       _fromWallet = _toWallet;
       _toWallet = temp;
     });
+  }
+
+  
+  // Check if profile is complete
+  bool _isProfileComplete() {
+    return _userService.hasEmail() && 
+           _userService.userPhone != null && 
+           _userService.userPhone!.isNotEmpty;
+  }
+
+  
+  // Show profile completion required dialog
+  void _showProfileRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text(
+            'Profile Completion Required',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'Please complete your profile information (email and phone number) to transfer funds.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Later', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const UserProfileScreen()));
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
+              child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Validate user requirements before proceeding (KYC removed for wallet transfers)
+  bool _validateUserRequirements() {
+    // KYC verification removed for wallet-to-wallet transfers
+    
+    if (!_isProfileComplete()) {
+      _showProfileRequiredDialog();
+      return false;
+    }
+    
+    return true;
   }
 
   // Get coin ID from coin symbol using real API data
@@ -406,6 +517,11 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
   }
 
   Future<void> _handleTransfer() async {
+    // Check KYC and profile requirements first
+    if (!_validateUserRequirements()) {
+      return;
+    }
+
     if (_amountController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter amount'), backgroundColor: Colors.red),
@@ -499,7 +615,6 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
         }
 
         await _fetchBalances(); // Refresh all balances
-        await _fetchTransferHistory(); // Refresh transfer history
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -532,17 +647,15 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
 
   @override
   Widget build(BuildContext context) {
-    double available = 0.0;
-    if (_balances[_fromWallet] != null) {
-      available = double.tryParse(_balances[_fromWallet]['available']?.toString() ?? '0') ?? 0.0;
-    }
+    // Show selected "From" wallet balance as available
+    double available = double.tryParse(_balances[_fromWallet]?['available']?.toString() ?? '0') ?? 0.0;
 
     return Scaffold(
       backgroundColor: const Color(0xFF0D0D0D),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text('Internal Transfer', style: TextStyle(color: Colors.white)),
+        title: const Text('Wallet Transfer', style: TextStyle(color: Colors.white)),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.pop(context),
@@ -611,7 +724,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                       children: [
                         Row(
                           children: [
-                            const Text('Available Balance', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                            Text('Available (${_getWalletDisplayName(_fromWallet)})', style: TextStyle(color: Colors.white54, fontSize: 12)),
                             const Spacer(),
                             if (_isFetchingBalances)
                               const SizedBox(
@@ -628,7 +741,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${_getWalletBalance(_fromWallet)} USDT',
+                          '${_balances[_fromWallet]?['available'] ?? '0.00'} USDT',
                           style: const TextStyle(color: Color(0xFF84BD00), fontSize: 16, fontWeight: FontWeight.bold),
                         ),
                       ],
@@ -723,74 +836,6 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                     : const Text('Confirm Transfer', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16)),
               ),
             ),
-            const SizedBox(height: 24),
-            // Transfer History Section
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1A1A1A),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Text(
-                        'Recent Transfers',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const Spacer(),
-                      if (_isFetchingHistory)
-                        const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(color: Color(0xFF84BD00), strokeWidth: 2),
-                        )
-                      else
-                        GestureDetector(
-                          onTap: _fetchTransferHistory,
-                          child: const Icon(Icons.refresh, color: Color(0xFF84BD00), size: 20),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  if (_transferHistory.isEmpty && !_isFetchingHistory)
-                    const Center(
-                      child: Text(
-                        'No transfer history found',
-                        style: TextStyle(color: Colors.white54, fontSize: 12),
-                      ),
-                    )
-                  else
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _transferHistory.length > 5 ? 5 : _transferHistory.length,
-                      itemBuilder: (context, index) {
-                        final transfer = _transferHistory[index];
-                        return _buildTransferHistoryItem(transfer);
-                      },
-                    ),
-                  if (_transferHistory.length > 5)
-                    Center(
-                      child: TextButton(
-                        onPressed: () {
-                          // TODO: Navigate to full transfer history
-                        },
-                        child: const Text(
-                          'View All',
-                          style: TextStyle(color: Color(0xFF84BD00)),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
           ],
         ),
       ),
@@ -865,206 +910,6 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
         
         return cleaned.isEmpty ? 'Wallet' : cleaned;
     }
-  }
-
-  Widget _buildTransferHistoryItem(Map<String, dynamic> transfer) {
-    // Try different possible field names for wallet information
-    final fromWallet = transfer['from']?.toString() ?? 
-                       transfer['fromWallet']?.toString() ?? 
-                       transfer['source_wallet']?.toString() ?? 
-                       transfer['source']?.toString() ?? '';
-                       
-    final toWallet = transfer['to']?.toString() ?? 
-                     transfer['toWallet']?.toString() ?? 
-                     transfer['destination_wallet']?.toString() ?? 
-                     transfer['destination']?.toString() ?? '';
-    
-    // Convert wallet type numbers to names if they are numbers
-    String cleanFromWallet = fromWallet;
-    String cleanToWallet = toWallet;
-    
-    try {
-      final fromWalletNum = int.tryParse(fromWallet);
-      final toWalletNum = int.tryParse(toWallet);
-      
-      if (fromWalletNum != null) {
-        cleanFromWallet = _getWalletTypeName(fromWalletNum);
-      } else {
-        // Use the new helper method to convert wallet names to display names
-        cleanFromWallet = _getWalletDisplayName(fromWallet);
-      }
-      
-      if (toWalletNum != null) {
-        cleanToWallet = _getWalletTypeName(toWalletNum);
-      } else {
-        // Use the new helper method to convert wallet names to display names
-        cleanToWallet = _getWalletDisplayName(toWallet);
-      }
-    } catch (e) {
-      // If parsing fails, use the helper method for cleanup
-      cleanFromWallet = _getWalletDisplayName(fromWallet);
-      cleanToWallet = _getWalletDisplayName(toWallet);
-    }
-    
-    // Final fallback - ensure we have clean names
-    cleanFromWallet = cleanFromWallet.isEmpty ? 'Wallet' : cleanFromWallet;
-    cleanToWallet = cleanToWallet.isEmpty ? 'Wallet' : cleanToWallet;
-    
-    final amount = transfer['amount']?.toString() ?? '0.00';
-    final coin = transfer['coin'] ?? 'USDT';
-    
-    // Handle different coin data formats
-    String coinSymbol = 'USDT';
-    if (coin is List && coin.isNotEmpty) {
-      final firstCoin = coin[0];
-      if (firstCoin is Map) {
-        coinSymbol = firstCoin['symbol']?.toString() ?? 'USDT';
-      }
-    } else if (coin is Map) {
-      coinSymbol = coin['symbol']?.toString() ?? 'USDT';
-    } else if (coin is String) {
-      coinSymbol = coin;
-    }
-    
-    final status = transfer['status']?.toString() ?? 'completed';
-    final createdAt = transfer['createdAt']?.toString();
-    
-    String formattedDate = 'Unknown';
-    if (createdAt != null) {
-      try {
-        final dateTime = DateTime.parse(createdAt);
-        formattedDate = DateFormat('MMM dd, yyyy - HH:mm').format(dateTime);
-      } catch (e) {
-        formattedDate = createdAt;
-      }
-    }
-    
-    Color statusColor = status == 'completed' ? const Color(0xFF84BD00) : 
-                       status == 'pending' ? Colors.orange : Colors.red;
-    
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF252525),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        children: [
-          // From/To row with dots and arrow
-          Row(
-            children: [
-              // From wallet with blue dot
-              Row(
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: const BoxDecoration(
-                      color: Colors.blue,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'From: $cleanFromWallet',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-              
-              // Arrow
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Icon(
-                  Icons.arrow_forward,
-                  color: Colors.white54,
-                  size: 16,
-                ),
-              ),
-              
-              // To wallet with green dot
-              Row(
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: const BoxDecoration(
-                      color: Colors.green,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'To: $cleanToWallet',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          
-          const SizedBox(height: 12),
-          
-          // Details row
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              // Value
-              Text(
-                '\$${double.tryParse(amount)?.toStringAsFixed(2) ?? amount}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              
-              // Status button
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: status == 'completed' ? const Color(0xFF84BD00) : 
-                         status == 'pending' ? Colors.orange : Colors.red,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  status.toUpperCase(),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          
-          const SizedBox(height: 8),
-          
-          // Date
-          Row(
-            children: [
-              Text(
-                formattedDate,
-                style: const TextStyle(
-                  color: Colors.white54,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _buildWalletSelector(String label, String value, ValueChanged<String?> onChanged) {

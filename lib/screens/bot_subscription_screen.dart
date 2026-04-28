@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
+import '../services/user_service.dart';
+import 'user_profile_screen.dart';
+import 'kyc_digilocker_instruction_screen.dart';
 
 class BotSubscriptionScreen extends StatefulWidget {
   const BotSubscriptionScreen({super.key});
@@ -15,6 +18,8 @@ class _BotSubscriptionScreenState extends State<BotSubscriptionScreen> {
   double? _planPrice;
   int _remainingDays = 0;
   String? _errorMessage;
+  
+  final UserService _userService = UserService();
 
   @override
   void initState() {
@@ -43,6 +48,93 @@ class _BotSubscriptionScreenState extends State<BotSubscriptionScreen> {
         }
       });
     }
+  }
+
+  // Check if profile is complete
+  bool _isProfileComplete() {
+    return _userService.hasEmail() && 
+           _userService.userPhone != null && 
+           _userService.userPhone!.isNotEmpty;
+  }
+
+  // Show KYC verification required dialog
+  void _showKYCRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text(
+            'KYC Verification Required',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'You need to complete KYC verification to subscribe to bot services. Please complete your KYC process first.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Later', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
+              child: const Text('Complete KYC', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Show profile completion required dialog
+  void _showProfileRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text(
+            'Profile Completion Required',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'Please complete your profile information (email and phone number) to subscribe to bot services.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Later', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const UserProfileScreen()));
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
+              child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Validate profile before proceeding (KYC not required for subscription)
+  bool _validateUserRequirements() {
+    if (!_isProfileComplete()) {
+      _showProfileRequiredDialog();
+      return false;
+    }
+    
+    return true;
   }
 
   @override
@@ -335,6 +427,10 @@ class _BotSubscriptionScreenState extends State<BotSubscriptionScreen> {
           height: 56,
           child: ElevatedButton(
             onPressed: () {
+              // Check KYC and profile requirements first
+              if (!_validateUserRequirements()) {
+                return;
+              }
               // Navigate to subscription plans
               Navigator.pushNamed(context, '/subscription-plans');
             },
@@ -438,6 +534,10 @@ class _BotSubscriptionScreenState extends State<BotSubscriptionScreen> {
           height: 56,
           child: ElevatedButton(
             onPressed: () {
+              // Check KYC and profile requirements first
+              if (!_validateUserRequirements()) {
+                return;
+              }
               // Navigate to subscription plans
               Navigator.pushNamed(context, '/subscription-plans');
             },

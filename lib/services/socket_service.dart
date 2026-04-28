@@ -28,6 +28,8 @@ class SocketService {
   static bool get isConnected => _socket?.connected ?? false;
   static bool get isConnecting => _isConnecting;
 
+  get kycStatusStream => null;
+
   static Future<void> connect() async {
     if (_socket != null && _socket!.connected) {
       debugPrint('SocketService: Already connected, emitting join');

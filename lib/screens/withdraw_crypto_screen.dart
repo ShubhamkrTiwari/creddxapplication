@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'qr_scanner_screen.dart';
 import 'otp_verification_screen.dart';
 import 'dart:async';
 import '../services/socket_service.dart';
 import '../services/wallet_service.dart';
 import '../services/auth_service.dart';
+import '../services/user_service.dart';
 import '../services/notification_service.dart';
+import '../utils/kyc_unlock_mixin.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 import '../utils/coin_icon_mapper.dart';
+import 'user_profile_screen.dart';
+import 'kyc_digilocker_instruction_screen.dart';
 
 class WithdrawCryptoScreen extends StatefulWidget {
   const WithdrawCryptoScreen({super.key});
@@ -17,7 +22,7 @@ class WithdrawCryptoScreen extends StatefulWidget {
   State<WithdrawCryptoScreen> createState() => _WithdrawCryptoScreenState();
 }
 
-class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> {
+class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnlockMixin {
   final _addressController = TextEditingController();
   final _amountController = TextEditingController();
   String _selectedCoin = 'USDT';
@@ -34,6 +39,14 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> {
   List<dynamic> _recentTransactions = [];
   bool _isLoadingTransactions = false;
   StreamSubscription? _balanceSubscription;
+
+  // History related state variables
+  bool _showHistory = false;
+  bool _isLoadingHistory = false;
+  List<dynamic> _withdrawalHistory = [];
+  String? _historyError;
+  
+  final UserService _userService = UserService();
   
   @override
   void initState() {
@@ -42,6 +55,103 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> {
     _subscribeToBalanceUpdates();
   }
 
+  // Check if KYC is completed
+  bool _isKYCCompleted() {
+    return isKYCCompleted(); // Use the mixin method
+  }
+
+  // Check if profile is complete
+  bool _isProfileComplete() {
+    return _userService.hasEmail() && 
+           _userService.userPhone != null && 
+           _userService.userPhone!.isNotEmpty;
+  }
+
+  // Show KYC verification required dialog
+  void _showKYCRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text(
+            'KYC Verification Required',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'You need to complete KYC verification to withdraw crypto. Please complete your KYC process first.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Later', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
+              child: const Text('Complete KYC', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Show profile completion required dialog
+  void _showProfileRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text(
+            'Profile Completion Required',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'Please complete your profile information (email and phone number) to withdraw crypto.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Later', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const UserProfileScreen()));
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
+              child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Validate KYC and profile before proceeding
+  bool _validateUserRequirements() {
+    if (!_isKYCCompleted()) {
+      _showKYCRequiredDialog();
+      return false;
+    }
+    
+    if (!_isProfileComplete()) {
+      _showProfileRequiredDialog();
+      return false;
+    }
+    
+    return true;
+  }
+  
   void _subscribeToBalanceUpdates() {
     _balanceSubscription = SocketService.balanceStream.listen((data) {
       if (mounted && data['type'] == 'balance_update') {
@@ -529,72 +639,482 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> {
           style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
         ),
         actions: [
+          TextButton.icon(
+            onPressed: _toggleHistory,
+            icon: Icon(
+              _showHistory ? Icons.add_circle_outline : Icons.history,
+              color: const Color(0xFF84BD00),
+              size: 20,
+            ),
+            label: Text(
+              _showHistory ? 'Withdraw' : 'History',
+              style: const TextStyle(
+                color: Color(0xFF84BD00),
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.refresh, color: Colors.white),
             onPressed: _isLoading ? null : _refreshData,
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: BitcoinLoadingIndicator(size: 50))
-          : SafeArea(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+      body: _showHistory ? _buildHistoryView() : _buildWithdrawForm(),
+    );
+  }
+
+  Widget _buildWithdrawForm() {
+    if (_isLoading) {
+      return const Center(child: BitcoinLoadingIndicator(size: 50));
+    }
+
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildCoinSelector(),
+            const SizedBox(height: 20),
+            _buildNetworkSelector(),
+            if (_isLoadingNetworks)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Row(
                   children: [
-                    _buildCoinSelector(),
-                    const SizedBox(height: 20),
-                    _buildNetworkSelector(),
-                    if (_isLoadingNetworks)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 8),
-                        child: Row(
-                          children: [
-                            SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Color(0xFF84BD00),
-                              ),
-                            ),
-                            SizedBox(width: 8),
-                            Text(
-                              'Loading networks...',
-                              style: TextStyle(color: Colors.white54, fontSize: 12),
-                            ),
-                          ],
-                        ),
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Color(0xFF84BD00),
                       ),
-                    if (_errorMessage != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.error_outline, color: Colors.red, size: 16),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                _errorMessage!,
-                                style: const TextStyle(color: Colors.red, fontSize: 12),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    const SizedBox(height: 20),
-                    _buildAddressInput(),
-                    const SizedBox(height: 20),
-                    _buildAmountInput(),
-                    const SizedBox(height: 20),
-                    _buildBalanceAndFeeInfo(),
-                    const SizedBox(height: 30),
-                    _buildWithdrawButton(),
+                    ),
+                    SizedBox(width: 8),
+                    Text(
+                      'Loading networks...',
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
                   ],
                 ),
               ),
+            if (_errorMessage != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error_outline, color: Colors.red, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _errorMessage!,
+                        style: const TextStyle(color: Colors.red, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 20),
+            _buildAddressInput(),
+            const SizedBox(height: 20),
+            
+            // KYC Requirement Warning
+            if (!_isKYCCompleted())
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Colors.orange.withOpacity(0.15), Colors.red.withOpacity(0.1)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: Colors.orange.withOpacity(0.3),
+                    width: 1,
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.verified_user_outlined,
+                            color: Colors.orange,
+                            size: 24,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'KYC Verification Required',
+                                style: TextStyle(
+                                  color: Colors.orange,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              const Text(
+                                'Complete KYC verification to access this feature',
+                                style: TextStyle(
+                                  color: Colors.orange,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.orange,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'Complete KYC Now',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 20),
+            
+            _buildAmountInput(),
+            const SizedBox(height: 20),
+            _buildBalanceAndFeeInfo(),
+            const SizedBox(height: 30),
+            _buildWithdrawButton(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHistoryView() {
+    if (_isLoadingHistory) {
+      return const Center(
+        child: CircularProgressIndicator(
+          color: Color(0xFF84BD00),
+        ),
+      );
+    }
+
+    if (_historyError != null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, color: Colors.red, size: 48),
+            const SizedBox(height: 16),
+            Text(
+              _historyError!,
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
+              textAlign: TextAlign.center,
             ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: _loadWithdrawalHistory,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF84BD00),
+                foregroundColor: Colors.black,
+              ),
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_withdrawalHistory.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.history, color: Colors.white38, size: 64),
+            const SizedBox(height: 16),
+            const Text(
+              'No Withdrawal History',
+              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Your crypto withdrawal history will appear here',
+              style: TextStyle(color: Colors.white54, fontSize: 14),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: _toggleHistory,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF84BD00),
+                foregroundColor: Colors.black,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              ),
+              child: const Text('Make a Withdrawal'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadWithdrawalHistory,
+      color: const Color(0xFF84BD00),
+      backgroundColor: const Color(0xFF1C1C1E),
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: _withdrawalHistory.length,
+        itemBuilder: (context, index) {
+          final withdrawal = _withdrawalHistory[index];
+          return _buildWithdrawalHistoryItem(withdrawal);
+        },
+      ),
+    );
+  }
+
+  Widget _buildWithdrawalHistoryItem(Map<String, dynamic> withdrawal) {
+    final amount = withdrawal['amount'] ?? withdrawal['total'] ?? withdrawal['value'] ?? '0';
+    final status = withdrawal['status'] ?? withdrawal['transactionStatus'] ?? 'pending';
+    final createdAt = withdrawal['createdAt'] ?? withdrawal['date'] ?? withdrawal['timestamp'];
+    final coin = withdrawal['coin'] ?? withdrawal['currency'] ?? withdrawal['asset'] ?? 'USDT';
+    final network = withdrawal['network'] ?? withdrawal['chain'] ?? withdrawal['blockchain'] ?? '';
+    final address = withdrawal['address'] ?? withdrawal['toAddress'] ?? withdrawal['destination'] ?? '';
+    final reference = withdrawal['referenceId'] ?? withdrawal['reference'] ?? withdrawal['id'] ?? withdrawal['_id'] ?? withdrawal['transactionId'] ?? '';
+
+    Color statusColor;
+    IconData statusIcon;
+    switch (status.toString().toLowerCase()) {
+      case 'completed':
+      case 'success':
+      case 'approved':
+        statusColor = Colors.green;
+        statusIcon = Icons.check_circle;
+        break;
+      case 'pending':
+      case 'processing':
+        statusColor = Colors.orange;
+        statusIcon = Icons.pending;
+        break;
+      case 'failed':
+      case 'rejected':
+        statusColor = Colors.red;
+        statusIcon = Icons.cancel;
+        break;
+      default:
+        statusColor = Colors.grey;
+        statusIcon = Icons.help;
+    }
+
+    String formattedDate = 'Unknown date';
+    if (createdAt != null) {
+      try {
+        DateTime date;
+        final createdAtStr = createdAt.toString();
+        
+        // Try parsing as ISO string first
+        date = DateTime.tryParse(createdAtStr) ?? DateTime.now();
+        
+        // If parsing failed, try parsing as Unix timestamp
+        if (date == DateTime.now() && createdAtStr.isNotEmpty) {
+          try {
+            final timestamp = int.tryParse(createdAtStr);
+            if (timestamp != null) {
+              date = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000);
+            }
+          } catch (e) {
+            // If all parsing fails, use current time
+            date = DateTime.now();
+          }
+        }
+        
+        // Format to local time with proper 12-hour format
+        formattedDate = DateFormat('dd MMM yyyy, hh:mm a').format(date.toLocal());
+        
+        // Debug logging to check the conversion
+        debugPrint('Original createdAt: $createdAtStr');
+        debugPrint('Parsed date: $date');
+        debugPrint('Formatted date: $formattedDate');
+        
+      } catch (e) {
+        debugPrint('Error parsing date: $e');
+        formattedDate = createdAt.toString();
+      }
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF2C2C2E)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(statusIcon, color: statusColor, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Withdraw ${coin.toString().toUpperCase()}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  status.toString().toUpperCase(),
+                  style: TextStyle(
+                    color: statusColor,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Amount',
+                    style: TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${double.tryParse(amount.toString())?.toStringAsFixed(6) ?? amount} ${coin.toString().toUpperCase()}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              if (network.toString().isNotEmpty)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    const Text(
+                      'Network',
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF84BD00).withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        network.toString(),
+                        style: const TextStyle(
+                          color: Color(0xFF84BD00),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+          if (address.toString().isNotEmpty) ...[
+            const SizedBox(height: 12),
+            const Divider(color: Color(0xFF2C2C2E), height: 1),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const Text(
+                  'To: ',
+                  style: TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+                Expanded(
+                  child: Text(
+                    address.toString(),
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 12),
+          const Divider(color: Color(0xFF2C2C2E), height: 1),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                formattedDate,
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 12,
+                ),
+              ),
+              if (reference.toString().isNotEmpty)
+                Text(
+                  'Ref: ${reference.toString().substring(0, reference.toString().length > 8 ? 8 : reference.toString().length)}',
+                  style: const TextStyle(
+                    color: Colors.white38,
+                    fontSize: 11,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -952,7 +1472,7 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> {
     return SizedBox(
       width: double.infinity,
       child: ElevatedButton(
-        onPressed: _processWithdrawal,
+        onPressed: _handleConfirmAndSendOTP,
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF84BD00),
           foregroundColor: Colors.white,
@@ -962,7 +1482,7 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> {
           ),
         ),
         child: const Text(
-          'Withdraw',
+          'Confirm & Send OTP',
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.bold,
@@ -972,11 +1492,271 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> {
     );
   }
 
+  Future<void> _handleConfirmAndSendOTP() async {
+    // Check KYC and profile requirements first
+    if (!_validateUserRequirements()) {
+      return;
+    }
+
+    // Validate inputs
+    if (_addressController.text.isEmpty) {
+      _showErrorSnackBar('Please enter a valid address');
+      return;
+    }
+    
+    if (_amountController.text.isEmpty || double.tryParse(_amountController.text) == null) {
+      _showErrorSnackBar('Please enter a valid amount');
+      return;
+    }
+
+    final amount = double.parse(_amountController.text);
+    if (amount <= 0) {
+      _showErrorSnackBar('Amount must be greater than 0');
+      return;
+    }
+
+    if (amount > _availableBalance) {
+      _showErrorSnackBar('Insufficient balance');
+      return;
+    }
+
+    // Show confirmation dialog first
+    final shouldProceed = await _showWithdrawalConfirmation();
+    if (!shouldProceed) return;
+
+    // Show loading
+    _showLoadingDialog();
+
+    try {
+      // Step 1: Send OTP
+      final otpResult = await WalletService.sendOtp(purpose: 'crypto_withdraw');
+      
+      Navigator.pop(context); // Close loading dialog
+
+      if (otpResult['success'] != true) {
+        _showErrorSnackBar(otpResult['error'] ?? 'Failed to send OTP');
+        return;
+      }
+
+      if (!mounted) return;
+
+      // Step 2: Navigate to OTP Verification Screen
+      final bool? verified = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => OtpVerificationScreen(
+            onVerify: (otp) async {
+              final result = await WalletService.withdrawCrypto(
+                coin: _selectedCoin,
+                network: _selectedNetwork,
+                address: _addressController.text,
+                amount: amount,
+                otp: otp,
+              );
+              
+              bool success = result != null && result['success'] == true;
+              if (success) {
+                WalletService.getAllWalletBalances();
+              }
+              
+              return {
+                'success': success,
+                'message': result != null ? (result['error'] ?? result['message']) : 'Withdrawal failed'
+              };
+            },
+            onResend: () => WalletService.sendOtp(purpose: 'crypto_withdraw'),
+          ),
+        ),
+      );
+
+      // Step 3: If verified, navigate to success screen
+      if (verified == true && mounted) {
+        await NotificationService.addNotification(
+          title: 'Crypto Withdrawal Initiated',
+          message: 'Your withdrawal of $amount $_selectedCoin to ${_addressController.text.substring(0, 6)}... has been submitted.',
+          type: NotificationType.transaction,
+        );
+        
+        // Navigate to success screen
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (context) => _buildSuccessScreen(amount),
+          ),
+        );
+      }
+    } catch (e) {
+      Navigator.pop(context); // Close loading dialog if still showing
+      _showErrorSnackBar('An error occurred: $e');
+    }
+  }
+
+  Widget _buildSuccessScreen(double amount) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0D0D0D),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF84BD00).withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check_circle_rounded,
+                  color: Color(0xFF84BD00),
+                  size: 100,
+                ),
+              ),
+              const SizedBox(height: 32),
+              const Text(
+                'Withdrawal Initiated',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Your crypto withdrawal request of $amount $_selectedCoin has been submitted successfully.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 16,
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E1E20),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  children: [
+                    _buildSuccessDetailRow('Coin', _selectedCoin),
+                    const SizedBox(height: 8),
+                    _buildSuccessDetailRow('Network', _selectedNetwork),
+                    const SizedBox(height: 8),
+                    _buildSuccessDetailRow('Amount', '$amount $_selectedCoin'),
+                    const SizedBox(height: 8),
+                    _buildSuccessDetailRow('Address', '${_addressController.text.substring(0, 6)}...${_addressController.text.substring(_addressController.text.length > 6 ? _addressController.text.length - 6 : 0)}'),
+                    const SizedBox(height: 8),
+                    _buildSuccessDetailRow('Network Fee', '${_withdrawalFees.toStringAsFixed(6)} $_selectedCoin'),
+                  ],
+                ),
+              ),
+              const Spacer(),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF84BD00),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text(
+                    'Done',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSuccessDetailRow(String label, String value) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 14)),
+        Text(value, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+      ],
+    );
+  }
+
   Future<void> _refreshData() async {
     await _fetchData();
     await _fetchAvailableBalance();
     if (_coins.isNotEmpty) {
       await _updateNetworksForCoin(_coins.first);
+    }
+  }
+
+  Future<void> _loadWithdrawalHistory() async {
+    setState(() {
+      _isLoadingHistory = true;
+      _historyError = null;
+    });
+
+    try {
+      debugPrint('Withdraw Crypto Screen: Fetching crypto withdrawal history...');
+      final result = await WalletService.getCryptoWithdrawalHistory(limit: 50);
+      debugPrint('Withdraw Crypto Screen: API result: $result');
+
+      if (result['success'] == true) {
+        final data = result['data'];
+        debugPrint('Withdraw Crypto Screen: Data type: ${data.runtimeType}');
+
+        if (data != null && data is Map) {
+          final transactions = data['transactions'];
+          if (transactions is List) {
+            setState(() {
+              _withdrawalHistory = transactions;
+            });
+            debugPrint('Withdraw Crypto Screen: Loaded ${transactions.length} transactions');
+          } else {
+            setState(() {
+              _withdrawalHistory = [];
+            });
+            debugPrint('Withdraw Crypto Screen: No transactions found in data');
+          }
+        } else if (data is List) {
+          setState(() {
+            _withdrawalHistory = data;
+          });
+          debugPrint('Withdraw Crypto Screen: Loaded ${data.length} transactions (direct list)');
+        } else {
+          setState(() {
+            _withdrawalHistory = [];
+          });
+          debugPrint('Withdraw Crypto Screen: Empty or invalid data structure');
+        }
+      } else {
+        setState(() {
+          _historyError = result['error'] ?? 'Failed to load history';
+        });
+        debugPrint('Withdraw Crypto Screen: API error: ${result['error']}');
+      }
+    } catch (e, stackTrace) {
+      setState(() {
+        _historyError = 'Error: $e';
+      });
+      debugPrint('Withdraw Crypto Screen: Exception loading history: $e');
+      debugPrint('Stack trace: $stackTrace');
+    } finally {
+      setState(() {
+        _isLoadingHistory = false;
+      });
+    }
+  }
+
+  void _toggleHistory() {
+    setState(() {
+      _showHistory = !_showHistory;
+    });
+    if (_showHistory && _withdrawalHistory.isEmpty) {
+      _loadWithdrawalHistory();
     }
   }
 
