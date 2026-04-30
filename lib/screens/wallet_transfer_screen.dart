@@ -6,9 +6,8 @@ import '../services/socket_service.dart';
 import '../services/bot_service.dart';
 import '../services/user_service.dart';
 import '../services/unified_wallet_service.dart' as unified;
-import '../utils/kyc_unlock_mixin.dart';
+import '../services/auto_refresh_service.dart';
 import 'package:intl/intl.dart';
-import 'user_profile_screen.dart';
 
 class InternalTransferScreen extends StatefulWidget {
   const InternalTransferScreen({super.key});
@@ -17,7 +16,7 @@ class InternalTransferScreen extends StatefulWidget {
   State<InternalTransferScreen> createState() => _InternalTransferScreenState();
 }
 
-class _InternalTransferScreenState extends State<InternalTransferScreen> with KYCUnlockMixin {
+class _InternalTransferScreenState extends State<InternalTransferScreen> {
   String _fromWallet = 'spot';
   String _toWallet = 'p2p';
   String _selectedCoin = 'USDT';
@@ -30,7 +29,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> with KY
   Map<String, String> _coinSymbolToId = {};
   StreamSubscription? _balanceSubscription;
   StreamSubscription? _unifiedWalletSubscription;
-  
+
   final UserService _userService = UserService();
 
   final List<Map<String, String>> _walletTypes = [
@@ -445,61 +444,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> with KY
   }
 
   
-  // Check if profile is complete
-  bool _isProfileComplete() {
-    return _userService.hasEmail() && 
-           _userService.userPhone != null && 
-           _userService.userPhone!.isNotEmpty;
-  }
-
   
-  // Show profile completion required dialog
-  void _showProfileRequiredDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF1A1A1A),
-          title: const Text(
-            'Profile Completion Required',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-          ),
-          content: const Text(
-            'Please complete your profile information (email and phone number) to transfer funds.',
-            style: TextStyle(color: Colors.white70),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Later', style: TextStyle(color: Colors.grey)),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const UserProfileScreen()));
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
-              child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  // Validate user requirements before proceeding (KYC removed for wallet transfers)
-  bool _validateUserRequirements() {
-    // KYC verification removed for wallet-to-wallet transfers
-    
-    if (!_isProfileComplete()) {
-      _showProfileRequiredDialog();
-      return false;
-    }
-    
-    return true;
-  }
-
   // Get coin ID from coin symbol using real API data
   String _getCoinId(String coinSymbol) {
     final upperSymbol = coinSymbol.toUpperCase();
@@ -517,43 +462,25 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> with KY
   }
 
   Future<void> _handleTransfer() async {
-    // Check KYC and profile requirements first
-    if (!_validateUserRequirements()) {
-      return;
-    }
-
-    if (_amountController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter amount'), backgroundColor: Colors.red),
-      );
+    if (_amountController.text.trim().isEmpty) {
+      _showError('Please enter amount');
       return;
     }
 
     final amount = double.tryParse(_amountController.text) ?? 0;
     if (amount <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter a valid amount'), backgroundColor: Colors.red),
-      );
+      _showError('Enter a valid amount');
       return;
     }
 
-    // Check available balance
+    if (_fromWallet == _toWallet) {
+      _showError('Cannot transfer to the same wallet');
+      return;
+    }
+
     final availableBalance = double.tryParse(_getWalletBalance(_fromWallet)) ?? 0;
     if (amount > availableBalance) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Insufficient balance. Available: $availableBalance USDT'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    // Prevent same wallet transfer
-    if (_fromWallet == _toWallet) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot transfer to the same wallet'), backgroundColor: Colors.red),
-      );
+      _showError('Insufficient balance. Available: ${availableBalance.toStringAsFixed(2)} $_selectedCoin');
       return;
     }
 
@@ -614,7 +541,13 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> with KY
           }
         }
 
-        await _fetchBalances(); // Refresh all balances
+        // IMMEDIATE BALANCE REFRESH AFTER TRANSFER
+        debugPrint('WalletTransferScreen: Triggering immediate balance refresh after transfer...');
+        await Future.wait([
+          _fetchBalances(), // Existing balance fetch
+          unified.UnifiedWalletService.refreshAllBalances(),
+          AutoRefreshService.forceRefreshAll(),
+        ]);
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

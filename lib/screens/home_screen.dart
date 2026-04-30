@@ -27,6 +27,8 @@ import '../services/wallet_service.dart';
 import '../services/spot_service.dart';
 import '../services/binance_service.dart';
 import '../services/unified_wallet_service.dart' as unified;
+import '../services/auto_refresh_service.dart';
+import '../services/balance_sync_service.dart';
 import '../utils/coin_icon_mapper.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 
@@ -247,7 +249,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String _selectedTab = 'Favorites';
   final List<String> _tabs = ['Market', 'Perp Futures', 'Std. Futures'];
   final NumberFormat _compactFormat = NumberFormat.compactCurrency(symbol: '', decimalDigits: 1);
@@ -255,13 +257,16 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _cryptoData = [];
   bool _isLoading = true;
   double _totalBalance = 0.0;
-  bool _isBalanceVisible = true;
+  double _availableBalance = 0.0;
+  bool _isBalanceVisible = false; // Balance hidden by default after login
   
   // WebSocket for real-time favorites data
   Map<String, Map<String, dynamic>> _favoritesMarketData = {};
   bool _isWebSocketConnected = false;
   StreamSubscription<Map<String, dynamic>>? _marketDataSubscription;
   StreamSubscription<unified.WalletBalance?>? _balanceSubscription;
+  StreamSubscription<double>? _balanceSyncSubscription;
+  StreamSubscription<Map<String, dynamic>>? _socketBalanceSubscription;
   
   // Candlestick chart data for Std. Futures
   List<Map<String, dynamic>> _candleData = [];
@@ -271,6 +276,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final List<String> _timeframes = ['Line', '15 Min', '1 Hour', '4 Hour', '1 Day', 'More'];
   
   Timer? _priceTimer;
+  Timer? _balanceRefreshTimer;
   final String _marketBaseUrl = 'http://13.202.34.205:9000';
   
   // Binance market data
@@ -281,37 +287,383 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, double> _marketCapData = {};
 
   String _selectedSpotSymbol = 'BTCUSDT';
-  
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     UserService().initUserData();
-    unified.UnifiedWalletService.initialize();
-    _fetchInitialData();
     _startPriceUpdates();
     _generateMockCandleData();
-    
+
+    // Set up balance subscriptions FIRST before any async initialization
+    // to avoid missing initial stream emissions from UnifiedWalletService
+    _subscribeToBalance();
+    _subscribeToBalanceSync();
+    _subscribeToSocketBalance();
+
+    // Initialize BalanceSyncService for app-wide balance sync
+    BalanceSyncService().initialize();
+
     // Connect WebSocket for Favorites real-time data
     _connectWebSocketForFavorites();
-    _subscribeToBalance();
+
+    // Start periodic balance refresh timer
+    _startBalanceRefreshTimer();
+
+    // Initialize wallet services and fetch balance AFTER subscriptions are ready
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      debugPrint('Home Screen: Post-frame initialization starting...');
+
+      // Initialize UnifiedWalletService and fetch balances
+      await unified.UnifiedWalletService.initialize();
+
+      // Force refresh all balances to ensure latest data after login
+      await unified.UnifiedWalletService.refreshAllBalances();
+
+      // Fetch initial data (market + wallet balance via API)
+      await _fetchInitialData();
+
+      // Connect to Socket Service for real-time balance updates
+      await _connectSocketService();
+
+      debugPrint('Home Screen: Post-frame initialization complete');
+    });
   }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _priceTimer?.cancel();
+    _balanceRefreshTimer?.cancel();
+    _marketDataSubscription?.cancel();
+    _binanceWsSubscription?.cancel();
+    _balanceSubscription?.cancel();
+    _balanceSyncSubscription?.cancel();
+    _socketBalanceSubscription?.cancel();
+    BinanceService.disconnectAll();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed && mounted) {
+      // Refresh balance when app comes to foreground (with rate limiting)
+      debugPrint('Home Screen: App resumed, refreshing balance');
+      final now = DateTime.now();
+      if (_lastApiFetchTime == null || now.difference(_lastApiFetchTime!) > _minApiFetchInterval) {
+        _lastApiFetchTime = now;
+        _fetchWalletBalance();
+      } else {
+        debugPrint('Home Screen: Skipping resume refresh, too soon');
+      }
+    }
+  }
+
+  // Track last API fetch time to prevent rapid successive calls
+  DateTime? _lastApiFetchTime;
+  static const _minApiFetchInterval = Duration(seconds: 10);
 
   void _subscribeToBalance() {
     _balanceSubscription = unified.UnifiedWalletService.walletBalanceStream.listen((balance) {
-      if (mounted) {
+      if (mounted && balance != null) {
+        // Immediately update from unified wallet stream data
+        final total = balance.totalBalance;
+        final equity = balance.totalEquityUSDT;
+
         setState(() {
-          _totalBalance = balance?.totalEquityUSDT ?? 0.0;
+          _totalBalance = total;
+          // Show total balance in available balance section (user requested)
+          _availableBalance = total;
         });
+
+        debugPrint('Home Screen: Balance updated from UnifiedWalletService stream - Total: $total, Equity: $equity');
+
+        // Only trigger API refresh if enough time has passed (avoid race conditions)
+        // The periodic timer will handle regular sync anyway
+        final now = DateTime.now();
+        if (_lastApiFetchTime == null || now.difference(_lastApiFetchTime!) > _minApiFetchInterval) {
+          _lastApiFetchTime = now;
+          _fetchWalletBalance();
+        } else {
+          debugPrint('Home Screen: Skipping API fetch, too soon since last call');
+        }
       }
     });
 
-    // Also listen to direct updates strictly for forced refresh triggers if missed by unified stream
-    SocketService.balanceStream.listen((data) {
-      if (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary') {
-        debugPrint('Home Screen: Wallet summary update received - Refreshing unified wallet');
-        unified.UnifiedWalletService.refreshAllBalances();
+    // Socket listener removed - UnifiedWalletService already handles socket updates internally
+  }
+
+  void _subscribeToBalanceSync() {
+    _balanceSyncSubscription = BalanceSyncService().balanceStream.listen((balance) {
+      if (mounted) {
+        debugPrint('Home Screen: Balance sync service update: $balance');
+
+        // Update available balance from sync service directly
+        setState(() {
+          _availableBalance = balance;
+        });
+
+        // Only trigger API refresh if enough time has passed
+        final now = DateTime.now();
+        if (_lastApiFetchTime == null || now.difference(_lastApiFetchTime!) > _minApiFetchInterval) {
+          _lastApiFetchTime = now;
+          _fetchWalletBalance();
+        } else {
+          debugPrint('Home Screen: Skipping API fetch from sync service, too soon');
+        }
       }
     });
+  }
+
+  // Connect to Socket Service for real-time balance updates
+  Future<void> _connectSocketService() async {
+    try {
+      debugPrint('🔌 Home Screen: Starting WALLET socket connection...');
+      
+      // Force disconnect first to ensure clean connection
+      await _forceDisconnectSocket();
+      
+      // Connect to socket with retry logic
+      for (int attempt = 1; attempt <= 3; attempt++) {
+        debugPrint('🔌 Home Screen: WALLET Socket connection attempt $attempt/3');
+        
+        await SocketService.connect();
+        await Future.delayed(const Duration(seconds: 3));
+        
+        if (SocketService.isConnected) {
+          debugPrint('🔌✅ Home Screen: WALLET Socket connected successfully on attempt $attempt');
+          
+          // Join wallet room and request initial data
+          await Future.delayed(const Duration(seconds: 1));
+          debugPrint('🔌📡 Joining wallet room and requesting initial data...');
+          SocketService.requestWalletSummary();
+          SocketService.requestWalletBalance();
+          
+          // Test connection and request balance updates
+          await Future.delayed(const Duration(seconds: 2));
+          if (SocketService.isConnected) {
+            debugPrint('🔌💚 Home Screen: WALLET Socket connection stable and ready');
+            debugPrint('🔌📊 Subscribing to wallet balance events...');
+            return;
+          }
+        } else {
+          debugPrint('🔌❌ Home Screen: WALLET Socket connection failed on attempt $attempt');
+          await Future.delayed(const Duration(seconds: 2));
+        }
+      }
+      
+      debugPrint('🔌🚨 Home Screen: All WALLET socket connection attempts failed');
+    } catch (e) {
+      debugPrint('🔌🚨 Home Screen: Critical error in WALLET socket connection: $e');
+    }
+  }
+
+  // Force disconnect socket for clean reconnection
+  Future<void> _forceDisconnectSocket() async {
+    try {
+      debugPrint('🔌 Home Screen: Force disconnecting socket...');
+      // Note: SocketService doesn't have a disconnect method, so we'll rely on reconnect logic
+      await Future.delayed(const Duration(milliseconds: 500));
+    } catch (e) {
+      debugPrint('🔌 Home Screen: Error during force disconnect: $e');
+    }
+  }
+
+  void _subscribeToSocketBalance() {
+    debugPrint('🔌📡 Home Screen: Setting up WALLET socket balance subscription...');
+
+    _socketBalanceSubscription = SocketService.balanceStream.listen(
+      (balanceData) {
+        if (mounted) {
+          debugPrint('🔌💰 Home Screen: WALLET BALANCE UPDATE RECEIVED: $balanceData');
+
+          // Try to extract and update balance directly from socket data first
+          _processWalletSocketBalanceData(balanceData);
+
+          // Only trigger API refresh if enough time has passed
+          final now = DateTime.now();
+          if (_lastApiFetchTime == null || now.difference(_lastApiFetchTime!) > _minApiFetchInterval) {
+            _lastApiFetchTime = now;
+            debugPrint('🔌⚡ Home Screen: Balance refresh triggered by wallet socket');
+            _fetchWalletBalance();
+          } else {
+            debugPrint('🔌⏱️ Home Screen: Skipping API fetch from socket, too soon');
+          }
+
+          // Also update balance sync service to notify other parts of app
+          BalanceSyncService().forceRefreshBalance();
+        }
+      },
+      onError: (error) {
+        debugPrint('🔌❌ Home Screen: WALLET socket balance stream ERROR: $error');
+        debugPrint('🔌🔄 Home Screen: Attempting to reconnect wallet socket...');
+        // Fallback to API refresh on socket error (with rate limiting)
+        final now = DateTime.now();
+        if (_lastApiFetchTime == null || now.difference(_lastApiFetchTime!) > _minApiFetchInterval) {
+          _lastApiFetchTime = now;
+          _fetchWalletBalance();
+        }
+        // Attempt to reconnect
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted) {
+            _connectSocketService();
+          }
+        });
+      },
+      onDone: () {
+        debugPrint('🔌⚠️ Home Screen: WALLET socket balance stream CLOSED');
+        debugPrint('🔌🔄 Home Screen: Reconnecting wallet socket...');
+        // Attempt to reconnect when stream closes
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted) {
+            _connectSocketService();
+          }
+        });
+      },
+    );
+    
+    debugPrint('🔌✅ Home Screen: WALLET socket balance subscription ACTIVE');
+  }
+
+  // Process WALLET socket balance data and attempt direct UI update
+  void _processWalletSocketBalanceData(Map<String, dynamic> balanceData) {
+    try {
+      final type = balanceData['type']?.toString() ?? 'unknown';
+      final data = balanceData['data'] ?? {};
+      
+      debugPrint('🔌📊 Home Screen: Processing WALLET socket data - Type: $type, Data: $data');
+      
+      // Handle different wallet socket event types
+      switch (type) {
+        case 'wallet_summary':
+          debugPrint('🔌💼 Home Screen: Processing wallet summary event');
+          _processWalletSummaryData(data);
+          break;
+          
+        case 'balance_update':
+          debugPrint('🔌💰 Home Screen: Processing balance update event');
+          _processBalanceUpdateData(data);
+          break;
+          
+        case 'wallet summary update socket':
+          debugPrint('🔌🔄 Home Screen: Processing wallet summary update socket event');
+          _processWalletSummaryData(data);
+          break;
+          
+        default:
+          debugPrint('🔌❓ Home Screen: Unknown wallet socket event type: $type');
+          _processGenericBalanceData(data);
+      }
+    } catch (e) {
+      debugPrint('🔌❌ Home Screen: Error processing WALLET socket balance data: $e');
+    }
+  }
+
+  // Process wallet summary specific data
+  void _processWalletSummaryData(dynamic data) {
+    try {
+      if (data is Map) {
+        debugPrint('🔌💼 Home Screen: Extracting balances from wallet summary...');
+        
+        // Try to extract both available and total balance
+        final extractedBalances = _extractBothBalancesFromData(data);
+        final newTotalBalance = extractedBalances['total'] ?? 0.0;
+        final newAvailableBalance = extractedBalances['available'] ?? 0.0;
+        
+        // Update UI if balances changed significantly
+        if ((newTotalBalance - _totalBalance).abs() > 0.01 || 
+            (newAvailableBalance - _availableBalance).abs() > 0.01) {
+          debugPrint('🔌🔄 Home Screen: WALLET SUMMARY UPDATE - Total: $_totalBalance → $newTotalBalance, Available: $_availableBalance → $newAvailableBalance');
+          setState(() {
+            _totalBalance = newTotalBalance;
+            _availableBalance = newAvailableBalance;
+          });
+          BalanceSyncService().updateBalance(newTotalBalance, source: 'WalletSocket');
+        }
+      }
+    } catch (e) {
+      debugPrint('🔌❌ Home Screen: Error processing wallet summary data: $e');
+    }
+  }
+
+  // Process balance update specific data
+  void _processBalanceUpdateData(dynamic data) {
+    try {
+      debugPrint('🔌💰 Home Screen: Processing balance update - triggering full refresh');
+      // For balance_update events, do a full API refresh to get accurate data (with rate limiting)
+      final now = DateTime.now();
+      if (_lastApiFetchTime == null || now.difference(_lastApiFetchTime!) > _minApiFetchInterval) {
+        _lastApiFetchTime = now;
+        _fetchWalletBalance();
+      } else {
+        debugPrint('🔌⏱️ Home Screen: Skipping balance update API fetch, too soon');
+      }
+    } catch (e) {
+      debugPrint('🔌❌ Home Screen: Error processing balance update data: $e');
+    }
+  }
+
+  // Process generic balance data
+  void _processGenericBalanceData(dynamic data) {
+    try {
+      debugPrint('🔌❓ Home Screen: Processing generic balance data...');
+      final extractedBalances = _extractBothBalancesFromData(data);
+      final newTotalBalance = extractedBalances['total'] ?? 0.0;
+      final newAvailableBalance = extractedBalances['available'] ?? 0.0;
+      
+      if ((newTotalBalance - _totalBalance).abs() > 0.01 || 
+          (newAvailableBalance - _availableBalance).abs() > 0.01) {
+        setState(() {
+          _totalBalance = newTotalBalance;
+          _availableBalance = newAvailableBalance;
+        });
+        debugPrint('🔌🔄 Home Screen: Generic balance update applied');
+      }
+    } catch (e) {
+      debugPrint('🔌❌ Home Screen: Error processing generic balance data: $e');
+    }
+  }
+
+  // Test socket connection and request balance updates
+  void _testSocketConnection() {
+    debugPrint('🧪 Home Screen: Testing socket connection...');
+    debugPrint('🧪 Socket connected: ${SocketService.isConnected}');
+    debugPrint('🧪 Socket connecting: ${SocketService.isConnecting}');
+    
+    if (SocketService.isConnected) {
+      debugPrint('🧪 Socket is connected, requesting balance updates...');
+      SocketService.requestWalletSummary();
+      SocketService.requestWalletBalance();
+    } else {
+      debugPrint('🧪 Socket not connected, attempting reconnection...');
+      _connectSocketService();
+    }
+  }
+
+  // Manual trigger for testing real-time balance updates
+  void _manualBalanceUpdateTest() {
+    debugPrint('🎯🧪 Home Screen: MANUAL BALANCE UPDATE TEST');
+    debugPrint('🎯🧪 Current balance: $_totalBalance');
+    
+    // Force fetch from API
+    _fetchWalletBalance();
+    
+    // Request socket updates
+    if (SocketService.isConnected) {
+      debugPrint('🎯🔌 Requesting socket balance updates...');
+      SocketService.requestWalletSummary();
+      SocketService.requestWalletBalance();
+    } else {
+      debugPrint('🎯❌ Socket not connected, attempting connection...');
+      _connectSocketService();
+    }
+    
+    // Update balance sync service
+    BalanceSyncService().forceRefreshBalance();
+    
+    debugPrint('🎯✅ Manual balance update test completed');
   }
 
   // Connect WebSocket for real-time favorites market data from Binance
@@ -445,25 +797,235 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _fetchWalletBalance() async {
     try {
-      await unified.UnifiedWalletService.refreshAllBalances();
-
-      if (mounted) {
-        setState(() {
-          _totalBalance = unified.UnifiedWalletService.totalEquityUSDT;
-        });
+      debugPrint('💰 Home Screen: Starting comprehensive balance fetch...');
+      debugPrint('💰 Current balances before fetch - Total: $_totalBalance, Available: $_availableBalance');
+      
+      // Initialize both balances
+      double newTotalBalance = 0.0;
+      double newAvailableBalance = 0.0;
+      
+      // Method 1: Try getAllWalletBalances API
+      debugPrint('💰 Method 1: Fetching from all-wallet-balance API...');
+      final result = await WalletService.getAllWalletBalances();
+      debugPrint('💰 API Response: $result');
+      
+      if (result['success'] == true && result['data'] != null) {
+        debugPrint('💰 API success, extracting balance data...');
+        
+        // Method 1a: Try getTotalUSDTBalance for total balance
+        try {
+          final totalBalance = await WalletService.getTotalUSDTBalance();
+          debugPrint('💰 Method 1a - Total USDT Balance: $totalBalance');
+          newTotalBalance = totalBalance;
+        } catch (e) {
+          debugPrint('💰❌ Method 1a failed: $e');
+        }
+        
+        // Method 1b: Try getTotalAvailableUSDTBalance for available balance
+        try {
+          final availableBalance = await WalletService.getTotalAvailableUSDTBalance();
+          debugPrint('💰 Method 1b - Available USDT Balance: $availableBalance');
+          newAvailableBalance = availableBalance;
+        } catch (e) {
+          debugPrint('💰❌ Method 1b failed: $e');
+        }
+        
+        // Method 1c: Manual extraction from API data
+        try {
+          final extractedBalances = _extractBothBalancesFromData(result['data']);
+          debugPrint('💰 Method 1c - Manual extraction - Total: ${extractedBalances['total']}, Available: ${extractedBalances['available']}');
+          
+          if (newTotalBalance == 0.0) newTotalBalance = extractedBalances['total'] ?? 0.0;
+          if (newAvailableBalance == 0.0) newAvailableBalance = extractedBalances['available'] ?? 0.0;
+        } catch (e) {
+          debugPrint('💰❌ Method 1c failed: $e');
+        }
+      } else {
+        debugPrint('💰❌ API returned error: ${result['error']}');
       }
+      
+      // Method 2: Try individual wallet APIs if still 0
+      if (newTotalBalance == 0.0 || newAvailableBalance == 0.0) {
+        debugPrint('💰 Method 2: Trying individual wallet APIs...');
+        final individualBalances = await _fetchFromIndividualWallets();
+        debugPrint('💰 Method 2 - Individual wallets: $individualBalances');
+        
+        if (newTotalBalance == 0.0) newTotalBalance = individualBalances;
+        if (newAvailableBalance == 0.0) newAvailableBalance = individualBalances;
+      }
+      
+      // Method 3: All methods returned 0
+      if (newTotalBalance == 0.0 && newAvailableBalance == 0.0) {
+        debugPrint('💰 Method 3: API returned 0 balances');
+      }
+
+      // Update UI ONLY if we got valid data OR if current balance is already 0
+      // This prevents overwriting a valid stream balance with 0 from API race conditions
+      if (mounted) {
+        final hasValidApiData = newTotalBalance > 0 || newAvailableBalance > 0;
+        final currentBalanceIsZero = _totalBalance == 0.0 && _availableBalance == 0.0;
+
+        if (hasValidApiData || currentBalanceIsZero) {
+          // Only update if API gave us valid data, or if we have nothing to show yet
+          setState(() {
+            _totalBalance = newTotalBalance;
+            _availableBalance = newAvailableBalance;
+          });
+          debugPrint('💰✅ Balances updated - Total: $newTotalBalance, Available: $newAvailableBalance');
+        } else {
+          debugPrint('💰🛡️ Skipping UI update: API returned 0 but we have valid balance from stream - Current Total: $_totalBalance, Current Available: $_availableBalance');
+        }
+      }
+      
     } catch (e) {
-      debugPrint('Error fetching wallet balance in Home: $e');
+      debugPrint('💰❌ Critical error in balance fetch: $e');
+
+      // Do not set fake test values - keep previous or show 0
+      if (mounted) {
+        debugPrint('💰🚨 Balance fetch failed, retaining current values - Total: $_totalBalance, Available: $_availableBalance');
+      }
     }
+  }
+
+  // Extract both total and available balance manually from API data
+  Map<String, double> _extractBothBalancesFromData(dynamic data) {
+    double total = 0.0;
+    double available = 0.0;
+    
+    try {
+      debugPrint('💰🔍 Extracting both balances from data: $data');
+      
+      if (data is Map) {
+        // Check different possible structures
+        final walletTypes = ['spot', 'p2p', 'bot', 'demo_bot', 'main'];
+        
+        for (String walletType in walletTypes) {
+          if (data[walletType] != null) {
+            final wallet = data[walletType];
+            debugPrint('💰🔍 Checking $walletType wallet: $wallet');
+            
+            // Check for balances array
+            if (wallet['balances'] != null) {
+              final balances = wallet['balances'];
+              if (balances is List) {
+                for (var balance in balances) {
+                  if (balance['coin']?.toString().toUpperCase() == 'USDT') {
+                    final availableBal = double.tryParse(balance['available']?.toString() ?? '0') ?? 0.0;
+                    final totalBal = double.tryParse(balance['total']?.toString() ?? '0') ?? 0.0;
+                    final lockedBal = double.tryParse(balance['locked']?.toString() ?? '0') ?? 0.0;
+                    
+                    available += availableBal;
+                    total += totalBal > 0 ? totalBal : (availableBal + lockedBal);
+                    
+                    debugPrint('💰💰 Found USDT in $walletType: available=$availableBal, total=$totalBal, locked=$lockedBal');
+                  }
+                }
+              }
+            }
+            
+            // Check for direct USDT field
+            if (wallet['USDT'] != null) {
+              final usdtData = wallet['USDT'];
+              final availableBal = double.tryParse(usdtData['available']?.toString() ?? '0') ?? 0.0;
+              final totalBal = double.tryParse(usdtData['total']?.toString() ?? '0') ?? 0.0;
+              
+              available += availableBal;
+              total += totalBal > 0 ? totalBal : availableBal;
+              
+              debugPrint('💰💰 Found direct USDT in $walletType: available=$availableBal, total=$totalBal');
+            }
+          }
+        }
+        
+        // Check for direct balance fields
+        if (data['totalEquityUSDT'] != null) {
+          final equity = double.tryParse(data['totalEquityUSDT'].toString()) ?? 0.0;
+          total = equity;
+          debugPrint('💰💰 Found totalEquityUSDT: $equity');
+        }
+        
+        if (data['totalBalance'] != null) {
+          final totalBal = double.tryParse(data['totalBalance'].toString()) ?? 0.0;
+          total = totalBal;
+          debugPrint('💰💰 Found totalBalance: $totalBal');
+        }
+        
+        if (data['availableBalance'] != null) {
+          final availableBal = double.tryParse(data['availableBalance'].toString()) ?? 0.0;
+          available = availableBal;
+          debugPrint('💰💰 Found availableBalance: $availableBal');
+        }
+      }
+      
+      debugPrint('💰✅ Manual extraction result - Total: $total, Available: $available');
+    } catch (e) {
+      debugPrint('💰❌ Manual extraction error: $e');
+    }
+    
+    return {'total': total, 'available': available};
+  }
+
+  // Extract balance manually from API data (legacy method for fallback)
+  double _extractBalanceFromData(dynamic data) {
+    final balances = _extractBothBalancesFromData(data);
+    return balances['total'] ?? 0.0;
+  }
+
+  // Fetch from individual wallet APIs as fallback
+  Future<double> _fetchFromIndividualWallets() async {
+    double total = 0.0;
+    
+    try {
+      debugPrint('💰🔄 Fetching from individual wallet APIs...');
+      
+      // Try spot wallet
+      try {
+        final spotResult = await WalletService.getWalletBalance();
+        if (spotResult['success'] == true && spotResult['data'] != null) {
+          final spotData = spotResult['data'];
+          if (spotData['balances'] != null) {
+            final balances = spotData['balances'];
+            if (balances is List) {
+              for (var balance in balances) {
+                if (balance['coin']?.toString().toUpperCase() == 'USDT') {
+                  total += double.tryParse(balance['available']?.toString() ?? '0') ?? 0.0;
+                  debugPrint('💰💰 Spot USDT: ${balance['available']}');
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('💰❌ Spot wallet failed: $e');
+      }
+      
+      // Try other wallet types similarly...
+      // (Add more wallet types as needed)
+      
+      debugPrint('💰✅ Individual wallets total: $total');
+    } catch (e) {
+      debugPrint('💰❌ Individual wallets error: $e');
+    }
+    
+    return total;
   }
   
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     UserService().initUserData();
-    _fetchWalletBalance();
+    // Force refresh balance when screen becomes active (with rate limiting)
+    debugPrint('Home Screen: didChangeDependencies called, refreshing balance');
+    final now = DateTime.now();
+    if (_lastApiFetchTime == null || now.difference(_lastApiFetchTime!) > _minApiFetchInterval) {
+      _lastApiFetchTime = now;
+      _fetchWalletBalance();
+    } else {
+      debugPrint('Home Screen: Skipping didChangeDependencies refresh, too soon');
+    }
   }
-  
+
+    
   Future<void> _fetchMarketData() async {
     if (_isFetchingMarketData) return; // Prevent concurrent fetches
     _isFetchingMarketData = true;
@@ -538,6 +1100,63 @@ class _HomeScreenState extends State<HomeScreen> {
         _fetchMarketData();
       }
     });
+  }
+
+  void _startBalanceRefreshTimer() {
+    // Refresh balance every 8 seconds for more responsive updates
+    _balanceRefreshTimer = Timer.periodic(const Duration(seconds: 8), (timer) {
+      if (mounted) {
+        debugPrint('🔄⚡ Home Screen: WALLET-AWARE balance refresh tick ${timer.tick}');
+
+        // Only fetch balance if enough time has passed since last fetch
+        final now = DateTime.now();
+        if (_lastApiFetchTime == null || now.difference(_lastApiFetchTime!) > _minApiFetchInterval) {
+          _lastApiFetchTime = now;
+          _fetchWalletBalance();
+        } else {
+          debugPrint('🔄⏱️ Home Screen: Skipping timer-based API fetch, too soon');
+        }
+        
+        // Monitor WALLET socket connection health
+        if (!SocketService.isConnected) {
+          debugPrint('🔄❌ Home Screen: WALLET Socket disconnected, attempting reconnect...');
+          _connectSocketService();
+        } else {
+          debugPrint('🔄✅ Home Screen: WALLET Socket connected, requesting updates...');
+          // Periodically request wallet balance updates even if connected
+          if (timer.tick % 3 == 0) { // Every 24 seconds
+            debugPrint('🔄📡 Home Screen: Requesting WALLET balance updates...');
+            SocketService.requestWalletSummary();
+            SocketService.requestWalletBalance();
+          }
+        }
+        
+        // Comprehensive WALLET socket health check every 2 minutes
+        if (timer.tick % 15 == 0) {
+          _comprehensiveWalletSocketHealthCheck();
+        }
+      }
+    });
+  }
+
+  // Comprehensive WALLET socket health check and recovery
+  void _comprehensiveWalletSocketHealthCheck() {
+    debugPrint('🔧🏥 Home Screen: Comprehensive WALLET socket health check...');
+    
+    final isConnected = SocketService.isConnected;
+    final isConnecting = SocketService.isConnecting;
+    
+    debugPrint('🔧🏥 WALLET Socket Status - Connected: $isConnected, Connecting: $isConnecting');
+    
+    if (!isConnected && !isConnecting) {
+      debugPrint('🔧🔄 Home Screen: WALLET Socket completely disconnected, forcing reconnection...');
+      _connectSocketService();
+    } else if (isConnected) {
+      debugPrint('🔧💓 Home Screen: WALLET Socket heartbeat - requesting balance updates...');
+      SocketService.requestWalletSummary();
+      SocketService.requestWalletBalance();
+      debugPrint('🔧✅ Home Screen: WALLET Socket health confirmed');
+    }
   }
   
   void _showWithdrawalSelectionMenu() {
@@ -692,16 +1311,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  @override
-  void dispose() {
-    _priceTimer?.cancel();
-    _marketDataSubscription?.cancel();
-    _binanceWsSubscription?.cancel();
-    _balanceSubscription?.cancel();
-    BinanceService.disconnectAll();
-    super.dispose();
-  }
-
+  
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -807,6 +1417,7 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Available Balance Section
           Row(
             children: [
               const Text(
@@ -830,7 +1441,7 @@ class _HomeScreenState extends State<HomeScreen> {
             textBaseline: TextBaseline.alphabetic,
             children: [
               Text(
-                _isBalanceVisible ? _totalBalance.toStringAsFixed(2) : '****',
+                _isBalanceVisible ? _availableBalance.toStringAsFixed(2) : '****',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 20,
@@ -846,7 +1457,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 2),
           FutureBuilder<double>(
-            future: _getUSDEquivalent(),
+            future: _getAvailableUSDEquivalent(),
             builder: (context, snapshot) {
               final usdEquivalent = snapshot.data ?? 0.0;
               return Text(
@@ -855,13 +1466,14 @@ class _HomeScreenState extends State<HomeScreen> {
               );
             },
           ),
+          
         ],
       ),
     );
   }
 
-  Future<double> _getUSDEquivalent() async {
-    return _totalBalance;
+  Future<double> _getAvailableUSDEquivalent() async {
+    return _availableBalance;
   }
 
   Widget _buildTransferIcon() {

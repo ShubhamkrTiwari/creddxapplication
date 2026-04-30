@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
 import '../widgets/balance_growth_chart.dart';
+import '../widgets/trading_view_chart.dart';
 import 'dart:math' as math;
 
 class BotPositionsScreen extends StatefulWidget {
@@ -11,7 +12,7 @@ class BotPositionsScreen extends StatefulWidget {
 }
 
 class _BotPositionsScreenState extends State<BotPositionsScreen> {
-  String _selectedPair = 'BTC-USDT';
+  final String _selectedPair = 'BTC-USDT';
   String _selectedTimeframe = '1h';
   bool _isLoading = false;
   List<BotPosition> _positions = [];
@@ -20,6 +21,7 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
   bool _showBalanceChart = false;
   List<Map<String, dynamic>> _balanceHistory = [];
   bool _isLoadingBalance = false;
+  double _totalBotInvestment = 0.0; // Total investment from API
 
   final List<String> _timeframes = ['1m', '30m', '1h', '3m', '15m', '4h', '1d'];
 
@@ -36,15 +38,8 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
     });
 
     try {
-      // Define strategy mappings to match the API format
-      final pairMappings = {
-        'BTC-USDT': 'Omega-3X',
-        'ETH-USDT': 'Omega-3X',
-        'SOL-USDT': 'Omega-3X',
-      };
-      
-      String strategy = pairMappings[_selectedPair] ?? 'Omega-3X';
-      String symbol = _selectedPair; // Use the exact format from API
+      const String strategy = 'Omega-3X';
+      final String symbol = _selectedPair; // Use the exact format from API
 
       final result = await BotService.getUserBotPositions(
         strategy: strategy,
@@ -52,10 +47,15 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
       );
 
       if (mounted) {
+        debugPrint('=== API RESULT ===');
+        debugPrint('Result success: ${result['success']}');
+        debugPrint('Result data: ${result['data']}');
         if (result['success'] == true) {
           final data = result['data'];
           if (data != null) {
             final List<dynamic> positionsList = data['adjustedPositions'] ?? [];
+            debugPrint('Positions list count: ${positionsList.length}');
+            debugPrint('Raw positions: $positionsList');
             List<BotPosition> parsedPositions = [];
             
             for (var positionData in positionsList) {
@@ -69,12 +69,22 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
               }
             }
             
+            // Also fetch total investment from trades endpoint
+            final totalInvestment = await BotService.getTotalBotInvestment(
+              strategy: strategy,
+              symbol: symbol,
+            );
+            
             setState(() {
               _positions = parsedPositions;
               _positionData = data;
+              _totalBotInvestment = totalInvestment;
               _isLoading = false;
               _errorMessage = null;
             });
+
+            // Pre-load balance history
+            _loadBalanceHistory();
           } else {
             setState(() {
               _errorMessage = 'No data received from server';
@@ -99,14 +109,12 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
   }
 
   Future<void> _loadBalanceHistory() async {
-    if (_positionData == null) return;
-    
     setState(() {
       _isLoadingBalance = true;
     });
 
     try {
-      final strategy = _positionData!['strategy']?.toString() ?? 'Omega';
+      final strategy = _positionData?['strategy']?.toString() ?? 'Omega-3X';
       final result = await BotService.getBotBalanceHistory(
         strategy: strategy,
         days: 90, // Get 90 days of data for weekly view
@@ -170,7 +178,6 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
               child: Column(
                 children: [
                   _buildStrategyHeader(),
-                  _buildTimeframeSelector(),
                   _buildTradingChart(),
                   _buildPositionDetails(),
                   const SizedBox(height: 20),
@@ -188,10 +195,18 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
   }
 
   Widget _buildStrategyHeader() {
-    final userInvestment = _positionData != null 
-        ? double.tryParse(_positionData!['userInvestment']?.toString() ?? '0') ?? 0.0
-        : 0.0;
+    // Use total investment from API (user-trades endpoint)
+    final double userInvestment = _totalBotInvestment;
     final strategy = _positionData?['strategy'] ?? 'Omega-3X';
+    
+    // Debug logging
+    debugPrint('=== BOT POSITIONS DEBUG ===');
+    debugPrint('Positions count: ${_positions.length}');
+    debugPrint('User Investment: $userInvestment');
+    for (var pos in _positions) {
+      debugPrint('Position: ${pos.symbol}, Margin: ${pos.userMargin}, Leverage: ${pos.leverage}, Size: ${pos.size}');
+    }
+    debugPrint('===========================');
 
     return Container(
       margin: const EdgeInsets.all(16),
@@ -235,58 +250,6 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
                 child: const Text('Balance Growth'),
               ),
             ],
-          ),
-          const SizedBox(height: 12),
-          // Pair Selector
-          DropdownButtonFormField<String>(
-            initialValue: _selectedPair,
-            decoration: InputDecoration(
-              labelText: 'Select Trading Pair',
-              labelStyle: TextStyle(
-                color: Colors.white.withOpacity(0.5),
-                fontSize: 12,
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(
-                  color: Colors.white.withOpacity(0.2),
-                ),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(
-                  color: Colors.white.withOpacity(0.2),
-                ),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(
-                  color: Color(0xFF84BD00),
-                ),
-              ),
-              filled: true,
-              fillColor: const Color(0xFF2C2C2E),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            ),
-            dropdownColor: const Color(0xFF2C2C2E),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 14,
-            ),
-            items: const ['BTC-USDT', 'ETH-USDT', 'SOL-USDT'].map((pair) {
-              return DropdownMenuItem<String>(
-                value: pair,
-                child: Text(pair),
-              );
-            }).toList(),
-            onChanged: (value) {
-              if (value != null && value != _selectedPair) {
-                setState(() {
-                  _selectedPair = value;
-                });
-                _loadPositions();
-              }
-            },
           ),
           const SizedBox(height: 12),
           Row(
@@ -388,7 +351,7 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
 
   Widget _buildTradingChart() {
     return Container(
-      height: 350,
+      height: 600,
       margin: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: const Color(0xFF1C1C1E),
@@ -479,23 +442,38 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
             color: Colors.white.withOpacity(0.1),
           ),
           Expanded(
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              child: CustomPaint(
-                painter: EnhancedTradingChartPainter(
-                  positions: _positions,
-                  selectedTimeframe: _selectedTimeframe,
-                ),
-                child: Container(
-                  width: double.infinity,
-                  height: double.infinity,
-                ),
-              ),
+            child: TradingViewChart(
+              symbol: _selectedPair.replaceAll('-', ''),
+              theme: 'dark',
+              interval: _getTradingViewInterval(),
+              allowSymbolChange: false,
+              hideSideToolbar: false,
             ),
           ),
         ],
       ),
     );
+  }
+
+  String _getTradingViewInterval() {
+    switch (_selectedTimeframe) {
+      case '1m':
+        return '1';
+      case '30m':
+        return '30';
+      case '1h':
+        return '60';
+      case '3m':
+        return '3';
+      case '15m':
+        return '15';
+      case '4h':
+        return '240';
+      case '1d':
+        return 'D';
+      default:
+        return '60';
+    }
   }
 
   Widget _buildPositionDetails() {
@@ -636,11 +614,29 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
           Row(
             children: [
               Expanded(
+                child: _buildMetric('Invest Amount', '\$${position.size}'),
+              ),
+              Expanded(
                 child: _buildMetric('Margin', '\$${position.userMargin.toStringAsFixed(2)}'),
               ),
               Expanded(
                 child: _buildMetric('Leverage', '${position.leverage}x'),
               ),
+            ],
+          ),
+          // Debug row
+          Container(
+            margin: const EdgeInsets.only(top: 8),
+            padding: const EdgeInsets.all(8),
+            color: Colors.red.withOpacity(0.2),
+            child: Text(
+              'DEBUG: Positions=${_positions.length}, Data=$_positionData',
+              style: const TextStyle(color: Colors.red, fontSize: 10),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
               Expanded(
                 child: _buildMetric('Updated', _formatTime(position.updateTime)),
               ),

@@ -80,15 +80,20 @@ class WalletBalance {
     double mainUSDT = 0.0;
     if (mainBalance != null) {
       final usdt = mainBalance!['USDT'] ?? mainBalance!['usdt'];
-      if (usdt is num) mainUSDT = usdt.toDouble();
-      else if (usdt is Map) mainUSDT = double.tryParse(usdt['total']?.toString() ?? usdt['available']?.toString() ?? usdt['free']?.toString() ?? '0') ?? 0.0;
-      else if (usdt is String) mainUSDT = double.tryParse(usdt) ?? 0.0;
+      if (usdt is num) {
+        mainUSDT = usdt.toDouble();
+      } else if (usdt is Map) {
+        final val = usdt['total'] ?? usdt['balance'] ?? usdt['available'] ?? usdt['free'] ?? usdt['amount'] ?? '0';
+        mainUSDT = double.tryParse(val.toString()) ?? 0.0;
+      } else if (usdt is String) {
+        mainUSDT = double.tryParse(usdt) ?? 0.0;
+      }
     }
-    
-    return mainUSDT + 
-      spotBalance + 
-      p2pBalance + 
-      demoBalance + 
+
+    // Total balance excludes demo balance (main + spot + p2p + bot only)
+    return mainUSDT +
+      spotBalance +
+      p2pBalance +
       botBalance;
   }
 
@@ -145,6 +150,7 @@ class UnifiedWalletService {
   static bool _isInitialized = false;
   static bool _isLoading = false;
   static String? _lastError;
+  static bool _isRefreshingSummary = false; // Guard against concurrent refreshes
 
   // Streams
   static final StreamController<WalletBalance?> _walletBalanceController = 
@@ -164,6 +170,7 @@ class UnifiedWalletService {
   static WalletBalance? get walletBalance => _walletBalance;
   static List<CoinBalance> get coinBalance => List.unmodifiable(_coinBalance);
   static bool get isLoading => _isLoading;
+  static bool get isInitialized => _isInitialized;
   static String? get lastError => _lastError;
 
   // Convenience getters for specific balances
@@ -338,10 +345,9 @@ class UnifiedWalletService {
     try {
       final event = data['event'] ?? data['type'];
       
-      // Also process if it looks like a wallet summary (has mainBalance, botBalance etc)
-      // or if it matches the screenshot structure (direct keys at top level)
-      if (event == 'balance_update' || event == 'balance' || event == 'wallet_summary' || event == 'wallet_summary_update' || 
-          data.containsKey('mainBalance') || data.containsKey('main') || data.containsKey('data')) {
+      // Only process as full wallet summary if it's the actual wallet summary event
+      // Socket updates for individual balances should not trigger full wallet update
+      if (event == 'wallet_summary' || event == 'wallet_summary_update') {
         
         final balanceData = data['data'] ?? data;
         
@@ -378,15 +384,18 @@ class UnifiedWalletService {
         final demoData = balanceData['demoBalance'] ?? balanceData['demo'] ?? balanceData['demo_bot'];
         final botData = balanceData['botBalance'] ?? balanceData['bot'];
         
-        final p2pBalance = p2pData != null ? _extractUSDTValue(p2pData) : _walletBalance?.p2pBalance;
-        final demoBalance = demoData != null ? _extractUSDTValue(demoData) : _walletBalance?.demoBalance;
-        final botBalance = botData != null ? _extractUSDTValue(botData) : _walletBalance?.botBalance;
+        final p2pBalance = p2pData != null ? _extractUSDTValue(p2pData) : _walletBalance?.p2pBalance ?? 0.0;
+        final demoBalance = demoData != null ? _extractUSDTValue(demoData) : _walletBalance?.demoBalance ?? 0.0;
+        final botBalance = botData != null ? _extractUSDTValue(botData) : _walletBalance?.botBalance ?? 0.0;
         
-        _walletBalance = (_walletBalance ?? WalletBalance()).copyWith(
-          mainBalance: mergedMainBalance,
-          p2pBalance: p2pBalance ?? _walletBalance?.p2pBalance,
+        // Directly construct to avoid copyWith issues
+        _walletBalance = WalletBalance(
+          mainBalance: mergedMainBalance ?? _walletBalance?.mainBalance,
+          spotBalance: _walletBalance?.spotBalance ?? 0.0,
+          p2pBalance: p2pBalance,
           demoBalance: demoBalance,
-          botBalance: botBalance ?? _walletBalance?.botBalance, 
+          botBalance: botBalance,
+          spotAssets: _walletBalance?.spotAssets ?? const {},
         );
 
         _saveCachedData();
@@ -415,9 +424,14 @@ class UnifiedWalletService {
         // Extract USDT free balance for spotBalance
         final usdtFree = _extractUSDTFreeFromAssets(balanceData['assets']);
         
-        // Update spot balance
-        _walletBalance = (_walletBalance ?? WalletBalance()).copyWith(
+        // Update spot balance - preserve all other fields
+        _walletBalance = WalletBalance(
+          mainBalance: _walletBalance?.mainBalance,
           spotBalance: usdtFree,
+          p2pBalance: _walletBalance?.p2pBalance ?? 0.0,
+          demoBalance: _walletBalance?.demoBalance ?? 0.0,
+          botBalance: _walletBalance?.botBalance ?? 0.0,
+          spotAssets: _walletBalance?.spotAssets ?? const {},
         );
         
         _saveCachedData();
@@ -432,14 +446,124 @@ class UnifiedWalletService {
 
   // Refresh all balances (called on login)
   static Future<void> refreshAllBalances() async {
-    await Future.wait([
-      refreshSpotBalance(),
-      refreshP2PBalance(),
-      refreshBotBalance(),
-    ]);
-    
-    // Wallet summary is refreshed via socket, but also call API as backup
-    await refreshWalletSummary();
+    // Fetch all balances WITHOUT emitting to stream, then emit combined data once
+    // This prevents showing partial data (e.g., only bot balance) while others load
+    debugPrint('UnifiedWalletService: Starting refreshAllBalances (single emit mode)...');
+
+    // Store current balance to preserve any existing data
+    final existingMainBalance = _walletBalance?.mainBalance;
+    final existingSpotBalance = _walletBalance?.spotBalance ?? 0.0;
+    final existingP2pBalance = _walletBalance?.p2pBalance ?? 0.0;
+    final existingDemoBalance = _walletBalance?.demoBalance ?? 0.0;
+    final existingBotBalance = _walletBalance?.botBalance ?? 0.0;
+    final existingSpotAssets = _walletBalance?.spotAssets ?? const {};
+
+    double newSpotBalance = existingSpotBalance;
+    double newP2pBalance = existingP2pBalance;
+    double newDemoBalance = existingDemoBalance;
+    double newBotBalance = existingBotBalance;
+    Map<String, dynamic>? newMainBalance = existingMainBalance;
+    Map<String, dynamic> newSpotAssets = Map<String, dynamic>.from(existingSpotAssets);
+
+    // 1. Fetch bot balance
+    try {
+      final botResult = await _getBotWalletBalance();
+      if (botResult['success'] == true) {
+        final data = botResult['data'] ?? {};
+        final balance = data['balance'] ?? data['availableBalance'] ?? data['totalBalance'] ?? 0.0;
+        newBotBalance = balance is num ? balance.toDouble() : 0.0;
+        debugPrint('UnifiedWalletService: Bot balance fetched: $newBotBalance');
+      }
+    } catch (e) {
+      debugPrint('UnifiedWalletService: Error fetching bot balance: $e');
+    }
+
+    // 2. Fetch spot balance
+    try {
+      final spotResult = await SpotService.getBalance(forceRefresh: true);
+      if (spotResult['success'] == true) {
+        final data = spotResult['data'] ?? {};
+        final assets = data['assets'] as Map<String, dynamic>? ?? {};
+        final usdtData = assets['USDT'] as Map<String, dynamic>? ?? {};
+        final usdtFree = usdtData['free'] ?? usdtData['available'] ?? 0.0;
+        newSpotBalance = usdtFree is num ? usdtFree.toDouble() : 0.0;
+
+        // Update spot assets
+        final spotAssets = data['spot_assets'] as Map<String, dynamic>? ?? {};
+        if (spotAssets.isNotEmpty) {
+          newSpotAssets = Map<String, dynamic>.from(spotAssets);
+        }
+
+        // Update coin balances
+        if (data['raw_assets'] != null) {
+          _updateCoinBalancesFromAssets(data['raw_assets']);
+        } else if (data['assets'] != null) {
+          _updateCoinBalancesFromAssets(data['assets']);
+        }
+
+        debugPrint('UnifiedWalletService: Spot balance fetched: $newSpotBalance');
+      }
+    } catch (e) {
+      debugPrint('UnifiedWalletService: Error fetching spot balance: $e');
+    }
+
+    // 3. Fetch wallet summary (main, p2p, demo, INR)
+    try {
+      final summaryResult = await _getAllWalletSummary();
+      if (summaryResult['success'] == true) {
+        final data = summaryResult['data'] ?? {};
+
+        // Extract main balance
+        var mainData = data['main'] ?? data['mainBalance'];
+        final inrVal = _findINRRecursively(data);
+        
+        // Normalize mainData (handles both Map and List formats)
+        Map<String, dynamic> normalizedMain = _normalizeBalance(mainData);
+        
+        if (inrVal > 0) {
+          normalizedMain['INR'] = inrVal;
+        }
+
+        // Merge with existing main balance
+        final existingMain = newMainBalance ?? {};
+        newMainBalance = {...existingMain, ...normalizedMain};
+
+        // Extract other balances
+        final p2pData = _extractUSDTValue(data['p2p'] ?? data['p2pBalance']);
+        final demoData = _extractUSDTValue(data['demo'] ?? data['demoBalance'] ?? data['demo_bot']);
+        final botDataSummary = _extractUSDTValue(data['bot'] ?? data['botBalance']);
+
+        if (p2pData > 0) newP2pBalance = p2pData;
+        if (demoData > 0) newDemoBalance = demoData;
+
+        // Spot from summary if not already set
+        final summarySpot = _extractUSDTValue(data['spot'] ?? data['spotBalance']);
+        if (summarySpot > 0 && newSpotBalance == 0) {
+          newSpotBalance = summarySpot;
+        }
+
+        debugPrint('UnifiedWalletService: Wallet summary fetched - P2P: $newP2pBalance, Demo: $newDemoBalance');
+      }
+    } catch (e) {
+      debugPrint('UnifiedWalletService: Error fetching wallet summary: $e');
+    }
+
+    // Build final combined wallet balance
+    _walletBalance = WalletBalance(
+      mainBalance: newMainBalance,
+      spotBalance: newSpotBalance,
+      p2pBalance: newP2pBalance,
+      demoBalance: newDemoBalance,
+      botBalance: newBotBalance,
+      spotAssets: newSpotAssets,
+    );
+
+    // Save and emit ONCE with all combined data
+    _saveCachedData();
+    _walletBalanceController.add(_walletBalance);
+    _coinBalanceController.add(List.unmodifiable(_coinBalance));
+
+    debugPrint('UnifiedWalletService: refreshAllBalances complete - Total: ${_walletBalance?.totalBalance}, Main: $newMainBalance, Spot: $newSpotBalance, P2P: $newP2pBalance, Bot: $newBotBalance, Demo: $newDemoBalance');
   }
 
   // Update wallet data from login response (immediate update without API call)
@@ -475,7 +599,13 @@ class UnifiedWalletService {
   }
 
   // 1. Get all wallet summary from wallet API
-  static Future<Map<String, dynamic>> refreshWalletSummary() async {
+  static Future<Map<String, dynamic>> refreshWalletSummary({bool emitToStream = true}) async {
+    // Prevent concurrent refreshes that cause race conditions
+    if (_isRefreshingSummary) {
+      debugPrint('refreshWalletSummary: Already refreshing, skipping duplicate call');
+      return {'success': false, 'error': 'Already refreshing'};
+    }
+    _isRefreshingSummary = true;
     _setLoading(true);
     
     try {
@@ -512,9 +642,19 @@ class UnifiedWalletService {
             }
             mainData = list;
           }
-        }        final botData = _extractUSDTValue(data['bot'] ?? data['botBalance']);
-        final spotData = _extractUSDTValue(data['spot'] ?? data['spotBalance']);
+        }
 
+        final p2pData = _extractUSDTValue(data['p2p'] ?? data['p2pBalance']);
+        final p2pINRData = _extractINRValue(data['p2p'] ?? data['p2pBalance']);
+        final demoData = _extractUSDTValue(data['demo'] ?? data['demoBalance'] ?? data['demo_bot']);
+        final botData = _extractUSDTValue(data['bot'] ?? data['botBalance']);
+        final spotData = _extractUSDTValue(data['spot'] ?? data['spotBalance']);
+        
+        debugPrint('refreshWalletSummary: RAW p2pBalance=${data['p2pBalance']}, p2pData=$p2pData');
+        debugPrint('refreshWalletSummary: RAW spotBalance=${data['spotBalance']}, spotData=$spotData');
+        debugPrint('refreshWalletSummary: RAW botBalance=${data['botBalance']}, botData=$botData');
+        debugPrint('refreshWalletSummary: RAW mainBalance=${data['mainBalance']}, mainData=$mainData');
+        
         // Extract spot_assets from all-wallet-balance API (if available)
         final spotAssets = data['spot_assets'] as Map<String, dynamic>? ?? {};
         debugPrint('UnifiedWalletService: spot_assets raw data: ${data['spot_assets']}');
@@ -524,30 +664,34 @@ class UnifiedWalletService {
           // Also populate _coinBalances from spot_assets so all tokens show
           _updateCoinBalancesFromAssets(spotAssets);
         }
-
-        _walletBalance = (_walletBalance ?? WalletBalance()).copyWith(
-            mainBalance: mainData != null ? _normalizeBalance(mainData) : _walletBalance?.mainBalance,
-            spotBalance: spotData,
-            p2pBalance: p2pData,
-
-        final p2pData = _extractUSDTValue(data['p2p'] ?? data['p2pBalance']);
-        final p2pINRData = _extractINRValue(data['p2p'] ?? data['p2pBalance']);
-        final demoData = _extractUSDTValue(data['demo'] ?? data['demoBalance'] ?? data['demo_bot']);
-
-          p2pINRBalance: p2pINRData,
+        
+        // Directly construct WalletBalance to avoid copyWith null coalescing issues
+        final normalizedMain = mainData != null ? _normalizeBalance(mainData) : _walletBalance?.mainBalance;
+        final finalSpotAssets = spotAssets.isNotEmpty ? spotAssets : _walletBalance?.spotAssets;
+        
+        _walletBalance = WalletBalance(
+          mainBalance: normalizedMain,
+          spotBalance: spotData,
+          p2pBalance: p2pData,
           demoBalance: demoData,
           botBalance: botData,
-          spotAssets: spotAssets.isNotEmpty ? spotAssets : _walletBalance?.spotAssets,
+          spotAssets: finalSpotAssets ?? const {},
         );
         
-        debugPrint('refreshWalletSummary: _walletBalance updated with mainBalance=${_walletBalance?.mainBalance}');
-        debugPrint('refreshWalletSummary: mainINRBalance=${mainINRBalance}');
+        debugPrint('refreshWalletSummary: mainBalance=${_walletBalance?.mainBalance}');
+        debugPrint('refreshWalletSummary: mainUSDT=${mainUSDTBalance}, mainINR=${mainINRBalance}');
+        debugPrint('refreshWalletSummary: spotBalance=${_walletBalance?.spotBalance}');
+        debugPrint('refreshWalletSummary: p2pBalance=${_walletBalance?.p2pBalance}');
+        debugPrint('refreshWalletSummary: botBalance=${_walletBalance?.botBalance}');
+        debugPrint('refreshWalletSummary: demoBalance=${_walletBalance?.demoBalance}');
         
         _saveCachedData();
-        _walletBalanceController.add(_walletBalance);
+        if (emitToStream) {
+          _walletBalanceController.add(_walletBalance);
+        }
         _setError(null);
-        
-        debugPrint('UnifiedWalletService: Wallet summary refreshed');
+
+        debugPrint('UnifiedWalletService: Wallet summary refreshed (emitToStream: $emitToStream)');
         return {'success': true, 'data': _walletBalance!.toJson()};
       } else {
         _setError(result['error'] ?? 'Failed to fetch wallet summary');
@@ -558,11 +702,12 @@ class UnifiedWalletService {
       return {'success': false, 'error': e.toString()};
     } finally {
       _setLoading(false);
+      _isRefreshingSummary = false;
     }
   }
 
   // 2. Get spot coins balance
-  static Future<Map<String, dynamic>> refreshSpotBalance() async {
+  static Future<Map<String, dynamic>> refreshSpotBalance({bool emitToStream = true}) async {
     _setLoading(true);
     
     try {
@@ -586,17 +731,23 @@ class UnifiedWalletService {
         // Parse spot_assets from API response if available
         final spotAssets = data['spot_assets'] as Map<String, dynamic>? ?? {};
         
-        _walletBalance = (_walletBalance ?? WalletBalance()).copyWith(
+        _walletBalance = WalletBalance(
+          mainBalance: _walletBalance?.mainBalance,
           spotBalance: usdtFree is num ? usdtFree.toDouble() : 0.0,
-          spotAssets: spotAssets,
+          p2pBalance: _walletBalance?.p2pBalance ?? 0.0,
+          demoBalance: _walletBalance?.demoBalance ?? 0.0,
+          botBalance: _walletBalance?.botBalance ?? 0.0,
+          spotAssets: spotAssets.isNotEmpty ? spotAssets : (_walletBalance?.spotAssets ?? const {}),
         );
         
         _saveCachedData();
-        _walletBalanceController.add(_walletBalance);
-        _coinBalanceController.add(List.unmodifiable(_coinBalance));
+        if (emitToStream) {
+          _walletBalanceController.add(_walletBalance);
+          _coinBalanceController.add(List.unmodifiable(_coinBalance));
+        }
         _setError(null);
-        
-        debugPrint('UnifiedWalletService: Spot balance refreshed: $usdtFree, spotAssets: ${spotAssets.length}');
+
+        debugPrint('UnifiedWalletService: Spot balance refreshed: $usdtFree, spotAssets: ${spotAssets.length} (emitToStream: $emitToStream)');
         return {'success': true, 'data': {'spotBalance': usdtFree, 'coins': _coinBalance.map((c) => c.toJson()).toList(), 'spotAssets': spotAssets}};
       } else {
         _setError(result['error'] ?? 'Failed to fetch spot balance');
@@ -611,7 +762,7 @@ class UnifiedWalletService {
   }
 
   // 3. Get P2P wallet balance
-  static Future<Map<String, dynamic>> refreshP2PBalance() async {
+  static Future<Map<String, dynamic>> refreshP2PBalance({bool emitToStream = true}) async {
     _setLoading(true);
     
     try {
@@ -635,15 +786,22 @@ class UnifiedWalletService {
           p2pUSDT = _extractUSDTValue(data);
         }
         
-        _walletBalance = (_walletBalance ?? WalletBalance()).copyWith(
+        _walletBalance = WalletBalance(
+          mainBalance: _walletBalance?.mainBalance,
+          spotBalance: _walletBalance?.spotBalance ?? 0.0,
           p2pBalance: p2pUSDT,
+          demoBalance: _walletBalance?.demoBalance ?? 0.0,
+          botBalance: _walletBalance?.botBalance ?? 0.0,
+          spotAssets: _walletBalance?.spotAssets ?? const {},
         );
         
         _saveCachedData();
-        _walletBalanceController.add(_walletBalance);
+        if (emitToStream) {
+          _walletBalanceController.add(_walletBalance);
+        }
         _setError(null);
-        
-        debugPrint('UnifiedWalletService: P2P balance refreshed: $p2pUSDT');
+
+        debugPrint('UnifiedWalletService: P2P balance refreshed: $p2pUSDT (emitToStream: $emitToStream)');
         return {'success': true, 'data': {'p2pBalance': p2pUSDT}};
       } else {
         debugPrint('UnifiedWalletService: Failed to fetch P2P balance: ${p2pService?['error'] ?? 'Unknown error'}');
@@ -719,7 +877,7 @@ class UnifiedWalletService {
   }
 
   // 4. Get bot wallet balance
-  static Future<Map<String, dynamic>> refreshBotBalance() async {
+  static Future<Map<String, dynamic>> refreshBotBalance({bool emitToStream = true}) async {
     _setLoading(true);
     
     try {
@@ -730,17 +888,24 @@ class UnifiedWalletService {
         final balance = data['balance'] ?? data['availableBalance'] ?? data['totalBalance'] ?? 0.0;
         final inrBalance = data['inrBalance'] ?? 0.0;
         
-        _walletBalance = (_walletBalance ?? WalletBalance()).copyWith(
+        _walletBalance = WalletBalance(
+          mainBalance: _walletBalance?.mainBalance,
+          spotBalance: _walletBalance?.spotBalance ?? 0.0,
+          p2pBalance: _walletBalance?.p2pBalance ?? 0.0,
+          demoBalance: _walletBalance?.demoBalance ?? 0.0,
           botBalance: balance is num ? balance.toDouble() : 0.0,
+          spotAssets: _walletBalance?.spotAssets ?? const {},
         );
         
         _botINRBalance = inrBalance is num ? inrBalance.toDouble() : 0.0;
         
         _saveCachedData();
-        _walletBalanceController.add(_walletBalance);
+        if (emitToStream) {
+          _walletBalanceController.add(_walletBalance);
+        }
         _setError(null);
-        
-        debugPrint('UnifiedWalletService: Bot balance refreshed: $balance, Bot INR: $_botINRBalance');
+
+        debugPrint('UnifiedWalletService: Bot balance refreshed: $balance, Bot INR: $_botINRBalance (emitToStream: $emitToStream)');
         return {'success': true, 'data': {'botBalance': balance, 'botINR': _botINRBalance}};
       } else {
         _setError(result['error'] ?? 'Failed to fetch bot balance');
@@ -754,13 +919,10 @@ class UnifiedWalletService {
     }
   }
 
-  // After subscription - must refresh bot wallet
+  // After subscription - refresh all wallet data
   static Future<void> refreshAfterSubscription() async {
     debugPrint('UnifiedWalletService: Refreshing after subscription...');
-    await Future.wait([
-      refreshP2PBalance(),
-      refreshBotBalance(),
-    ]);
+    await refreshWalletSummary();
   }
 
   // Private API methods
@@ -1011,21 +1173,34 @@ class UnifiedWalletService {
       
       for (var targetKey in inrKeys) {
         // Find actual key that matches targetKey (case-insensitive)
-        final actualKey = data.keys.firstWhere(
-          (k) => k.toString().toUpperCase() == targetKey,
-          orElse: () => null,
-        );
-        
+        String? actualKey;
+        try {
+          actualKey = data.keys.firstWhere(
+            (k) => k.toString().toUpperCase() == targetKey,
+          );
+        } catch (e) {
+          actualKey = null;
+        }
+
         if (actualKey != null) {
           final val = _parseBalanceField(data[actualKey], preferTotal: true);
           if (val > 0) return val;
         }
       }
-      
+
       // 2. Search for "coin": "INR" patterns
-      final coinKey = data.keys.firstWhere((k) => k.toString().toUpperCase() == 'COIN', orElse: () => null);
-      final assetKey = data.keys.firstWhere((k) => k.toString().toUpperCase() == 'ASSET', orElse: () => null);
-      final currencyKey = data.keys.firstWhere((k) => k.toString().toUpperCase() == 'CURRENCY', orElse: () => null);
+      String? coinKey;
+      String? assetKey;
+      String? currencyKey;
+      try {
+        coinKey = data.keys.firstWhere((k) => k.toString().toUpperCase() == 'COIN');
+      } catch (e) { coinKey = null; }
+      try {
+        assetKey = data.keys.firstWhere((k) => k.toString().toUpperCase() == 'ASSET');
+      } catch (e) { assetKey = null; }
+      try {
+        currencyKey = data.keys.firstWhere((k) => k.toString().toUpperCase() == 'CURRENCY');
+      } catch (e) { currencyKey = null; }
       
       final coinVal = (data[coinKey] ?? data[assetKey] ?? data[currencyKey])?.toString().toUpperCase();
       if (coinVal == 'INR') {

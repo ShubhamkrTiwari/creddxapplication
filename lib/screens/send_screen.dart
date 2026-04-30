@@ -4,11 +4,10 @@ import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'confirm_order_screen.dart';
 import 'otp_verification_screen.dart';
-import 'wallet_history_screen.dart';
+import 'kyc_digilocker_instruction_screen.dart';
 import '../services/wallet_service.dart';
+import '../utils/kyc_unlock_mixin.dart';
 import '../services/socket_service.dart';
 import '../services/unified_wallet_service.dart' as unified;
 
@@ -19,7 +18,7 @@ class SendScreen extends StatefulWidget {
   State<SendScreen> createState() => _SendScreenState();
 }
 
-class _SendScreenState extends State<SendScreen> with SingleTickerProviderStateMixin {
+class _SendScreenState extends State<SendScreen> with SingleTickerProviderStateMixin, KYCUnlockMixin {
   final _recipientController = TextEditingController();
   final _amountController = TextEditingController();
   final _recipientUidController = TextEditingController();
@@ -41,12 +40,6 @@ class _SendScreenState extends State<SendScreen> with SingleTickerProviderStateM
   bool _showInterSendHistory = false;
   bool _isLoadingInterSendHistory = false;
   List<dynamic> _interSendHistory = [];
-  String? _currentUserId;
-
-  Future<String?> _getCurrentUserId() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('user_id');
-  }
 
   @override
   void initState() {
@@ -56,10 +49,9 @@ class _SendScreenState extends State<SendScreen> with SingleTickerProviderStateM
     _fetchBalance();
     _subscribeToBalance();
     _subscribeToUnifiedWallet();
-    _getCurrentUserId().then((id) {
-      setState(() => _currentUserId = id);
-      _fetchInterSendHistory();
-    });
+    _fetchInterSendHistory();
+    // Fetch fresh KYC status from API
+    refreshKYCStatus();
   }
 
   Future<void> _fetchInterSendHistory() async {
@@ -96,6 +88,132 @@ class _SendScreenState extends State<SendScreen> with SingleTickerProviderStateM
         setState(() => _isLoadingInterSendHistory = false);
       }
     }
+  }
+
+  String _formatHistoryDate(dynamic raw) {
+    if (raw == null) return '';
+    final str = raw.toString().trim();
+    if (str.isEmpty || str == 'null') return '';
+
+    DateTime? dt = DateTime.tryParse(str);
+    if (dt == null) {
+      final asInt = int.tryParse(str);
+      if (asInt != null) {
+        // seconds vs milliseconds
+        dt = str.length >= 13
+            ? DateTime.fromMillisecondsSinceEpoch(asInt)
+            : DateTime.fromMillisecondsSinceEpoch(asInt * 1000);
+      }
+    }
+    dt ??= DateTime.now();
+    final local = dt.isUtc ? dt.toLocal() : dt;
+    return DateFormat('MMM dd, yyyy, hh:mm a').format(local);
+  }
+
+  String _uidTail(String uid, {int keep = 8}) {
+    final cleaned = uid.trim().replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+    if (cleaned.isEmpty) return '';
+    final tail = cleaned.length <= keep ? cleaned : cleaned.substring(cleaned.length - keep);
+    return tail.toLowerCase();
+  }
+
+  String _formatUidForHistory(String uid) {
+    final tail = _uidTail(uid);
+    if (tail.isEmpty) return '...';
+    return '...$tail';
+  }
+
+  String _extractOtherPartyUid(Map<String, dynamic> transfer) {
+    // API often provides `toFrom` as the other party.
+    final type = (transfer['type'] ?? transfer['direction'] ?? '').toString().toLowerCase();
+    if (transfer['toFrom'] is Map) {
+      final m = Map<String, dynamic>.from(transfer['toFrom'] as Map);
+      final uid = (m['uid'] ?? m['UID'] ?? m['userUid'] ?? m['id'] ?? m['_id'])?.toString();
+      if (uid != null && uid.trim().isNotEmpty && uid != 'null') return uid.trim();
+    }
+
+    // Fallback fields.
+    final sentFields = [
+      'receiverUid',
+      'receiverUID',
+      'toUserUid',
+      'toUID',
+      'toUserId',
+      'recipientUid',
+      'recipientId',
+      'to',
+      'receiver',
+    ];
+    final recvFields = [
+      'senderUid',
+      'senderUID',
+      'fromUserUid',
+      'fromUID',
+      'fromUserId',
+      'senderId',
+      'from',
+      'sender',
+    ];
+
+    List<String> fields = type == 'received' || type == 'receive' || type == 'incoming'
+        ? recvFields
+        : sentFields;
+
+    for (final f in fields) {
+      final v = transfer[f]?.toString();
+      if (v != null && v.trim().isNotEmpty && v != 'null') return v.trim();
+    }
+
+    // Last resort: any uid-like field
+    for (final entry in transfer.entries) {
+      final k = entry.key.toString().toLowerCase();
+      final v = entry.value?.toString().trim() ?? '';
+      if (v.isEmpty || v == 'null') continue;
+      if (k.contains('uid') || (k.contains('user') && k.contains('id'))) return v;
+    }
+    return '';
+  }
+
+  bool _isReceivedTransfer(Map<String, dynamic> transfer) {
+    final type = (transfer['type'] ?? transfer['direction'] ?? '').toString().toLowerCase();
+    if (type == 'received' || type == 'receive' || type == 'incoming') return true;
+    if (type == 'sent' || type == 'send' || type == 'outgoing') return false;
+
+    // Fallback to explicit booleans if present.
+    if (transfer['isReceived'] == true || transfer['isIncoming'] == true) return true;
+    if (transfer['isSent'] == true || transfer['isOutgoing'] == true) return false;
+    return false; // default matches most of current usage
+  }
+
+  String _statusLabel(Map<String, dynamic> transfer) {
+    final s = transfer['status'];
+    if (s == null) return 'Completed';
+    if (s is num) {
+      if (s.toInt() == 1) return 'Pending';
+      if (s.toInt() == 2) return 'Completed';
+      return 'Failed';
+    }
+    final str = s.toString().toLowerCase();
+    if (str.contains('pending') || str == '1') return 'Pending';
+    if (str.contains('fail') || str.contains('reject') || str == '0' || str == '3') return 'Failed';
+    return 'Completed';
+  }
+
+  Color _statusColor(String label) {
+    switch (label.toLowerCase()) {
+      case 'pending':
+        return Colors.orange;
+      case 'failed':
+        return Colors.red;
+      default:
+        return const Color(0xFF84BD00);
+    }
+  }
+
+  String _formatHistoryAmount(double amount) {
+    final roundedInt = amount.roundToDouble();
+    if ((amount - roundedInt).abs() < 0.0000001) return roundedInt.toStringAsFixed(0);
+    return amount.toStringAsFixed(2);
   }
 
   void _subscribeToUnifiedWallet() {
@@ -135,7 +253,53 @@ class _SendScreenState extends State<SendScreen> with SingleTickerProviderStateM
     });
   }
 
+  // Check if KYC is completed
+  bool _isKYCCompleted() {
+    return isKYCCompleted(); // From KYCUnlockMixin
+  }
+
+  // Show KYC verification required dialog
+  void _showKYCRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text(
+            'KYC Verification Required',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'You need to complete KYC verification to send funds. Please complete your KYC process first.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
+              child: const Text('Complete KYC', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> _sendInternalTransfer() async {
+    // Check KYC requirement first
+    if (!_isKYCCompleted()) {
+      _showKYCRequiredDialog();
+      return;
+    }
+
     // Input validations before OTP
     if (_selectedInternalCoin.isEmpty) {
       _showError('Select an asset to continue.');
@@ -418,7 +582,7 @@ class _SendScreenState extends State<SendScreen> with SingleTickerProviderStateM
     if (_showInterSendHistory) {
       return _buildInterSendHistoryView();
     }
-    
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -533,6 +697,75 @@ class _SendScreenState extends State<SendScreen> with SingleTickerProviderStateM
           ),
 
           const SizedBox(height: 20),
+
+          // KYC Requirement Warning
+          if (!_isKYCCompleted())
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.orange.withOpacity(0.5)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withOpacity(0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.warning_amber_rounded,
+                      color: Colors.orange,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'KYC Verification Required',
+                          style: TextStyle(
+                            color: Colors.orange,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Complete KYC verification to send funds',
+                          style: TextStyle(
+                            color: Colors.orange.withOpacity(0.8),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  ElevatedButton(
+                    onPressed: () {
+                      Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text(
+                      'Complete KYC',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
           // Recipient UID
           const Text(
@@ -769,469 +1002,207 @@ class _SendScreenState extends State<SendScreen> with SingleTickerProviderStateM
             ],
           ),
         ),
-        // History list
+        // Table header
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+            decoration: const BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: Color(0xFF2A2A2C), width: 1),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    'Date',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.55),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    'To',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.55),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    'Type',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.55),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    'Amount',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.55),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    'Currency',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.55),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    'Status',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.55),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        // History list (table rows)
         Expanded(
           child: RefreshIndicator(
             onRefresh: _fetchInterSendHistory,
             color: const Color(0xFF84BD00),
-            child: ListView.builder(
-              padding: const EdgeInsets.all(16),
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               itemCount: _interSendHistory.length,
+              separatorBuilder: (_, __) => const SizedBox.shrink(),
               itemBuilder: (context, index) {
                 final transfer = _interSendHistory[index] is Map<String, dynamic>
                     ? _interSendHistory[index] as Map<String, dynamic>
                     : Map<String, dynamic>.from(_interSendHistory[index]);
-                
-                // Debug: print all keys and values for this transfer
-                debugPrint('=== Transfer Item $index ===');
-                debugPrint('Current User ID: $_currentUserId');
-                debugPrint('All fields: ${transfer.keys.toList()}');
-                transfer.forEach((key, value) {
-                  debugPrint('  $key: $value (${value?.runtimeType})');
-                });
-                
-                // Helper function to extract UID from various field names
-                String extractUid(Map<String, dynamic> data, List<String> fieldNames) {
-                  for (final field in fieldNames) {
-                    // Check direct field
-                    if (data[field] != null) {
-                      final value = data[field].toString().trim();
-                      if (value.isNotEmpty && value != 'null' && value != 'Unknown' && value != 'undefined') {
-                        return value;
-                      }
-                    }
-                    // Check nested object
-                    if (data[field] is Map) {
-                      final nested = data[field] as Map;
-                      for (final sub in ['uid', 'id', '_id', 'userId', 'UID']) {
-                        if (nested[sub] != null) {
-                          final nestedValue = nested[sub].toString().trim();
-                          if (nestedValue.isNotEmpty && nestedValue != 'null') {
-                            return nestedValue;
-                          }
-                        }
-                      }
-                    }
-                  }
-                  return 'Unknown';
-                }
-                
-                // Helper function to extract name from various field names
-                String extractName(Map<String, dynamic> data, List<String> fieldNames) {
-                  for (final field in fieldNames) {
-                    // Check direct field
-                    if (data[field] != null) {
-                      final value = data[field].toString().trim();
-                      if (value.isNotEmpty && value != 'null' && value != 'Unknown' && value != 'undefined') {
-                        return value;
-                      }
-                    }
-                    // Check nested object for name
-                    if (data[field] is Map) {
-                      final nested = data[field] as Map;
-                      for (final sub in ['name', 'username', 'fullName', 'displayName', 'userName']) {
-                        if (nested[sub] != null) {
-                          final nestedValue = nested[sub].toString().trim();
-                          if (nestedValue.isNotEmpty && nestedValue != 'null') {
-                            return nestedValue;
-                          }
-                        }
-                      }
-                    }
-                  }
-                  return 'Unknown';
-                }
-                
-                // Field names for receiver (sent transfers)
-                final receiverFields = [
-                  'receiverUid', 'toUserId', 'recipientUid', 'toUser', 'receiver', 
-                  'to', 'targetUid', 'targetUserId', 'receiverUserId', 'toUserUid', 
-                  'destinationUid', 'receiver_id', 'to_id', 'recipient_id', 'target_id',
-                  'receiverUID', 'toUID'
-                ];
-                
-                // Field names for sender (received transfers)
-                final senderFields = [
-                  'senderUid', 'fromUserId', 'senderId', 'fromUser', 'sender', 
-                  'from', 'sourceUid', 'sourceUserId', 'senderUserId', 'fromUserUid', 
-                  'source_id', 'from_id', 'sender_id', 'senderUID', 'fromUID'
-                ];
-                
-                // Extract both sender and receiver UIDs
-                String receiverUid = extractUid(transfer, receiverFields);
-                String senderUid = extractUid(transfer, senderFields);
-                
-                // Extract transfer type
-                final String type = transfer['type']?.toString() ?? 'sent';
-                
-                // Extract UID from toFrom object if available (this is the actual UID from API)
-                if (transfer['toFrom'] is Map) {
-                  final toFromObj = transfer['toFrom'] as Map;
-                  final toFromUid = toFromObj['uid']?.toString().trim();
-                  if (toFromUid != null && toFromUid.isNotEmpty && toFromUid != 'null') {
-                    if (type.toLowerCase() == 'sent') {
-                      // toFrom.uid is the receiver's UID when we sent
-                      receiverUid = toFromUid;
-                      debugPrint('Item $index - Using toFrom.uid as receiverUid: $toFromUid');
-                    } else {
-                      // toFrom.uid is the sender's UID when we received
-                      senderUid = toFromUid;
-                      debugPrint('Item $index - Using toFrom.uid as senderUid: $toFromUid');
-                    }
-                  }
-                }
-                
-                // Field names for receiver/sender names (direct fields)
-                final receiverNameFields = ['receiverName', 'toUserName', 'recipientName', 'toName', 'receiverUsername', 'toUsername', 'receiver_user_name', 'to_user_name'];
-                final senderNameFields = ['senderName', 'fromUserName', 'senderUsername', 'fromName', 'fromUsername', 'sender_user_name', 'from_user_name'];
-                
-                // Also check in nested user objects
-                final nestedUserFields = ['receiver', 'sender', 'toUser', 'fromUser', 'recipient', 'user', 'to', 'from', 'toFrom'];
-                
-                // Extract names using dedicated name extractor
-                String receiverName = extractName(transfer, receiverNameFields);
-                String senderName = extractName(transfer, senderNameFields);
-                
-                // If names not found directly, try nested user objects
-                // Special handling for toFrom field
-                if (transfer['toFrom'] is Map) {
-                  final toFromObj = transfer['toFrom'] as Map;
-                  final toFromName = toFromObj['name']?.toString().trim();
-                  if (toFromName != null && toFromName.isNotEmpty && toFromName != 'null') {
-                    // toFrom contains the other party's name
-                    if (type.toLowerCase() == 'sent') {
-                      receiverName = toFromName;
-                      debugPrint('Item $index - Found receiver name in toFrom.name: $toFromName');
-                    } else {
-                      senderName = toFromName;
-                      debugPrint('Item $index - Found sender name in toFrom.name: $toFromName');
-                    }
-                  }
-                }
-                
-                if (receiverName == 'Unknown') {
-                  for (final field in nestedUserFields) {
-                    if (transfer[field] is Map) {
-                      final userObj = transfer[field] as Map;
-                      for (final nameField in ['name', 'username', 'fullName', 'displayName']) {
-                        if (userObj[nameField] != null) {
-                          final val = userObj[nameField].toString().trim();
-                          if (val.isNotEmpty && val != 'null') {
-                            receiverName = val;
-                            debugPrint('Item $index - Found receiver name in $field.$nameField: $val');
-                            break;
-                          }
-                        }
-                      }
-                      if (receiverName != 'Unknown') break;
-                    }
-                  }
-                }
-                
-                if (senderName == 'Unknown') {
-                  for (final field in nestedUserFields) {
-                    if (transfer[field] is Map) {
-                      final userObj = transfer[field] as Map;
-                      for (final nameField in ['name', 'username', 'fullName', 'displayName']) {
-                        if (userObj[nameField] != null) {
-                          final val = userObj[nameField].toString().trim();
-                          if (val.isNotEmpty && val != 'null') {
-                            senderName = val;
-                            debugPrint('Item $index - Found sender name in $field.$nameField: $val');
-                            break;
-                          }
-                        }
-                      }
-                      if (senderName != 'Unknown') break;
-                    }
-                  }
-                }
-                
-                // Debug: show what was found for this specific item
-                debugPrint('Item $index - receiverUid: $receiverUid, senderUid: $senderUid');
-                debugPrint('Item $index - receiverName: $receiverName, senderName: $senderName');
-                
-                // Try to find ANY field with a UID-like value for debugging
-                String? anyUidFound;
-                for (final entry in transfer.entries) {
-                  final val = entry.value?.toString() ?? '';
-                  if (val.isNotEmpty && 
-                      val != 'null' && 
-                      val.length > 5 &&
-                      (val.toUpperCase().startsWith('CRDX') || val.toUpperCase().startsWith('UID') || RegExp(r'^[A-Z0-9]{6,}$').hasMatch(val.toUpperCase()))) {
-                    anyUidFound = val;
-                    debugPrint('Item $index - Found UID-like value in ${entry.key}: $val');
-                  }
-                }
-                
-                // Try to find any name-like field for debugging
-                for (final entry in transfer.entries) {
-                  final key = entry.key.toString().toLowerCase();
-                  final val = entry.value?.toString() ?? '';
-                  if (val.isNotEmpty && val != 'null' && 
-                      (key.contains('name') || key.contains('username')) &&
-                      !key.contains('amount') && !key.contains('status')) {
-                    debugPrint('Item $index - Found name-like field ${entry.key}: $val');
-                  }
-                }
-                
-                // Determine if this is sent or received
-                bool isSent = transfer['type']?.toString().toLowerCase() == 'sent' ||
-                              transfer['direction']?.toString().toLowerCase() == 'outgoing' ||
-                              transfer['isSent'] == true ||
-                              transfer['isOutgoing'] == true;
-                bool isReceived = transfer['type']?.toString().toLowerCase() == 'received' ||
-                                  transfer['direction']?.toString().toLowerCase() == 'incoming' ||
-                                  transfer['isReceived'] == true ||
-                                  transfer['isIncoming'] == true;
-                
-                // If no direction info, infer from which UID is present or compare with current user
-                if (!isSent && !isReceived) {
-                  if (_currentUserId != null) {
-                    // Compare with current user ID to determine direction
-                    if (senderUid == _currentUserId) {
-                      isSent = true;
-                      debugPrint('Item $index - Current user is sender');
-                    } else if (receiverUid == _currentUserId) {
-                      isReceived = true;
-                      debugPrint('Item $index - Current user is receiver');
-                    }
-                  }
-                  
-                  // If still undetermined, use fallback logic
-                  if (!isSent && !isReceived) {
-                    if (receiverUid != 'Unknown' && senderUid == 'Unknown') {
-                      isSent = true; // Only receiver known = we sent it
-                    } else if (senderUid != 'Unknown' && receiverUid == 'Unknown') {
-                      isReceived = true; // Only sender known = we received it
-                    } else if (receiverUid != 'Unknown' && senderUid != 'Unknown') {
-                      isSent = true; // Assume sent by default
-                    }
-                  }
-                }
-                
-                // Use appropriate UID based on direction
-                // If we sent, show receiver (who we sent to)
-                // If we received, show sender (who sent to us)
-                String displayUid = isReceived ? senderUid : receiverUid;
-                
-                // Additional check: if we have current user ID and both UIDs, make sure we show the OTHER person
-                if (_currentUserId != null && senderUid != 'Unknown' && receiverUid != 'Unknown') {
-                  if (displayUid == _currentUserId) {
-                    // We're showing ourselves, switch to the other party
-                    displayUid = isReceived ? receiverUid : senderUid;
-                    debugPrint('Item $index - Switched displayUid to avoid showing current user');
-                  }
-                }
-                
-                // Fallback: if displayUid is Unknown, try to show any available UID
-                if (displayUid == 'Unknown') {
-                  if (receiverUid != 'Unknown') {
-                    displayUid = receiverUid;
-                  } else if (senderUid != 'Unknown') {
-                    displayUid = senderUid;
-                  } else if (anyUidFound != null) {
-                    // Use any UID-like value we found during scanning
-                    displayUid = anyUidFound;
-                    debugPrint('Item $index - Using anyUidFound fallback: $displayUid');
-                  } else {
-                    // Last resort: show any non-empty field that looks like a UID
-                    for (final entry in transfer.entries) {
-                      final key = entry.key.toString().toLowerCase();
-                      final value = entry.value?.toString() ?? '';
-                      if (value.isNotEmpty && 
-                          value != 'null' && 
-                          (key.contains('uid') || key.contains('id') || key.contains('user')) &&
-                          key != 'amount' && key != 'status' && key != 'type') {
-                        displayUid = value;
-                        debugPrint('Item $index - Fallback UID from field ${entry.key}: $displayUid');
-                        break;
-                      }
-                    }
-                  }
-                }
-                
-                debugPrint('Item $index - FINAL displayUid: $displayUid (isReceived: $isReceived)');
-                
-                // Format UID for display - show exactly 8 digits
-                String formattedUid = displayUid;
-                // Remove any prefix like CRDX and extract only the numeric part
-                String numericPart = displayUid.replaceAll(RegExp(r'[^0-9]'), '');
-                if (numericPart.length >= 8) {
-                  // Show last 8 digits
-                  formattedUid = numericPart.substring(numericPart.length - 8);
-                } else if (numericPart.isNotEmpty) {
-                  // If less than 8 digits, pad with leading zeros or show as is
-                  formattedUid = numericPart.padLeft(8, '0');
-                }
-                debugPrint('Item $index - Formatted UID: $formattedUid');
-                
-                // Determine display name - use name if available, otherwise formatted UID
-                final String displayName = isReceived 
-                    ? (senderName != 'Unknown' ? senderName : formattedUid)
-                    : (receiverName != 'Unknown' ? receiverName : formattedUid);
-                debugPrint('Item $index - Display Name: $displayName');
-                
-                final double amount = double.tryParse(transfer['amount']?.toString() ?? '0') ?? 0;
-                final String coin = transfer['coin']?.toString() ?? transfer['asset']?.toString() ?? transfer['currency']?.toString() ?? 'USDT';
-                
-                // Handle status - can be string or number
-                String statusStr = 'completed';
-                if (transfer['status'] != null) {
-                  final statusVal = transfer['status'];
-                  if (statusVal is int) {
-                    // Numeric status: 1=pending, 2=completed, 0/3=failed
-                    if (statusVal == 1) statusStr = 'pending';
-                    else if (statusVal == 2) statusStr = 'completed';
-                    else statusStr = 'failed';
-                  } else {
-                    statusStr = statusVal.toString();
-                  }
-                }
-                final String status = statusStr;
-                
-                // Parse date - try multiple possible time fields (time is the actual field from API)
-                final List<String> timeFields = ['time', 'createdAt', 'created_at', 'timestamp', 'date', 'updatedAt', 'updated_at'];
-                String? timeStr;
-                for (final field in timeFields) {
-                  if (transfer[field] != null && transfer[field].toString().isNotEmpty && transfer[field].toString() != 'null') {
-                    timeStr = transfer[field].toString();
-                    break;
-                  }
-                }
-                
-                debugPrint('Time string for item $index: $timeStr');
-                
-                DateTime date;
-                if (timeStr != null && timeStr.isNotEmpty) {
-                  // Try parsing ISO format
-                  date = DateTime.tryParse(timeStr) ?? DateTime.now();
-                  
-                  // If parsing resulted in now (same as other items), try additional formats
-                  if (date.isAfter(DateTime.now().subtract(const Duration(seconds: 1)))) {
-                    // Try Unix timestamp (milliseconds or seconds)
-                    final intMs = int.tryParse(timeStr);
-                    if (intMs != null) {
-                      // Check if it's milliseconds (13 digits) or seconds (10 digits)
-                      if (timeStr.length >= 13) {
-                        date = DateTime.fromMillisecondsSinceEpoch(intMs);
-                      } else {
-                        date = DateTime.fromMillisecondsSinceEpoch(intMs * 1000);
-                      }
-                    }
-                  }
-                } else {
-                  date = DateTime.now();
-                }
-                
-                final DateTime localDate = date.isUtc ? date.toLocal() : date;
-                debugPrint('Parsed date for item $index: $localDate');
-                
-                // Status color
-                Color statusColor = Colors.green;
-                if (status.toLowerCase() == 'pending') {
-                  statusColor = Colors.orange;
-                } else if (status.toLowerCase() == 'failed' || status.toLowerCase() == 'rejected') {
-                  statusColor = Colors.red;
-                }
-                
-                // Icon based on type (sent/received) - use the isReceived we determined above
-                final IconData typeIcon = isReceived ? Icons.arrow_downward : Icons.arrow_upward;
-                final Color typeColor = isReceived ? Colors.green : const Color(0xFF84BD00);
+
+                final isReceived = _isReceivedTransfer(transfer);
+                final otherUid = _extractOtherPartyUid(transfer);
+                final displayUid = _formatUidForHistory(otherUid);
+
+                final coin = (transfer['coin'] ?? transfer['asset'] ?? transfer['currency'] ?? 'USDT').toString();
+                final amount = double.tryParse(transfer['amount']?.toString() ?? '0') ?? 0.0;
+
+                final dateStr = _formatHistoryDate(
+                  transfer['time'] ??
+                      transfer['createdAt'] ??
+                      transfer['created_at'] ??
+                      transfer['timestamp'] ??
+                      transfer['date'] ??
+                      transfer['updatedAt'] ??
+                      transfer['updated_at'],
+                );
+
+                final typeLabel = isReceived ? 'Received' : 'Sent';
+                final typeColor = isReceived ? Colors.blueAccent : const Color(0xFF84BD00);
+
+                final signedAmount = '${isReceived ? '+' : '-'}${_formatHistoryAmount(amount)}';
+                final amountColor = isReceived ? Colors.green : const Color(0xFFFF6B6B);
+
+                final status = _statusLabel(transfer);
+                final statusColor = _statusColor(status);
 
                 return Container(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1C1C1E),
-                    borderRadius: BorderRadius.circular(12),
+                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                  decoration: const BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(color: Color(0xFF2A2A2C), width: 1),
+                    ),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: typeColor.withOpacity(0.1),
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(
-                              typeIcon,
-                              color: typeColor,
-                              size: 20,
-                            ),
+                      Expanded(
+                        flex: 3,
+                        child: Text(
+                          dateStr,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 10,
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  isReceived ? 'Received from $displayName' : 'Sent to $displayName',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 14,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                // Show UID as subtitle if name is available
-                                if ((isReceived && senderName != 'Unknown') || (!isReceived && receiverName != 'Unknown'))
-                                  Text(
-                                    formattedUid,
-                                    style: const TextStyle(
-                                      color: Colors.white54,
-                                      fontSize: 11,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  DateFormat('MMM dd, yyyy • hh:mm a').format(localDate),
-                                  style: const TextStyle(
-                                    color: Colors.white54,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: statusColor.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              status.toUpperCase(),
-                              style: TextStyle(
-                                color: statusColor,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
-                      const Divider(color: Colors.white10, height: 24),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            isReceived ? 'Received Amount' : 'Sent Amount',
-                            style: const TextStyle(color: Colors.white54, fontSize: 12),
+                      Expanded(
+                        flex: 3,
+                        child: Text(
+                          displayUid,
+                          style: const TextStyle(
+                            color: Color(0xFF84BD00),
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
                           ),
-                          Text(
-                            '${amount.toStringAsFixed(2)} $coin',
-                            style: const TextStyle(
-                              color: Color(0xFF84BD00),
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      Expanded(
+                        flex: 2,
+                        child: Text(
+                          typeLabel,
+                          style: TextStyle(
+                            color: typeColor,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            decoration: TextDecoration.underline,
+                            decorationColor: typeColor,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        flex: 2,
+                        child: Text(
+                          signedAmount,
+                          style: TextStyle(
+                            color: amountColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        flex: 2,
+                        child: Text(
+                          coin.toUpperCase(),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 10,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        flex: 2,
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: Text(
+                            status,
+                            style: TextStyle(
+                              color: statusColor,
+                              fontSize: 8,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
-                        ],
+                        ),
                       ),
                     ],
                   ),

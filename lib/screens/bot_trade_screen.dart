@@ -5,8 +5,6 @@ import 'bot_algorithm_screen.dart';
 import '../services/bot_service.dart';
 import '../services/user_service.dart';
 import 'user_profile_screen.dart';
-import 'kyc_digilocker_instruction_screen.dart';
-import '../utils/kyc_unlock_mixin.dart';
 
 class BotTradeScreen extends StatefulWidget {
   const BotTradeScreen({super.key});
@@ -15,7 +13,7 @@ class BotTradeScreen extends StatefulWidget {
   State<BotTradeScreen> createState() => _BotTradeScreenState();
 }
 
-class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProviderStateMixin, KYCUnlockMixin {
+class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
   
   // User subscription data
@@ -30,12 +28,6 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _fetchUserSubscription();
-    _userService.fetchProfileDataFromAPI(); // Refresh KYC status from /auth/me
-  }
-
-  // Check if KYC is completed
-  bool _isKYCCompleted() {
-    return isKYCCompleted(); // Now available from KYCUnlockMixin
   }
 
   // Check if profile is complete
@@ -43,41 +35,6 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
     return _userService.hasEmail() && 
            _userService.userPhone != null && 
            _userService.userPhone!.isNotEmpty;
-  }
-
-  // Show KYC verification required dialog
-  void _showKYCRequiredDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF1A1A1A),
-          title: const Text(
-            'KYC Verification Required',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-          ),
-          content: const Text(
-            'You need to complete KYC verification to invest in trading bots. Please complete your KYC process first.',
-            style: TextStyle(color: Colors.white70),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Later', style: TextStyle(color: Colors.grey)),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
-              child: const Text('Complete KYC', style: TextStyle(color: Colors.black)),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   // Show profile completion required dialog
@@ -115,18 +72,13 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
     );
   }
 
-  // Validate KYC and profile before proceeding
+  // Validate profile before proceeding (KYC not required for bot trading)
   bool _validateUserRequirements() {
-    if (!_isKYCCompleted()) {
-      _showKYCRequiredDialog();
-      return false;
-    }
-    
     if (!_isProfileComplete()) {
       _showProfileRequiredDialog();
       return false;
     }
-    
+
     return true;
   }
   
@@ -304,94 +256,6 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
       padding: const EdgeInsets.all(20),
       child: Column(
         children: [
-          // KYC Requirement Warning
-          if (!_isKYCCompleted())
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.only(bottom: 24),
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Colors.orange.withOpacity(0.15), Colors.red.withOpacity(0.1)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: Colors.orange.withOpacity(0.3),
-                  width: 1,
-                ),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(
-                          Icons.verified_user_outlined,
-                          color: Colors.orange,
-                          size: 24,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'KYC Verification Required',
-                              style: TextStyle(
-                                color: Colors.orange,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            const Text(
-                              'Complete KYC verification to invest in bots',
-                              style: TextStyle(
-                                color: Colors.orange,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.orange,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Complete KYC Now',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          
           _buildBotCard('Omega', '3x', true),
           const SizedBox(height: 16),
           _buildBotCard('Alpha', '2x', false),
@@ -431,7 +295,7 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
               if (isAvailable)
                 ElevatedButton(
                   onPressed: () {
-                    // Check KYC and profile requirements first
+                    // Check profile requirements first (KYC not required for bot trading)
                     if (!_validateUserRequirements()) {
                       return;
                     }

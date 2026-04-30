@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../services/auth_service.dart';
+import '../services/user_service.dart';
 
 class KYCPendingScreen extends StatefulWidget {
   const KYCPendingScreen({super.key});
@@ -11,7 +12,9 @@ class KYCPendingScreen extends StatefulWidget {
 
 class _KYCPendingScreenState extends State<KYCPendingScreen> {
   String _kycStatus = 'pending';
+  String? _rejectionReason;
   bool _isLoading = true;
+  final UserService _userService = UserService();
 
   @override
   void initState() {
@@ -28,9 +31,12 @@ class _KYCPendingScreenState extends State<KYCPendingScreen> {
 
   Future<void> _checkKYCStatus() async {
     final status = await AuthService.getKYCStatus();
+    // Get rejection reason from UserService
+    final rejectionReason = _userService.kycRejectionReason;
     if (mounted) {
       setState(() {
         _kycStatus = status;
+        _rejectionReason = rejectionReason;
         _isLoading = false;
       });
     }
@@ -211,6 +217,20 @@ class _KYCPendingScreenState extends State<KYCPendingScreen> {
               fontSize: 14,
             ),
           ),
+          // Show rejection reason if available
+          if (_kycStatus.toLowerCase() == 'rejected' && _rejectionReason != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(
+                'Reason: $_rejectionReason',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.redAccent,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -222,6 +242,10 @@ class _KYCPendingScreenState extends State<KYCPendingScreen> {
       case 'verified':
         return 'Congratulations! Your KYC has been approved. You can now access all features of the app.';
       case 'rejected':
+        // Show specific message for Name Mismatch rejection
+        if (_rejectionReason != null && _rejectionReason!.toLowerCase().contains('name')) {
+          return 'The name on your profile does not match your KYC name. Please ensure both are the same.';
+        }
         return 'Your KYC application has been rejected. Please try again with correct documents.';
       case 'pending':
       default:

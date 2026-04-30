@@ -82,7 +82,7 @@ class _TradingViewChartState extends State<TradingViewChart> {
   String _buildTradingViewUrl() {
     final symbol = widget.symbol.contains(':') 
         ? widget.symbol 
-        : 'BINANCE:${widget.symbol}';
+        : 'KUCOIN:${widget.symbol}';
     
     final params = {
       'frameElementId': 'tradingview_chart',

@@ -13,6 +13,14 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
   String _selectedSort = 'Top';
   bool _isLoadingPerformance = true;
   bool _isLoadingTradeHistory = true;
+  bool _isLoadingWeeklyBenchmark = true;
+  String? _weeklyBenchmarkError;
+  double? _weeklyBotRoi;
+  double? _weeklyBtcRoi;
+  double? _weeklyEthRoi;
+  double? _weeklyVsBtc;
+  double? _weeklyVsEth;
+  List<Map<String, dynamic>> _weeklySnapshots = const [];
 
   // Performance data for each strategy
   Map<String, Map<String, String>> _performanceData = {
@@ -29,6 +37,65 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
     super.initState();
     _fetchAllStrategyPerformance();
     _fetchTradeHistory();
+    _loadWeeklyBenchmark();
+  }
+
+  Future<void> _loadWeeklyBenchmark() async {
+    setState(() {
+      _isLoadingWeeklyBenchmark = true;
+      _weeklyBenchmarkError = null;
+    });
+
+    try {
+      final res = await BotService.getWeeklyBenchmark(
+        strategy: 'Omega-3X',
+      );
+      if (!mounted) return;
+
+      if (res['success'] == true && res['data'] is Map<String, dynamic>) {
+        final data = res['data'] as Map<String, dynamic>;
+        final rawSnapshots = data['snapshots'];
+        final snapshots = (rawSnapshots is List)
+            ? rawSnapshots
+                .whereType<dynamic>()
+                .map((e) => e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{})
+                .where((e) => e.isNotEmpty)
+                .toList()
+            : <Map<String, dynamic>>[];
+        setState(() {
+          _weeklySnapshots = snapshots;
+          _weeklyBotRoi = (data['botRoi'] as num?)?.toDouble();
+          _weeklyBtcRoi = (data['btcRoi'] as num?)?.toDouble();
+          _weeklyEthRoi = (data['ethRoi'] as num?)?.toDouble();
+          _weeklyVsBtc = (data['vsBtc'] as num?)?.toDouble();
+          _weeklyVsEth = (data['vsEth'] as num?)?.toDouble();
+          _isLoadingWeeklyBenchmark = false;
+        });
+        return;
+      }
+
+      setState(() {
+        _weeklyBenchmarkError = res['error']?.toString() ?? 'Failed to load weekly benchmark';
+        _isLoadingWeeklyBenchmark = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _weeklyBenchmarkError = e.toString();
+        _isLoadingWeeklyBenchmark = false;
+      });
+    }
+  }
+
+  String _fmtPct(double? v) {
+    if (v == null) return '--';
+    return '${v.toStringAsFixed(2)}%';
+  }
+
+  String _fmtBalance(dynamic v) {
+    final n = (v is num) ? v.toDouble() : double.tryParse(v?.toString() ?? '');
+    if (n == null) return '--';
+    return n.toStringAsFixed(2);
   }
 
   Future<void> _fetchTradeHistory() async {
@@ -708,17 +775,57 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
   }
 
   Widget _buildComparisonSummary() {
-    // Mock data for demonstration - in real app, this would come from API
-    final botRoi = 0.60;
-    final btcRoi = 3.70;
-    final ethRoi = 0.61;
-    
-    final botVsBtc = botRoi - btcRoi;
-    final botVsEth = botRoi - ethRoi;
+    final botRoi = _weeklyBotRoi;
+    final btcRoi = _weeklyBtcRoi;
+    final ethRoi = _weeklyEthRoi;
+
+    final botVsBtc = _weeklyVsBtc ?? ((botRoi != null && btcRoi != null) ? (botRoi - btcRoi) : null);
+    final botVsEth = _weeklyVsEth ?? ((botRoi != null && ethRoi != null) ? (botRoi - ethRoi) : null);
     
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (_isLoadingWeeklyBenchmark)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 12),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF84BD00)),
+                ),
+                SizedBox(width: 10),
+                Text(
+                  'Loading benchmark...',
+                  style: TextStyle(color: Color(0xFF8E8E93), fontSize: 12),
+                ),
+              ],
+            ),
+          )
+        else if (_weeklyBenchmarkError != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              _weeklyBenchmarkError!,
+              style: TextStyle(
+                color: (_weeklyBenchmarkError!.toLowerCase().contains('not enough data'))
+                    ? const Color(0xFF8E8E93)
+                    : const Color(0xFFFF9500),
+                fontSize: 12,
+              ),
+            ),
+          ),
+        if (_weeklyBenchmarkError != null &&
+            _weeklyBenchmarkError!.toLowerCase().contains('not enough data'))
+          const Padding(
+            padding: EdgeInsets.only(bottom: 12),
+            child: Text(
+              'Benchmark will appear once you have more weekly activity.',
+              style: TextStyle(color: Color(0xFF8E8E93), fontSize: 12),
+            ),
+          ),
+
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -730,7 +837,7 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
               ),
             ),
             Text(
-              '${botRoi.toStringAsFixed(2)}%',
+              _fmtPct(botRoi),
               style: const TextStyle(
                 color: Color(0xFF84BD00),
                 fontSize: 12,
@@ -751,7 +858,7 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
               ),
             ),
             Text(
-              '${btcRoi.toStringAsFixed(2)}%',
+              _fmtPct(btcRoi),
               style: const TextStyle(
                 color: Color(0xFF84BD00),
                 fontSize: 12,
@@ -772,7 +879,7 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
               ),
             ),
             Text(
-              '${ethRoi.toStringAsFixed(2)}%',
+              _fmtPct(ethRoi),
               style: const TextStyle(
                 color: Color(0xFF84BD00),
                 fontSize: 12,
@@ -787,19 +894,53 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
           color: const Color(0xFF2C2C2E),
         ),
         const SizedBox(height: 12),
+        if (_weeklySnapshots.isNotEmpty) ...[
+          const Text(
+            'Weekly balance snapshots',
+            style: TextStyle(
+              color: Color(0xFF8E8E93),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ..._weeklySnapshots.take(7).map((s) {
+            final date = s['date']?.toString() ?? '--';
+            final balance = _fmtBalance(s['balance']);
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(date, style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 12)),
+                  Text(balance, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+                ],
+              ),
+            );
+          }),
+          const SizedBox(height: 12),
+          Container(
+            height: 1,
+            color: const Color(0xFF2C2C2E),
+          ),
+          const SizedBox(height: 12),
+        ],
         Row(
           children: [
             Icon(
-              botVsBtc >= 0 && botVsEth >= 0 ? Icons.check_circle : Icons.info,
-              color: botVsBtc >= 0 && botVsEth >= 0 ? const Color(0xFF84BD00) : const Color(0xFFFF9500),
+              (botVsBtc != null && botVsEth != null && botVsBtc >= 0 && botVsEth >= 0) ? Icons.check_circle : Icons.info,
+              color: (botVsBtc != null && botVsEth != null && botVsBtc >= 0 && botVsEth >= 0) ? const Color(0xFF84BD00) : const Color(0xFFFF9500),
               size: 16,
             ),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Bot outperformed BTC by ${botVsBtc.toStringAsFixed(2)}%, ETH by ${botVsEth.toStringAsFixed(2)}%',
+                (botVsBtc == null || botVsEth == null)
+                    ? 'Benchmark data unavailable'
+                    : 'Bot ${botVsBtc >= 0 ? "outperformed" : "trailing"} BTC by ${botVsBtc.abs().toStringAsFixed(2)}%, '
+                      '${botVsEth >= 0 ? "outperformed" : "trailing"} ETH by ${botVsEth.abs().toStringAsFixed(2)}%',
                 style: TextStyle(
-                  color: botVsBtc >= 0 && botVsEth >= 0 ? const Color(0xFF84BD00) : const Color(0xFFFF9500),
+                  color: (botVsBtc != null && botVsEth != null && botVsBtc >= 0 && botVsEth >= 0) ? const Color(0xFF84BD00) : const Color(0xFFFF9500),
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
                 ),

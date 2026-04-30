@@ -44,8 +44,8 @@ class _BotBalanceHistoryScreenState extends State<BotBalanceHistoryScreen> {
       if (mounted) {
         if (result['success'] == true) {
           setState(() {
-            _balanceData = result['data'];
-            _history = List<Map<String, dynamic>>.from(result['data']?['history'] ?? []);
+            _balanceData = result['data'] is Map<String, dynamic> ? result['data'] : null;
+            _history = List<Map<String, dynamic>>.from(result['history'] ?? []);
             _isLoading = false;
           });
         } else {

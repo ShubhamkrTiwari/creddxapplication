@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
 import '../services/user_service.dart';
 import 'user_profile_screen.dart';
-import 'kyc_digilocker_instruction_screen.dart';
 
 class BotSubscriptionScreen extends StatefulWidget {
   const BotSubscriptionScreen({super.key});
@@ -55,41 +54,6 @@ class _BotSubscriptionScreenState extends State<BotSubscriptionScreen> {
     return _userService.hasEmail() && 
            _userService.userPhone != null && 
            _userService.userPhone!.isNotEmpty;
-  }
-
-  // Show KYC verification required dialog
-  void _showKYCRequiredDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF1A1A1A),
-          title: const Text(
-            'KYC Verification Required',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-          ),
-          content: const Text(
-            'You need to complete KYC verification to subscribe to bot services. Please complete your KYC process first.',
-            style: TextStyle(color: Colors.white70),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Later', style: TextStyle(color: Colors.grey)),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
-              child: const Text('Complete KYC', style: TextStyle(color: Colors.black)),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   // Show profile completion required dialog
@@ -427,7 +391,7 @@ class _BotSubscriptionScreenState extends State<BotSubscriptionScreen> {
           height: 56,
           child: ElevatedButton(
             onPressed: () {
-              // Check KYC and profile requirements first
+              // Check profile requirements first (KYC not required for bot subscription)
               if (!_validateUserRequirements()) {
                 return;
               }
@@ -534,7 +498,7 @@ class _BotSubscriptionScreenState extends State<BotSubscriptionScreen> {
           height: 56,
           child: ElevatedButton(
             onPressed: () {
-              // Check KYC and profile requirements first
+              // Check profile requirements first (KYC not required for bot subscription)
               if (!_validateUserRequirements()) {
                 return;
               }

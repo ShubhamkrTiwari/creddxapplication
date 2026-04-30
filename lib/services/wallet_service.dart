@@ -1,14 +1,17 @@
 import 'dart:convert';
 import 'dart:core';
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'spot_service.dart';
 import 'auth_service.dart';
 import 'notification_service.dart';
+import 'network_error_handler.dart';
 
 class WalletService {
   static const String baseUrl = 'https://api11.hathmetech.com/api';
-  
+
   static Future<Map<String, String>> _getHeaders() async {
     final token = await AuthService.getToken();
     return {
@@ -21,24 +24,23 @@ class WalletService {
   // Fetch all wallet balances from the API
   static Future<Map<String, dynamic>> getAllWalletBalances() async {
     try {
-      debugPrint('Fetching wallet balances from: $baseUrl/wallet/v1/wallet/all-wallet-balance');
+      debugPrint(
+        'Fetching wallet balances from: $baseUrl/wallet/v1/wallet/all-wallet-balance',
+      );
       final response = await http.get(
         Uri.parse('$baseUrl/wallet/v1/wallet/all-wallet-balance'),
         headers: await _getHeaders(),
       );
-      
+
       debugPrint('Balance API Response Status: ${response.statusCode}');
       debugPrint('Balance API Response Body: ${response.body}');
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         debugPrint('Parsed Balance Data: $data');
         debugPrint('RAW BALANCE PAYLOAD: ${response.body}');
         if (data['success'] == true) {
-          return {
-            'success': true,
-            'data': data['data'] ?? data,
-          };
+          return {'success': true, 'data': data['data'] ?? data};
         } else {
           debugPrint('Balance API returned success: false');
           return {
@@ -53,11 +55,26 @@ class WalletService {
           'error': 'Server error: ${response.statusCode}',
         };
       }
+    } on SocketException catch (e) {
+      debugPrint('SocketException in getAllWalletBalances: $e');
+      return {
+        'success': false,
+        'error': 'No internet connection. Please check your network and try again.',
+        'error_type': 'no_internet',
+      };
+    } on TimeoutException catch (e) {
+      debugPrint('TimeoutException in getAllWalletBalances: $e');
+      return {
+        'success': false,
+        'error': 'Connection timed out. Please try again.',
+        'error_type': 'timeout',
+      };
     } catch (e) {
       debugPrint('Error fetching all wallet balances: $e');
       return {
         'success': false,
-        'error': 'Network error: $e',
+        'error': NetworkErrorHandler.getErrorMessage(e),
+        'error_type': 'unknown',
       };
     }
   }
@@ -65,41 +82,62 @@ class WalletService {
   // Fetch withdraw available balance from the API
   static Future<Map<String, dynamic>> getWithdrawAvailableBalance() async {
     try {
-      debugPrint('Fetching withdraw available balance from: $baseUrl/wallet/v1/withdraw/available-balance');
+      debugPrint(
+        'Fetching withdraw available balance from: $baseUrl/wallet/v1/withdraw/available-balance',
+      );
       final response = await http.get(
         Uri.parse('$baseUrl/wallet/v1/withdraw/available-balance'),
         headers: await _getHeaders(),
       );
 
-      debugPrint('Withdraw Available Balance API Response Status: ${response.statusCode}');
-      debugPrint('Withdraw Available Balance API Response Body: ${response.body}');
+      debugPrint(
+        'Withdraw Available Balance API Response Status: ${response.statusCode}',
+      );
+      debugPrint(
+        'Withdraw Available Balance API Response Body: ${response.body}',
+      );
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['success'] == true) {
-          return {
-            'success': true,
-            'data': data['data'],
-          };
+          return {'success': true, 'data': data['data']};
         } else {
           debugPrint('Withdraw Available Balance API returned success: false');
           return {
             'success': false,
-            'error': data['message'] ?? 'Failed to fetch withdraw available balance',
+            'error':
+                data['message'] ?? 'Failed to fetch withdraw available balance',
           };
         }
       } else {
-        debugPrint('Withdraw Available Balance API failed with status: ${response.statusCode}');
+        debugPrint(
+          'Withdraw Available Balance API failed with status: ${response.statusCode}',
+        );
         return {
           'success': false,
           'error': 'Server error: ${response.statusCode}',
         };
       }
+    } on SocketException catch (e) {
+      debugPrint('SocketException in getWithdrawAvailableBalance: $e');
+      return {
+        'success': false,
+        'error': 'No internet connection. Please check your network and try again.',
+        'error_type': 'no_internet',
+      };
+    } on TimeoutException catch (e) {
+      debugPrint('TimeoutException in getWithdrawAvailableBalance: $e');
+      return {
+        'success': false,
+        'error': 'Connection timed out. Please try again.',
+        'error_type': 'timeout',
+      };
     } catch (e) {
       debugPrint('Error fetching withdraw available balance: $e');
       return {
         'success': false,
-        'error': 'Network error: $e',
+        'error': NetworkErrorHandler.getErrorMessage(e),
+        'error_type': 'unknown',
       };
     }
   }
@@ -108,24 +146,29 @@ class WalletService {
   static Future<Map<String, dynamic>> getINRBalance() async {
     try {
       debugPrint('=== Fetching INR Balance ===');
-      
+
       // Try all-wallet-balance API first (most reliable for INR)
       final result = await getAllWalletBalances();
       debugPrint('Raw API result: $result');
-      
+
       if (result['success'] == true && result['data'] != null) {
         final data = result['data'];
         debugPrint('API data keys: ${data.keys.toList()}');
         debugPrint('Full data: $data');
-        
+
         // Extract INR using recursive search for maximum reliability
         final inr = _findINRRecursively(data);
         if (inr > 0) {
-          debugPrint('WalletService: INR Balance found via recursive search: $inr');
-          return {'success': true, 'inrBalance': inr, 'source': 'recursive_search'};
+          debugPrint(
+            'WalletService: INR Balance found via recursive search: $inr',
+          );
+          return {
+            'success': true,
+            'inrBalance': inr,
+            'source': 'recursive_search',
+          };
         }
 
-        
         // Try to find INR in other wallet types
         final walletTypes = ['main', 'spot', 'p2p', 'bot', 'demo_bot'];
         for (final type in walletTypes) {
@@ -135,13 +178,17 @@ class WalletService {
             final balances = wallet['balances'];
             if (balances is List) {
               for (final b in balances) {
-                if (b is Map && (b['coin']?.toString().toUpperCase() == 'INR' || 
-                    b['asset']?.toString().toUpperCase() == 'INR')) {
-                  final inr = double.tryParse(
-                    b['total']?.toString() ?? 
-                    b['balance']?.toString() ?? 
-                    b['available']?.toString() ?? '0'
-                  ) ?? 0.0;
+                if (b is Map &&
+                    (b['coin']?.toString().toUpperCase() == 'INR' ||
+                        b['asset']?.toString().toUpperCase() == 'INR')) {
+                  final inr =
+                      double.tryParse(
+                        b['total']?.toString() ??
+                            b['balance']?.toString() ??
+                            b['available']?.toString() ??
+                            '0',
+                      ) ??
+                      0.0;
                   debugPrint('INR Balance found in $type wallet: $inr');
                   if (inr > 0) {
                     return {'success': true, 'inrBalance': inr, 'source': type};
@@ -152,28 +199,39 @@ class WalletService {
           }
         }
       }
-      
+
       // Fallback to overview API
       debugPrint('Trying overview API fallback...');
       final response = await http.get(
         Uri.parse('$baseUrl/wallet/overview/inr-holding'),
         headers: await _getHeaders(),
       );
-      
+
       debugPrint('Overview API response: ${response.statusCode}');
       debugPrint('Overview API body: ${response.body}');
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['success'] == true || data['inrHolding'] != null) {
           final holdingData = data['data'] ?? data;
-          final inr = holdingData['inrHolding'] ?? holdingData['inr'] ?? holdingData['balance'] ?? holdingData['amount'] ?? 0.0;
-          final inrDouble = inr is num ? inr.toDouble() : double.tryParse(inr.toString()) ?? 0.0;
+          final inr =
+              holdingData['inrHolding'] ??
+              holdingData['inr'] ??
+              holdingData['balance'] ??
+              holdingData['amount'] ??
+              0.0;
+          final inrDouble = inr is num
+              ? inr.toDouble()
+              : double.tryParse(inr.toString()) ?? 0.0;
           debugPrint('INR Balance from overview API: $inrDouble');
-          return {'success': true, 'inrBalance': inrDouble, 'source': 'overview'};
+          return {
+            'success': true,
+            'inrBalance': inrDouble,
+            'source': 'overview',
+          };
         }
       }
-      
+
       debugPrint('❌ INR balance not found in any source');
       return {'success': false, 'error': 'INR balance not found'};
     } catch (e) {
@@ -189,7 +247,7 @@ class WalletService {
         Uri.parse('$baseUrl/wallet/v1/wallet/get'),
         headers: await _getHeaders(),
       );
-      
+
       debugPrint('Wallet Get Response: ${response.body}');
 
       if (response.statusCode == 200) {
@@ -198,7 +256,7 @@ class WalletService {
           return {'success': true, 'data': data['data']};
         }
       }
-      
+
       // Fallback: If /wallet/v1/wallet/get fails, use /wallet/v1/wallet/all-wallet-balance
       return await getAllWalletBalances();
     } catch (e) {
@@ -217,31 +275,41 @@ class WalletService {
         final data = result['data'];
         availableTotal = _calculateAvailableSumFromData(data);
       }
-      
+
       // If Wallet Service failed or returned 0, try Spot Service Balance API (9000)
       if (availableTotal <= 0) {
         final spotResult = await SpotService.getBalance();
         if (spotResult['success'] == true && spotResult['data'] != null) {
           final spotData = spotResult['data'];
-          
+
           // Handle 'assets' list format
           if (spotData['assets'] != null && spotData['assets'] is List) {
             final List assetsList = spotData['assets'];
             for (var assetItem in assetsList) {
               if (assetItem['asset']?.toString().toUpperCase() == 'USDT') {
-                double available = double.tryParse(assetItem['available']?.toString() ?? '0') ?? 0.0;
-                double free = double.tryParse(assetItem['free']?.toString() ?? '0') ?? 0.0;
-                
+                double available =
+                    double.tryParse(
+                      assetItem['available']?.toString() ?? '0',
+                    ) ??
+                    0.0;
+                double free =
+                    double.tryParse(assetItem['free']?.toString() ?? '0') ??
+                    0.0;
+
                 // Use available or free (whichever is greater)
                 availableTotal = available > free ? available : free;
                 break;
               }
             }
           }
-          
+
           // If still 0, try direct fields
           if (availableTotal <= 0) {
-            availableTotal = double.tryParse(spotData['usdt_available']?.toString() ?? '0') ?? 0.0;
+            availableTotal =
+                double.tryParse(
+                  spotData['usdt_available']?.toString() ?? '0',
+                ) ??
+                0.0;
           }
         }
       }
@@ -266,7 +334,8 @@ class WalletService {
             foundInTypes = true;
             for (var b in balancesData) {
               if (b['coin']?.toString().toUpperCase() == 'USDT') {
-                total += double.tryParse(b['available']?.toString() ?? '0') ?? 0.0;
+                total +=
+                    double.tryParse(b['available']?.toString() ?? '0') ?? 0.0;
               }
             }
           } else if (balancesData is Map && balancesData['USDT'] != null) {
@@ -274,34 +343,44 @@ class WalletService {
             foundInTypes = true;
             final usdtData = balancesData['USDT'];
             if (usdtData is Map) {
-              total += double.tryParse(usdtData['available']?.toString() ?? '0') ?? 0.0;
+              total +=
+                  double.tryParse(usdtData['available']?.toString() ?? '0') ??
+                  0.0;
             }
           }
         }
       }
-      
+
       // If not found in categorized types, look for a flat balances list or map
       if (!foundInTypes && data['balances'] != null) {
         final balancesData = data['balances'];
         if (balancesData is List) {
           for (var b in balancesData) {
             if (b['coin']?.toString().toUpperCase() == 'USDT') {
-              total += double.tryParse(b['available']?.toString() ?? '0') ?? 0.0;
+              total +=
+                  double.tryParse(b['available']?.toString() ?? '0') ?? 0.0;
             }
           }
         } else if (balancesData is Map && balancesData['USDT'] != null) {
           final usdtData = balancesData['USDT'];
           if (usdtData is Map) {
-            total += double.tryParse(usdtData['available']?.toString() ?? '0') ?? 0.0;
+            total +=
+                double.tryParse(usdtData['available']?.toString() ?? '0') ??
+                0.0;
           }
         }
       }
 
       // Check for common available fields
       if (total == 0) {
-        total = double.tryParse(data['available_balance']?.toString() ?? 
-                           data['available']?.toString() ?? 
-                           data['free']?.toString() ?? '0.0') ?? 0.0;
+        total =
+            double.tryParse(
+              data['available_balance']?.toString() ??
+                  data['available']?.toString() ??
+                  data['free']?.toString() ??
+                  '0.0',
+            ) ??
+            0.0;
       }
     } else if (data is List) {
       for (var wallet in data) {
@@ -310,13 +389,16 @@ class WalletService {
           if (balancesData is List) {
             for (var b in balancesData) {
               if (b['coin']?.toString().toUpperCase() == 'USDT') {
-                total += double.tryParse(b['available']?.toString() ?? '0') ?? 0.0;
+                total +=
+                    double.tryParse(b['available']?.toString() ?? '0') ?? 0.0;
               }
             }
           } else if (balancesData is Map && balancesData['USDT'] != null) {
             final usdtData = balancesData['USDT'];
             if (usdtData is Map) {
-              total += double.tryParse(usdtData['available']?.toString() ?? '0') ?? 0.0;
+              total +=
+                  double.tryParse(usdtData['available']?.toString() ?? '0') ??
+                  0.0;
             }
           }
         }
@@ -335,22 +417,30 @@ class WalletService {
         final data = result['data'];
         grandTotal = _calculateSumFromData(data);
       }
-      
+
       // 2. If Wallet Service failed or returned 0, try Spot Service Balance API (9000)
       if (grandTotal <= 0) {
         final spotResult = await SpotService.getBalance();
         if (spotResult['success'] == true && spotResult['data'] != null) {
           final spotData = spotResult['data'];
-          
+
           // Handle 'assets' list format (common in your logs)
           if (spotData['assets'] != null && spotData['assets'] is List) {
             final List assetsList = spotData['assets'];
             for (var assetItem in assetsList) {
               if (assetItem['asset']?.toString().toUpperCase() == 'USDT') {
-                double available = double.tryParse(assetItem['available']?.toString() ?? '0') ?? 0.0;
-                double locked = double.tryParse(assetItem['locked']?.toString() ?? '0') ?? 0.0;
-                double free = double.tryParse(assetItem['free']?.toString() ?? '0') ?? 0.0;
-                
+                double available =
+                    double.tryParse(
+                      assetItem['available']?.toString() ?? '0',
+                    ) ??
+                    0.0;
+                double locked =
+                    double.tryParse(assetItem['locked']?.toString() ?? '0') ??
+                    0.0;
+                double free =
+                    double.tryParse(assetItem['free']?.toString() ?? '0') ??
+                    0.0;
+
                 // Use the maximum identified value to be safe
                 double manualSum = free + locked;
                 grandTotal = available > manualSum ? available : manualSum;
@@ -358,14 +448,23 @@ class WalletService {
               }
             }
           }
-          
+
           // If still 0, try direct fields
           if (grandTotal <= 0) {
-            double available = double.tryParse(spotData['usdt_available']?.toString() ?? '0') ?? 0.0;
-            double locked = double.tryParse(spotData['usdt_locked']?.toString() ?? '0') ?? 0.0;
-            double total = double.tryParse(spotData['total']?.toString() ?? '0') ?? 0.0;
-            
-            grandTotal = total > (available + locked) ? total : (available + locked);
+            double available =
+                double.tryParse(
+                  spotData['usdt_available']?.toString() ?? '0',
+                ) ??
+                0.0;
+            double locked =
+                double.tryParse(spotData['usdt_locked']?.toString() ?? '0') ??
+                0.0;
+            double total =
+                double.tryParse(spotData['total']?.toString() ?? '0') ?? 0.0;
+
+            grandTotal = total > (available + locked)
+                ? total
+                : (available + locked);
           }
         }
       }
@@ -398,12 +497,13 @@ class WalletService {
             foundInTypes = true;
             final usdtData = balancesData['USDT'];
             if (usdtData is Map) {
-              total += double.tryParse(usdtData['total']?.toString() ?? '0') ?? 0.0;
+              total +=
+                  double.tryParse(usdtData['total']?.toString() ?? '0') ?? 0.0;
             }
           }
         }
       }
-      
+
       // If not found in categorized types, look for a flat balances list or map
       if (!foundInTypes && data['balances'] != null) {
         final balancesData = data['balances'];
@@ -416,16 +516,22 @@ class WalletService {
         } else if (balancesData is Map && balancesData['USDT'] != null) {
           final usdtData = balancesData['USDT'];
           if (usdtData is Map) {
-            total += double.tryParse(usdtData['total']?.toString() ?? '0') ?? 0.0;
+            total +=
+                double.tryParse(usdtData['total']?.toString() ?? '0') ?? 0.0;
           }
         }
       }
 
       // Check for common total fields
       if (total == 0) {
-        total = double.tryParse(data['total_balance']?.toString() ?? 
-                           data['balance']?.toString() ?? 
-                           data['total']?.toString() ?? '0.0') ?? 0.0;
+        total =
+            double.tryParse(
+              data['total_balance']?.toString() ??
+                  data['balance']?.toString() ??
+                  data['total']?.toString() ??
+                  '0.0',
+            ) ??
+            0.0;
       }
     } else if (data is List) {
       for (var wallet in data) {
@@ -445,16 +551,16 @@ class WalletService {
   static Future<Map<String, dynamic>> getUSDTBalanceFromAllWallets() async {
     try {
       final result = await getAllWalletBalances();
-      
+
       if (result['success'] != true) {
         return result;
       }
-      
+
       final data = result['data'];
       final Map<String, dynamic> usdtBalances = {};
-      
+
       final walletTypes = ['spot', 'p2p', 'bot', 'demo_bot', 'main'];
-      
+
       for (String walletType in walletTypes) {
         if (data[walletType] != null) {
           final wallet = data[walletType];
@@ -464,7 +570,7 @@ class WalletService {
               (balance) => balance['coin']?.toString().toUpperCase() == 'USDT',
               orElse: () => null,
             );
-            
+
             if (usdtBalance != null) {
               usdtBalances[walletType] = {
                 'available': usdtBalance['available']?.toString() ?? '0.00',
@@ -472,26 +578,32 @@ class WalletService {
                 'total': usdtBalance['total']?.toString() ?? '0.00',
               };
             } else {
-              usdtBalances[walletType] = {'available': '0.00', 'locked': '0.00', 'total': '0.00'};
+              usdtBalances[walletType] = {
+                'available': '0.00',
+                'locked': '0.00',
+                'total': '0.00',
+              };
             }
           } else {
-            usdtBalances[walletType] = {'available': '0.00', 'locked': '0.00', 'total': '0.00'};
+            usdtBalances[walletType] = {
+              'available': '0.00',
+              'locked': '0.00',
+              'total': '0.00',
+            };
           }
         } else {
-          usdtBalances[walletType] = {'available': '0.00', 'locked': '0.00', 'total': '0.00'};
+          usdtBalances[walletType] = {
+            'available': '0.00',
+            'locked': '0.00',
+            'total': '0.00',
+          };
         }
       }
-      
-      return {
-        'success': true,
-        'data': usdtBalances,
-      };
+
+      return {'success': true, 'data': usdtBalances};
     } catch (e) {
       debugPrint('Error extracting USDT balances: $e');
-      return {
-        'success': false,
-        'error': 'Error extracting USDT balances: $e',
-      };
+      return {'success': false, 'error': 'Error extracting USDT balances: $e'};
     }
   }
 
@@ -517,21 +629,16 @@ class WalletService {
         if (startDate != null) 'startDate': startDate,
         if (endDate != null) 'endDate': endDate,
       };
-      
-      final uri = Uri.parse('$baseUrl/admin/wallet-log/transactions')
-          .replace(queryParameters: queryParams);
-      
-      final response = await http.get(
-        uri,
-        headers: await _getHeaders(),
-      );
-      
+
+      final uri = Uri.parse(
+        '$baseUrl/admin/wallet-log/transactions',
+      ).replace(queryParameters: queryParams);
+
+      final response = await http.get(uri, headers: await _getHeaders());
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        return {
-          'success': true,
-          'data': data['data'] ?? data,
-        };
+        return {'success': true, 'data': data['data'] ?? data};
       } else {
         return {
           'success': false,
@@ -540,10 +647,7 @@ class WalletService {
       }
     } catch (e) {
       debugPrint('Error fetching admin wallet transactions: $e');
-      return {
-        'success': false,
-        'error': 'Network error: $e',
-      };
+      return {'success': false, 'error': 'Network error: $e'};
     }
   }
 
@@ -583,10 +687,7 @@ class WalletService {
 
       debugPrint('Fetching wallet transactions: $uri');
 
-      final response = await http.get(
-        uri,
-        headers: await _getHeaders(),
-      );
+      final response = await http.get(uri, headers: await _getHeaders());
 
       debugPrint('Wallet Transactions Response Status: ${response.statusCode}');
       debugPrint('Wallet Transactions Response Body: ${response.body}');
@@ -594,17 +695,22 @@ class WalletService {
       if (response.statusCode == 200) {
         try {
           final data = json.decode(response.body);
+          final payload =
+              data['data'] ?? data['result'] ?? data['docs'] ?? data;
           return {
             'success': true,
-            'data': data['data'] ?? data,
+            'data': payload,
             'isFromAdminLog': includeAdminLogs,
           };
         } catch (parseError) {
           debugPrint('JSON Parse Error: $parseError');
-          debugPrint('Response was not JSON: ${response.body.substring(0, response.body.length > 100 ? 100 : response.body.length)}');
+          debugPrint(
+            'Response was not JSON: ${response.body.substring(0, response.body.length > 100 ? 100 : response.body.length)}',
+          );
           return {
             'success': false,
-            'error': 'Invalid response format: ${parseError.toString().substring(0, 100)}',
+            'error':
+                'Invalid response format: ${parseError.toString().substring(0, 100)}',
           };
         }
       } else {
@@ -612,21 +718,22 @@ class WalletService {
           final data = json.decode(response.body);
           return {
             'success': false,
-            'error': data['message'] ?? data['error'] ?? 'Server error: ${response.statusCode}',
+            'error':
+                data['message'] ??
+                data['error'] ??
+                'Server error: ${response.statusCode}',
           };
         } catch (parseError) {
           return {
             'success': false,
-            'error': 'Server error ${response.statusCode}: ${response.body.substring(0, 100)}',
+            'error':
+                'Server error ${response.statusCode}: ${response.body.substring(0, 100)}',
           };
         }
       }
     } catch (e) {
       debugPrint('Error fetching wallet transactions: $e');
-      return {
-        'success': false,
-        'error': 'Network error: $e',
-      };
+      return {'success': false, 'error': 'Network error: $e'};
     }
   }
 
@@ -658,6 +765,20 @@ class WalletService {
     );
   }
 
+  // Helper method for Crypto Withdrawal history
+  /// GET /wallet/v1/wallet/transactions?type=2&category=crypto
+  static Future<Map<String, dynamic>> getCryptoWithdrawalHistory({
+    int? page,
+    int? limit,
+  }) async {
+    return getCompleteTransactionHistory(
+      type: 2, // Withdrawal
+      category: 'crypto',
+      page: page,
+      limit: limit,
+    );
+  }
+
   // Helper method for Crypto Deposit history
   /// GET /wallet/v1/wallet/transactions?type=1&category=crypto
   static Future<Map<String, dynamic>> getCryptoDepositHistory({
@@ -672,25 +793,13 @@ class WalletService {
     );
   }
 
-  // Helper method for Crypto Withdrawal history
-  /// GET /wallet/v1/wallet/transactions?type=2&category=crypto
-  static Future<Map<String, dynamic>> getCryptoWithdrawalHistory({
-    int? page,
-    int? limit,
-  }) async {
-    return getWalletTransactions(
-      type: 2, // Withdrawal
-      category: 'crypto',
-      page: page,
-      limit: limit,
-    );
-  }
-
   // Combined transaction history from both user and admin logs
   static Future<Map<String, dynamic>> getCompleteTransactionHistory({
     String? walletType,
     String? coin,
     String? transactionType,
+    int? type,
+    String? category,
     int? page = 1,
     int? limit = 50,
     String? startDate,
@@ -701,50 +810,72 @@ class WalletService {
         walletType: walletType,
         coin: coin,
         transactionType: transactionType,
+        type: type,
+        category: category,
         page: page,
         limit: limit,
         startDate: startDate,
         endDate: endDate,
         includeAdminLogs: false,
       );
-      
+
       final adminResult = await getWalletTransactions(
         walletType: walletType,
         coin: coin,
         transactionType: transactionType,
+        type: type,
+        category: category,
         page: page,
         limit: limit,
         startDate: startDate,
         endDate: endDate,
         includeAdminLogs: true,
       );
-      
+
       List<Map<String, dynamic>> allTransactions = [];
-      
+
       if (userResult['success'] == true && userResult['data'] != null) {
         final userData = userResult['data'];
-        if (userData['transactions'] != null) {
-          allTransactions.addAll(List<Map<String, dynamic>>.from(userData['transactions']));
-        } else if (userData is List) {
+        if (userData is List) {
           allTransactions.addAll(List<Map<String, dynamic>>.from(userData));
+        } else if (userData is Map) {
+          final list =
+              userData['transactions'] ??
+              userData['result'] ??
+              userData['docs'] ??
+              userData['data'];
+          if (list is List) {
+            allTransactions.addAll(List<Map<String, dynamic>>.from(list));
+          }
         }
       }
-      
+
       if (adminResult['success'] == true && adminResult['data'] != null) {
         final adminData = adminResult['data'];
-        if (adminData['transactions'] != null) {
-          allTransactions.addAll(List<Map<String, dynamic>>.from(adminData['transactions']));
-        } else if (adminData is List) {
+        if (adminData is List) {
           allTransactions.addAll(List<Map<String, dynamic>>.from(adminData));
+        } else if (adminData is Map) {
+          final list =
+              adminData['transactions'] ??
+              adminData['result'] ??
+              adminData['docs'] ??
+              adminData['data'];
+          if (list is List) {
+            allTransactions.addAll(List<Map<String, dynamic>>.from(list));
+          }
         }
       }
-      
+
       allTransactions.sort((a, b) {
-        final aDate = DateTime.tryParse(a['createdAt']?.toString() ?? '') ?? DateTime.now();
-        final bDate = DateTime.tryParse(b['createdAt']?.toString() ?? '') ?? DateTime.now();
+        final aDate =
+            DateTime.tryParse(a['createdAt']?.toString() ?? '') ??
+            DateTime.now();
+        final bDate =
+            DateTime.tryParse(b['createdAt']?.toString() ?? '') ??
+            DateTime.now();
         return bDate.compareTo(aDate);
       });
-      
+
       return {
         'success': true,
         'data': {
@@ -777,30 +908,29 @@ class WalletService {
         if (startDate != null) 'startDate': startDate,
         if (endDate != null) 'endDate': endDate,
       };
-      
-      final uri = Uri.parse('$baseUrl/wallet/v1/wallet/transfer-history')
-          .replace(queryParameters: queryParams);
-      
+
+      final uri = Uri.parse(
+        '$baseUrl/wallet/v1/wallet/transfer-history',
+      ).replace(queryParameters: queryParams);
+
       debugPrint('Fetching transfer history from: $uri');
-      final response = await http.get(
-        uri,
-        headers: await _getHeaders(),
+      final response = await http.get(uri, headers: await _getHeaders());
+
+      debugPrint(
+        'Transfer History API Response Status: ${response.statusCode}',
       );
-      
-      debugPrint('Transfer History API Response Status: ${response.statusCode}');
       debugPrint('Transfer History API Response Body: ${response.body}');
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         debugPrint('Parsed Transfer History Data: $data');
         final resultData = data['data'] ?? data;
         debugPrint('Transfer History Result Data: $resultData');
-        return {
-          'success': true,
-          'data': resultData,
-        };
+        return {'success': true, 'data': resultData};
       } else {
-        debugPrint('Transfer History API failed with status: ${response.statusCode}');
+        debugPrint(
+          'Transfer History API failed with status: ${response.statusCode}',
+        );
         return {
           'success': false,
           'error': 'Server error: ${response.statusCode}',
@@ -808,10 +938,7 @@ class WalletService {
       }
     } catch (e) {
       debugPrint('Error fetching wallet transfer history: $e');
-      return {
-        'success': false,
-        'error': 'Network error: $e',
-      };
+      return {'success': false, 'error': 'Network error: $e'};
     }
   }
 
@@ -830,28 +957,29 @@ class WalletService {
         if (endDate != null) 'endDate': endDate,
       };
 
-      final uri = Uri.parse('$baseUrl/wallet/v1/wallet/internal-transfer-history')
-          .replace(queryParameters: queryParams);
+      final uri = Uri.parse(
+        '$baseUrl/wallet/v1/wallet/internal-transfer-history',
+      ).replace(queryParameters: queryParams);
 
       debugPrint('Fetching internal transfer history from: $uri');
-      final response = await http.get(
-        uri,
-        headers: await _getHeaders(),
-      );
+      final response = await http.get(uri, headers: await _getHeaders());
 
-      debugPrint('Internal Transfer History API Response Status: ${response.statusCode}');
-      debugPrint('Internal Transfer History API Response Body: ${response.body}');
+      debugPrint(
+        'Internal Transfer History API Response Status: ${response.statusCode}',
+      );
+      debugPrint(
+        'Internal Transfer History API Response Body: ${response.body}',
+      );
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         debugPrint('Parsed Internal Transfer History Data: $data');
         final resultData = data['data'] ?? data;
-        return {
-          'success': true,
-          'data': resultData,
-        };
+        return {'success': true, 'data': resultData};
       } else {
-        debugPrint('Internal Transfer History API failed with status: ${response.statusCode}');
+        debugPrint(
+          'Internal Transfer History API failed with status: ${response.statusCode}',
+        );
         return {
           'success': false,
           'error': 'Server error: ${response.statusCode}',
@@ -859,10 +987,7 @@ class WalletService {
       }
     } catch (e) {
       debugPrint('Error fetching internal transfer history: $e');
-      return {
-        'success': false,
-        'error': 'Network error: $e',
-      };
+      return {'success': false, 'error': 'Network error: $e'};
     }
   }
 
@@ -882,18 +1007,18 @@ class WalletService {
         'amount': amount,
         if (otp != null && otp.isNotEmpty) 'otp': otp,
       };
-      
+
       debugPrint('Transfer Request: $requestBody');
       debugPrint('Transfer API URL: $baseUrl/wallet/v1/wallet/transfer');
-      
+
       final response = await http.post(
         Uri.parse('$baseUrl/wallet/v1/wallet/transfer'),
         headers: await _getHeaders(),
         body: json.encode(requestBody),
       );
-      
+
       debugPrint('Transfer API Response Status: ${response.statusCode}');
-      
+
       // Safe JSON decoding
       dynamic data;
       try {
@@ -902,15 +1027,17 @@ class WalletService {
         debugPrint('Failed to decode transfer response: ${response.body}');
         return {
           'success': false,
-          'error': 'Server returned an invalid response. Please try again later.',
+          'error':
+              'Server returned an invalid response. Please try again later.',
         };
       }
-      
+
       if (response.statusCode == 200 || response.statusCode == 201) {
         // Log wallet transfer notification
         await NotificationService.addNotification(
           title: 'Wallet Transfer',
-          message: 'Transferred $amount USDT from ${_getWalletTypeName(from)} to ${_getWalletTypeName(to)}.',
+          message:
+              'Transferred $amount USDT from ${_getWalletTypeName(from)} to ${_getWalletTypeName(to)}.',
           type: NotificationType.transaction,
         );
 
@@ -928,13 +1055,10 @@ class WalletService {
       }
     } catch (e) {
       debugPrint('Error transferring between wallets: $e');
-      return {
-        'success': false,
-        'error': 'Network error: $e',
-      };
+      return {'success': false, 'error': 'Network error: $e'};
     }
   }
-  
+
   // Helper method to convert wallet names to API numbers
   static int _getWalletTypeNumber(String walletType) {
     switch (walletType.toLowerCase()) {
@@ -970,7 +1094,7 @@ class WalletService {
         return 'Unknown Wallet';
     }
   }
-  
+
   static Future<List<Map<String, dynamic>>> getAllCoins() async {
     try {
       debugPrint('Fetching coins from: $baseUrl/wallet/v1/coin/all');
@@ -980,16 +1104,21 @@ class WalletService {
       );
       debugPrint('Coins API Response Status: ${response.statusCode}');
       debugPrint('Coins API Response Body: ${response.body}');
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         debugPrint('Parsed coins data: $data');
-        
+
         // Handle different response formats
         if (data is List) return List<Map<String, dynamic>>.from(data);
         if (data is Map) {
           // Check for docs field first (as seen in logs)
-          var list = data['docs'] ?? data['data'] ?? data['coins'] ?? data['result'] ?? [];
+          var list =
+              data['docs'] ??
+              data['data'] ??
+              data['coins'] ??
+              data['result'] ??
+              [];
           if (list is List) {
             debugPrint('Found coins list with ${list.length} items');
             return List<Map<String, dynamic>>.from(list);
@@ -1003,7 +1132,7 @@ class WalletService {
       return [];
     }
   }
-  
+
   static Future<List<Map<String, dynamic>>> getAllNetworks() async {
     try {
       final response = await http.get(
@@ -1012,7 +1141,9 @@ class WalletService {
       );
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        var coins = (data is List) ? data : (data['data'] ?? data['coins'] ?? []);
+        var coins = (data is List)
+            ? data
+            : (data['data'] ?? data['coins'] ?? []);
         List<Map<String, dynamic>> allNetworks = [];
         Set<String> seenIds = {};
         if (coins is List) {
@@ -1040,12 +1171,16 @@ class WalletService {
   // Fetch networks from sub-admin API
   static Future<List<Map<String, dynamic>>> getSubAdminNetworks() async {
     try {
-      debugPrint('Fetching sub-admin networks from: $baseUrl/sub-admin/v1/network/all');
+      debugPrint(
+        'Fetching sub-admin networks from: $baseUrl/sub-admin/v1/network/all',
+      );
       final response = await http.get(
         Uri.parse('$baseUrl/sub-admin/v1/network/all'),
         headers: await _getHeaders(),
       );
-      debugPrint('Sub-admin Networks API Response Status: ${response.statusCode}');
+      debugPrint(
+        'Sub-admin Networks API Response Status: ${response.statusCode}',
+      );
       debugPrint('Sub-admin Networks API Response Body: ${response.body}');
 
       if (response.statusCode == 200) {
@@ -1055,18 +1190,27 @@ class WalletService {
         // Handle different response formats
         if (data is List) return List<Map<String, dynamic>>.from(data);
         if (data is Map) {
-          var list = data['docs'] ?? data['data'] ?? data['networks'] ?? data['result'] ?? [];
+          var list =
+              data['docs'] ??
+              data['data'] ??
+              data['networks'] ??
+              data['result'] ??
+              [];
           if (list is List) {
             debugPrint('Found networks list with ${list.length} items');
             return List<Map<String, dynamic>>.from(list);
           }
         }
       } else if (response.statusCode == 403) {
-        debugPrint('Sub-admin Networks API returned 403 - Forbidden. User may not have permission.');
+        debugPrint(
+          'Sub-admin Networks API returned 403 - Forbidden. User may not have permission.',
+        );
         // Return empty list to trigger fallback to coin networks
         return [];
       } else if (response.statusCode == 401) {
-        debugPrint('Sub-admin Networks API returned 401 - Unauthorized. Token may be invalid.');
+        debugPrint(
+          'Sub-admin Networks API returned 401 - Unauthorized. Token may be invalid.',
+        );
         return [];
       }
       debugPrint('No networks data found in API response');
@@ -1083,22 +1227,31 @@ class WalletService {
     required String networkId,
   }) async {
     try {
-      debugPrint('Getting deposit address for coin: $coin, coinId: $coinId, networkId: $networkId');
+      debugPrint(
+        'Getting deposit address for coin: $coin, coinId: $coinId, networkId: $networkId',
+      );
       final response = await http.post(
         Uri.parse('$baseUrl/wallet/v1/wallet/deposit/get-erc20-bep20-address'),
         headers: await _getHeaders(),
-        body: json.encode({'coin': coin, 'coinId': coinId, 'networkId': networkId}),
+        body: json.encode({
+          'coin': coin,
+          'coinId': coinId,
+          'networkId': networkId,
+        }),
       );
       debugPrint('Deposit Address API Response: ${response.body}');
-      
+
       final data = json.decode(response.body);
-      
+
       if (response.statusCode == 200 && data['success'] == true) {
         debugPrint('Deposit address retrieved successfully');
         return {'success': true, 'data': data['data'] ?? data['doc']};
       } else {
         debugPrint('Deposit address API failed: ${data['message']}');
-        return {'success': false, 'error': data['message'] ?? 'Failed to fetch deposit address'};
+        return {
+          'success': false,
+          'error': data['message'] ?? 'Failed to fetch deposit address',
+        };
       }
     } catch (e) {
       debugPrint('Error getting deposit address: $e');
@@ -1106,7 +1259,10 @@ class WalletService {
     }
   }
 
-  static Future<Map<String, dynamic>?> getAvailableBalance({required String coin, required String network}) async {
+  static Future<Map<String, dynamic>?> getAvailableBalance({
+    required String coin,
+    required String network,
+  }) async {
     try {
       final balanceResult = await SpotService.getBalance();
       if (balanceResult['success'] == true && balanceResult['data'] != null) {
@@ -1115,8 +1271,16 @@ class WalletService {
           return {
             'balance': balanceData['usdt_available']?.toString() ?? '0.00',
             'locked': balanceData['usdt_locked']?.toString() ?? '0.00',
-            'total': ((double.tryParse(balanceData['usdt_available']?.toString() ?? '0') ?? 0.0) + 
-                     (double.tryParse(balanceData['usdt_locked']?.toString() ?? '0') ?? 0.0)).toStringAsFixed(2),
+            'total':
+                ((double.tryParse(
+                              balanceData['usdt_available']?.toString() ?? '0',
+                            ) ??
+                            0.0) +
+                        (double.tryParse(
+                              balanceData['usdt_locked']?.toString() ?? '0',
+                            ) ??
+                            0.0))
+                    .toStringAsFixed(2),
           };
         } else {
           return {
@@ -1138,37 +1302,44 @@ class WalletService {
       if (balanceResult['success'] == true && balanceResult['data'] != null) {
         return {'success': true, 'data': balanceResult['data']};
       } else {
-        return {'success': false, 'error': balanceResult['error'] ?? 'Failed to get balance'};
+        return {
+          'success': false,
+          'error': balanceResult['error'] ?? 'Failed to get balance',
+        };
       }
     } catch (e) {
       return {'success': false, 'error': 'Network error: $e'};
     }
   }
 
-  static Future<Map<String, dynamic>?> getWithdrawalFees({required String coin, required String network, required double amount}) async {
+  static Future<Map<String, dynamic>?> getWithdrawalFees({
+    required String coin,
+    required String network,
+    required double amount,
+  }) async {
     try {
-      debugPrint('Fetching withdrawal fees from: $baseUrl/wallet/v1/withdraw/withdraw-fees');
-      
+      debugPrint(
+        'Fetching withdrawal fees from: $baseUrl/wallet/v1/withdraw/withdraw-fees',
+      );
+
       final queryParams = {
         'coin': coin,
         'network': network,
         'amount': amount.toString(),
       };
-      
-      final uri = Uri.parse('$baseUrl/wallet/v1/withdraw/withdraw-fees')
-          .replace(queryParameters: queryParams);
-      
-      final response = await http.get(
-        uri,
-        headers: await _getHeaders(),
-      );
-      
+
+      final uri = Uri.parse(
+        '$baseUrl/wallet/v1/withdraw/withdraw-fees',
+      ).replace(queryParameters: queryParams);
+
+      final response = await http.get(uri, headers: await _getHeaders());
+
       debugPrint('Withdraw Fees API Response Status: ${response.statusCode}');
       debugPrint('Withdraw Fees API Response Body: ${response.body}');
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        
+
         if (data['success'] == true) {
           return {
             'success': true,
@@ -1182,7 +1353,9 @@ class WalletService {
           };
         }
       } else {
-        debugPrint('Withdraw Fees API failed with status: ${response.statusCode}');
+        debugPrint(
+          'Withdraw Fees API failed with status: ${response.statusCode}',
+        );
         return {
           'success': false,
           'error': 'Server error: ${response.statusCode}',
@@ -1190,10 +1363,7 @@ class WalletService {
       }
     } catch (e) {
       debugPrint('Error fetching withdrawal fees: $e');
-      return {
-        'success': false,
-        'error': 'Network error: $e',
-      };
+      return {'success': false, 'error': 'Network error: $e'};
     }
   }
 
@@ -1215,16 +1385,75 @@ class WalletService {
     );
   }
 
-  static Future<Map<String, dynamic>?> withdrawCrypto({required String coin, required String network, required String address, required double amount, String? otp}) async {
+  static Future<Map<String, dynamic>?> withdrawCrypto({
+    required String coin,
+    required String network,
+    required String address,
+    required double amount,
+    String? otp,
+    String? coinId,
+    String? networkId,
+  }) async {
     try {
-      debugPrint('Submitting crypto withdraw: coin=$coin, network=$network, amount=$amount');
+      debugPrint(
+        'Submitting crypto withdraw: coin=$coin, network=$network, amount=$amount',
+      );
 
-      final requestBody = {
+      // Backend requires: amount, toAddress, networkId, coinId, otp
+      // We also keep legacy keys (coin/network/address) for compatibility.
+      String? resolvedCoinId = coinId;
+      String? resolvedNetworkId = networkId;
+
+      if ((resolvedCoinId == null || resolvedCoinId.isEmpty) ||
+          (resolvedNetworkId == null || resolvedNetworkId.isEmpty)) {
+        try {
+          final coins = await getAllCoins();
+          final coinMatch = coins.firstWhere(
+            (c) =>
+                (c['symbol']?.toString().toUpperCase() ?? '') ==
+                coin.toUpperCase(),
+            orElse: () => <String, dynamic>{},
+          );
+
+          resolvedCoinId ??= (coinMatch['_id'] ?? coinMatch['id'] ?? '')
+              .toString();
+
+          final networks = coinMatch['networks'];
+          if (networks is List) {
+            Map<String, dynamic>? netMatch;
+            for (final n in networks) {
+              if (n is! Map) continue;
+              final nm = (n['name'] ?? '').toString().toLowerCase();
+              final tp = (n['type'] ?? '').toString().toLowerCase();
+              final target = network.toLowerCase();
+              if (nm == target || tp == target) {
+                netMatch = Map<String, dynamic>.from(n);
+                break;
+              }
+            }
+            if (netMatch != null) {
+              resolvedNetworkId ??= (netMatch['_id'] ?? netMatch['id'] ?? '')
+                  .toString();
+            }
+          }
+        } catch (_) {
+          // Best-effort resolution; fallback to provided values.
+        }
+      }
+
+      final requestBody = <String, dynamic>{
+        // required by backend
+        'amount': amount,
+        'toAddress': address,
+        if (resolvedNetworkId != null && resolvedNetworkId.isNotEmpty)
+          'networkId': resolvedNetworkId,
+        if (resolvedCoinId != null && resolvedCoinId.isNotEmpty)
+          'coinId': resolvedCoinId,
+        if (otp != null && otp.isNotEmpty) 'otp': otp,
+        // legacy keys (safe to send)
         'coin': coin,
         'network': network,
         'address': address,
-        'amount': amount,
-        if (otp != null && otp.isNotEmpty) 'otp': otp,
       };
 
       debugPrint('Withdraw request body: $requestBody');
@@ -1243,11 +1472,20 @@ class WalletService {
         if (data['success'] == true) {
           return {'success': true, 'data': data['data']};
         } else {
-          return {'success': false, 'error': data['message'] ?? 'Withdrawal failed'};
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Withdrawal failed',
+          };
         }
       } else {
         final error = json.decode(response.body);
-        return {'success': false, 'error': error['message'] ?? error['error'] ?? 'Error ${response.statusCode}'};
+        return {
+          'success': false,
+          'error':
+              error['message'] ??
+              error['error'] ??
+              'Error ${response.statusCode}',
+        };
       }
     } catch (e) {
       debugPrint('Error in withdrawCrypto: $e');
@@ -1273,28 +1511,27 @@ class WalletService {
         if (endDate != null) 'endDate': endDate,
       };
 
-      final uri = Uri.parse('$baseUrl/wallet/v1/wallet/inr/conversion-history')
-          .replace(queryParameters: queryParams);
+      final uri = Uri.parse(
+        '$baseUrl/wallet/v1/wallet/inr/conversion-history',
+      ).replace(queryParameters: queryParams);
 
       debugPrint('Fetching conversion history from: $uri');
-      final response = await http.get(
-        uri,
-        headers: await _getHeaders(),
-      );
+      final response = await http.get(uri, headers: await _getHeaders());
 
-      debugPrint('Conversion History API Response Status: ${response.statusCode}');
+      debugPrint(
+        'Conversion History API Response Status: ${response.statusCode}',
+      );
       debugPrint('Conversion History API Response Body: ${response.body}');
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         debugPrint('Parsed Conversion History Data: $data');
         final resultData = data['data'] ?? data;
-        return {
-          'success': true,
-          'data': resultData,
-        };
+        return {'success': true, 'data': resultData};
       } else {
-        debugPrint('Conversion History API failed with status: ${response.statusCode}');
+        debugPrint(
+          'Conversion History API failed with status: ${response.statusCode}',
+        );
         return {
           'success': false,
           'error': 'Server error: ${response.statusCode}',
@@ -1302,10 +1539,7 @@ class WalletService {
       }
     } catch (e) {
       debugPrint('Error fetching conversion history: $e');
-      return {
-        'success': false,
-        'error': 'Network error: $e',
-      };
+      return {'success': false, 'error': 'Network error: $e'};
     }
   }
 
@@ -1322,7 +1556,11 @@ class WalletService {
   }) async {
     try {
       // withdrawType: 1 for BANK, 2 for UPI
-      final withdrawType = paymentMode == 'bank' ? 1 : paymentMode == 'upi' ? 2 : 1;
+      final withdrawType = paymentMode == 'bank'
+          ? 1
+          : paymentMode == 'upi'
+          ? 2
+          : 1;
       final requestBody = {
         'amount': amount,
         'withdrawType': withdrawType,
@@ -1333,24 +1571,32 @@ class WalletService {
         if (upiId != null) 'upiId': upiId,
         if (otp != null && otp.isNotEmpty) 'otp': otp,
       };
-      
+
       debugPrint('Submitting INR withdrawal: $requestBody');
-      
-      final url = '$baseUrl/wallet/v1/wallet/deposit/inr-withdraw-request'; 
+
+      final url = '$baseUrl/wallet/v1/wallet/deposit/inr-withdraw-request';
       final response = await http.post(
         Uri.parse(url),
         headers: await _getHeaders(),
         body: json.encode(requestBody),
       );
-      
-      debugPrint('INR Withdrawal Response: ${response.statusCode} - ${response.body}');
-      
+
+      debugPrint(
+        'INR Withdrawal Response: ${response.statusCode} - ${response.body}',
+      );
+
       if (response.statusCode == 200 || response.statusCode == 201) {
         final data = json.decode(response.body);
         return {'success': true, 'data': data};
       } else {
         final error = json.decode(response.body);
-        return {'success': false, 'error': error['message'] ?? error['error'] ?? 'Error ${response.statusCode}'};
+        return {
+          'success': false,
+          'error':
+              error['message'] ??
+              error['error'] ??
+              'Error ${response.statusCode}',
+        };
       }
     } catch (e) {
       return {'success': false, 'error': e.toString()};
@@ -1362,17 +1608,17 @@ class WalletService {
     try {
       final requestBody = {'purpose': purpose};
       debugPrint('Sending OTP for purpose: $purpose');
-      
+
       // Use /wallet/v1/otp/send for wallet OTP endpoints
       final response = await http.post(
         Uri.parse('$baseUrl/wallet/v1/otp/send'),
         headers: await _getHeaders(),
         body: json.encode(requestBody),
       );
-      
+
       debugPrint('Send OTP Response: ${response.statusCode}');
       debugPrint('Send OTP Response Body: ${response.body}');
-      
+
       // Safe JSON decoding
       dynamic data;
       try {
@@ -1386,7 +1632,7 @@ class WalletService {
           'details': 'Raw response: ${response.body}',
         };
       }
-      
+
       if (response.statusCode == 200 || response.statusCode == 201) {
         // Check if OTP was actually sent successfully
         // API returns 'status': 'success' not 'success': true
@@ -1394,28 +1640,33 @@ class WalletService {
           debugPrint('OTP sent successfully for purpose: $purpose');
           debugPrint('OTP delivery details: ${data['data'] ?? data}');
           return {
-            'success': true, 
+            'success': true,
             'data': data,
-            'message': data['message'] ?? 'OTP sent successfully'
+            'message': data['message'] ?? 'OTP sent successfully',
           };
         } else {
-          debugPrint('OTP API returned success=false: ${data['message'] ?? data['error']}');
+          debugPrint(
+            'OTP API returned success=false: ${data['message'] ?? data['error']}',
+          );
           return {
-            'success': false, 
-            'error': data['message'] ?? data['error'] ?? 'OTP service returned error',
+            'success': false,
+            'error':
+                data['message'] ??
+                data['error'] ??
+                'OTP service returned error',
             'details': data,
           };
         }
       } else {
         debugPrint('OTP API failed with status: ${response.statusCode}');
         return {
-          'success': false, 
+          'success': false,
           'error': data['message'] ?? data['error'] ?? 'Failed to send OTP',
           'details': {
             'status_code': response.statusCode,
             'response_body': response.body,
             'parsed_data': data,
-          }
+          },
         };
       }
     } catch (e) {
@@ -1425,12 +1676,12 @@ class WalletService {
   }
 
   // Verify OTP for various purposes
-  static Future<Map<String, dynamic>> verifyOtp({required String otp, String? purpose}) async {
+  static Future<Map<String, dynamic>> verifyOtp({
+    required String otp,
+    String? purpose,
+  }) async {
     try {
-      final requestBody = {
-        'otp': otp,
-        if (purpose != null) 'purpose': purpose,
-      };
+      final requestBody = {'otp': otp, if (purpose != null) 'purpose': purpose};
       debugPrint('Verifying OTP for purpose: $purpose');
 
       final response = await http.post(
@@ -1453,7 +1704,11 @@ class WalletService {
       }
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        return {'success': true, 'data': data, 'message': data['message'] ?? 'OTP verified successfully'};
+        return {
+          'success': true,
+          'data': data,
+          'message': data['message'] ?? 'OTP verified successfully',
+        };
       } else {
         return {
           'success': false,
@@ -1471,7 +1726,7 @@ class WalletService {
   static Future<Map<String, dynamic>> validateUserUid(String uid) async {
     try {
       debugPrint('Validating user UID: $uid');
-      
+
       final response = await http.get(
         Uri.parse('$baseUrl/wallet/v1/user/validate-uid?uid=$uid'),
         headers: await _getHeaders(),
@@ -1479,7 +1734,7 @@ class WalletService {
 
       debugPrint('Validate UID API Response Status: ${response.statusCode}');
       debugPrint('Validate UID API Response Body: ${response.body}');
-      
+
       // Safe JSON decoding
       dynamic data;
       try {
@@ -1488,7 +1743,8 @@ class WalletService {
         debugPrint('Failed to decode validate UID response: ${response.body}');
         return {
           'success': false,
-          'error': 'UID validation failed. Server returned an invalid response.',
+          'error':
+              'UID validation failed. Server returned an invalid response.',
         };
       }
 
@@ -1501,14 +1757,18 @@ class WalletService {
             'message': data['message'] ?? 'UID is valid',
           };
         } else {
-          debugPrint('UID validation failed: ${data['message'] ?? data['error']}');
+          debugPrint(
+            'UID validation failed: ${data['message'] ?? data['error']}',
+          );
           return {
             'success': false,
             'error': data['message'] ?? data['error'] ?? 'Invalid UID',
           };
         }
       } else {
-        debugPrint('Validate UID API failed with status: ${response.statusCode}');
+        debugPrint(
+          'Validate UID API failed with status: ${response.statusCode}',
+        );
         return {
           'success': false,
           'error': data['message'] ?? data['error'] ?? 'UID validation failed',
@@ -1539,7 +1799,9 @@ class WalletService {
       };
 
       debugPrint('Internal Transfer Request: $requestBody');
-      debugPrint('Internal Transfer API URL: $baseUrl/wallet/v1/wallet/internal-transfer');
+      debugPrint(
+        'Internal Transfer API URL: $baseUrl/wallet/v1/wallet/internal-transfer',
+      );
 
       final response = await http.post(
         Uri.parse('$baseUrl/wallet/v1/wallet/internal-transfer'),
@@ -1547,14 +1809,18 @@ class WalletService {
         body: json.encode(requestBody),
       );
 
-      debugPrint('Internal Transfer API Response Status: ${response.statusCode}');
-      
+      debugPrint(
+        'Internal Transfer API Response Status: ${response.statusCode}',
+      );
+
       // Safe JSON decoding
       dynamic data;
       try {
         data = json.decode(response.body);
       } catch (e) {
-        debugPrint('Failed to decode internal transfer response: ${response.body}');
+        debugPrint(
+          'Failed to decode internal transfer response: ${response.body}',
+        );
         return {
           'success': false,
           'error': 'Transfer failed. Server returned an invalid response.',
@@ -1583,22 +1849,19 @@ class WalletService {
       }
     } catch (e) {
       debugPrint('Error in internalTransfer: $e');
-      return {
-        'success': false,
-        'error': 'Network error: $e',
-      };
+      return {'success': false, 'error': 'Network error: $e'};
     }
   }
 
   // Enable crypto withdrawal for a specific coin (admin endpoint)
-  static Future<Map<String, dynamic>> enableCryptoWithdraw({required String coin, required String network}) async {
+  static Future<Map<String, dynamic>> enableCryptoWithdraw({
+    required String coin,
+    required String network,
+  }) async {
     try {
       debugPrint('Enabling crypto withdrawal: coin=$coin, network=$network');
 
-      final requestBody = {
-        'coin': coin,
-        'network': network,
-      };
+      final requestBody = {'coin': coin, 'network': network};
 
       debugPrint('Enable withdraw request body: $requestBody');
 
@@ -1614,13 +1877,26 @@ class WalletService {
       if (response.statusCode == 200 || response.statusCode == 201) {
         final data = json.decode(response.body);
         if (data['success'] == true) {
-          return {'success': true, 'data': data['data'], 'message': data['message'] ?? 'Withdrawal enabled successfully'};
+          return {
+            'success': true,
+            'data': data['data'],
+            'message': data['message'] ?? 'Withdrawal enabled successfully',
+          };
         } else {
-          return {'success': false, 'error': data['message'] ?? 'Failed to enable withdrawal'};
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to enable withdrawal',
+          };
         }
       } else {
         final error = json.decode(response.body);
-        return {'success': false, 'error': error['message'] ?? error['error'] ?? 'Error ${response.statusCode}'};
+        return {
+          'success': false,
+          'error':
+              error['message'] ??
+              error['error'] ??
+              'Error ${response.statusCode}',
+        };
       }
     } catch (e) {
       debugPrint('Error in enableCryptoWithdraw: $e');
@@ -1634,21 +1910,23 @@ class WalletService {
   static Future<Map<String, dynamic>> getINRBankDetails() async {
     try {
       final headers = await _getHeaders();
-      
+
       // Attempt 1: As requested by user (v1/wallet/deposit/inr-pay-details)
       // Since baseUrl already ends in /api, we use /v1/...
       String url = '$baseUrl/v1/wallet/deposit/inr-pay-details';
       debugPrint('Attempting GET INR Bank Details from: $url');
-      
+
       var response = await http.get(Uri.parse(url), headers: headers);
       debugPrint('GET INR Bank Details (v1) Status: ${response.statusCode}');
-      
+
       // Fallback: Try with /wallet/v1/...
       if (response.statusCode != 200) {
         url = '$baseUrl/wallet/v1/wallet/deposit/inr-pay-details';
         debugPrint('Attempting GET INR Bank Details from fallback: $url');
         response = await http.get(Uri.parse(url), headers: headers);
-        debugPrint('GET INR Bank Details (fallback) Status: ${response.statusCode}');
+        debugPrint(
+          'GET INR Bank Details (fallback) Status: ${response.statusCode}',
+        );
       }
 
       // Fallback: Original endpoint
@@ -1656,25 +1934,28 @@ class WalletService {
         url = '$baseUrl/wallet/v1/wallet/deposit/bank-details';
         debugPrint('Attempting GET INR Bank Details from original: $url');
         response = await http.get(Uri.parse(url), headers: headers);
-        debugPrint('GET INR Bank Details (original) Status: ${response.statusCode}');
+        debugPrint(
+          'GET INR Bank Details (original) Status: ${response.statusCode}',
+        );
       }
 
       if (response.statusCode == 200) {
         final decodedData = json.decode(response.body);
         debugPrint('INR Bank Details Response: ${response.body}');
-        
+
         // Handle various response wrappers
         dynamic data = decodedData;
         if (decodedData is Map) {
-          data = decodedData['data'] ?? decodedData['docs'] ?? decodedData['result'] ?? decodedData;
+          data =
+              decodedData['data'] ??
+              decodedData['docs'] ??
+              decodedData['result'] ??
+              decodedData;
         }
-        
-        return {
-          'success': true,
-          'data': data,
-        };
+
+        return {'success': true, 'data': data};
       }
-      
+
       return {
         'success': false,
         'error': 'Could not fetch bank details (${response.statusCode})',
@@ -1712,7 +1993,7 @@ class WalletService {
       // Primary URL as requested by user
       String url = '$baseUrl/v1/wallet/deposit/add-inr-pay-details';
       debugPrint('Adding INR Bank Details (Attempt 1) to: $url');
-      
+
       var response = await http.post(
         Uri.parse(url),
         headers: headers,
@@ -1740,7 +2021,7 @@ class WalletService {
           'message': decodedData['message'] ?? 'Details added successfully',
         };
       }
-      
+
       return {
         'success': false,
         'error': decodedData['message'] ?? 'Failed to add details',
@@ -1805,7 +2086,7 @@ class WalletService {
           'message': decodedData['message'] ?? 'Account updated successfully',
         };
       }
-      
+
       return {
         'success': false,
         'message': decodedData['message'] ?? 'Failed to update account',
@@ -1820,9 +2101,7 @@ class WalletService {
   /// POST /wallet/v1/otp/send
   static Future<Map<String, dynamic>> sendINROTP() async {
     try {
-      final body = {
-        'purpose': 'inr_withdraw',
-      };
+      final body = {'purpose': 'inr_withdraw'};
 
       debugPrint('Sending OTP for INR withdrawal');
 
@@ -1837,11 +2116,15 @@ class WalletService {
 
       final data = json.decode(response.body);
       debugPrint('Parsed data: $data');
-      debugPrint('Success field: ${data['success']} (type: ${data['success']?.runtimeType})');
+      debugPrint(
+        'Success field: ${data['success']} (type: ${data['success']?.runtimeType})',
+      );
 
       // Check success - handle both boolean true and string "true"
       bool isSuccess = false;
-      if (data['success'] == true || data['success'] == 'true' || data['success'] == 1) {
+      if (data['success'] == true ||
+          data['success'] == 'true' ||
+          data['success'] == 1) {
         isSuccess = true;
       }
       // Also check status field if success is not present
@@ -1852,8 +2135,11 @@ class WalletService {
         }
       }
       // If HTTP status is 200/201 and no explicit error, assume success
-      if (!isSuccess && (response.statusCode == 200 || response.statusCode == 201)) {
-        if (data['error'] == null && data['message']?.toString().toLowerCase().contains('fail') != true) {
+      if (!isSuccess &&
+          (response.statusCode == 200 || response.statusCode == 201)) {
+        if (data['error'] == null &&
+            data['message']?.toString().toLowerCase().contains('fail') !=
+                true) {
           isSuccess = true;
         }
       }
@@ -1868,15 +2154,16 @@ class WalletService {
       } else {
         return {
           'success': false,
-          'error': data['message'] ?? data['error'] ?? data['msg'] ?? 'Failed to send OTP',
+          'error':
+              data['message'] ??
+              data['error'] ??
+              data['msg'] ??
+              'Failed to send OTP',
         };
       }
     } catch (e) {
       debugPrint('Error sending INR withdrawal OTP: $e');
-      return {
-        'success': false,
-        'error': 'Network error: $e',
-      };
+      return {'success': false, 'error': 'Network error: $e'};
     }
   }
 
@@ -1891,27 +2178,26 @@ class WalletService {
   }) async {
     try {
       final token = await AuthService.getToken();
-      
+
       var request = http.MultipartRequest(
         'POST',
         Uri.parse('$baseUrl/wallet/v1/wallet/deposit/inr-request'),
       );
-      
+
       // Add auth header
       if (token != null && token.isNotEmpty) {
         request.headers['Authorization'] = 'Bearer $token';
       }
-      
+
       request.fields['amount'] = amount;
       request.fields['txid'] = txid;
       request.fields['account'] = account;
       request.fields['senderAccountName'] = senderAccountName;
-      
+
       if (screenshotPath != null && screenshotPath.isNotEmpty) {
-        request.files.add(await http.MultipartFile.fromPath(
-          'screenshot',
-          screenshotPath,
-        ));
+        request.files.add(
+          await http.MultipartFile.fromPath('screenshot', screenshotPath),
+        );
       }
 
       final streamedResponse = await request.send();
@@ -1925,20 +2211,15 @@ class WalletService {
         return {
           'success': true,
           'data': data,
-          'message': data['message'] ?? 'Deposit request submitted successfully',
+          'message':
+              data['message'] ?? 'Deposit request submitted successfully',
         };
       } else {
-        return {
-          'success': false,
-          'error': 'Failed: ${response.body}',
-        };
+        return {'success': false, 'error': 'Failed: ${response.body}'};
       }
     } catch (e) {
       debugPrint('Error submitting INR deposit: $e');
-      return {
-        'success': false,
-        'error': 'Network error: $e',
-      };
+      return {'success': false, 'error': 'Network error: $e'};
     }
   }
 
@@ -1956,38 +2237,35 @@ class WalletService {
         if (status != null) 'status': status,
       };
 
-      final uri = Uri.parse('$baseUrl/wallet/v1/wallet/inr-withdrawal-history')
-          .replace(queryParameters: queryParams);
+      final uri = Uri.parse(
+        '$baseUrl/wallet/v1/wallet/inr-withdrawal-history',
+      ).replace(queryParameters: queryParams);
 
       debugPrint('Fetching INR withdrawal history from: $uri');
 
-      final response = await http.get(
-        uri,
-        headers: await _getHeaders(),
-      );
+      final response = await http.get(uri, headers: await _getHeaders());
 
-      debugPrint('INR Withdrawal History Response Status: ${response.statusCode}');
+      debugPrint(
+        'INR Withdrawal History Response Status: ${response.statusCode}',
+      );
       debugPrint('INR Withdrawal History Response Body: ${response.body}');
 
       final data = json.decode(response.body);
-      
+
       if (response.statusCode == 200) {
-        return {
-          'success': true,
-          'data': data['data'] ?? data,
-        };
+        return {'success': true, 'data': data['data'] ?? data};
       } else {
         return {
           'success': false,
-          'error': data['message'] ?? data['error'] ?? 'Server error: ${response.statusCode}',
+          'error':
+              data['message'] ??
+              data['error'] ??
+              'Server error: ${response.statusCode}',
         };
       }
     } catch (e) {
       debugPrint('Error fetching INR withdrawal history: $e');
-      return {
-        'success': false,
-        'error': 'Network error: $e',
-      };
+      return {'success': false, 'error': 'Network error: $e'};
     }
   }
 
@@ -2018,7 +2296,9 @@ class WalletService {
         if (upiId != null) 'upiId': upiId,
       };
 
-      debugPrint('Submitting INR withdrawal with amount: $amount, paymentMethodId: $paymentMethodId');
+      debugPrint(
+        'Submitting INR withdrawal with amount: $amount, paymentMethodId: $paymentMethodId',
+      );
 
       final response = await http.post(
         Uri.parse('$baseUrl/wallet/v1/wallet/deposit/inr-withdraw-request'),
@@ -2036,7 +2316,8 @@ class WalletService {
           return {
             'success': true,
             'data': data['data'],
-            'message': data['message'] ?? 'Withdrawal request submitted successfully',
+            'message':
+                data['message'] ?? 'Withdrawal request submitted successfully',
           };
         } else {
           return {
@@ -2052,10 +2333,7 @@ class WalletService {
       }
     } catch (e) {
       debugPrint('Error submitting INR withdrawal: $e');
-      return {
-        'success': false,
-        'error': 'Network error: $e',
-      };
+      return {'success': false, 'error': 'Network error: $e'};
     }
   }
 
@@ -2065,9 +2343,7 @@ class WalletService {
     required double amount,
   }) async {
     try {
-      final body = {
-        'amount': amount,
-      };
+      final body = {'amount': amount};
 
       final headers = await _getHeaders();
       // Correct URL pattern based on conversion-history: /wallet/v1/wallet/inr/...
@@ -2080,7 +2356,9 @@ class WalletService {
         body: json.encode(body),
       );
       debugPrint('USDT to INR Status: ${response.statusCode}');
-      debugPrint('USDT to INR Body: ${response.body.substring(0, response.body.length > 300 ? 300 : response.body.length)}');
+      debugPrint(
+        'USDT to INR Body: ${response.body.substring(0, response.body.length > 300 ? 300 : response.body.length)}',
+      );
 
       // Check if response is valid JSON
       bool isJson = false;
@@ -2097,7 +2375,8 @@ class WalletService {
         debugPrint('Failed to decode USDT to INR response after all attempts');
         return {
           'success': false,
-          'error': 'Server returned an invalid response (Status: ${response.statusCode}). Please try again later.',
+          'error':
+              'Server returned an invalid response (Status: ${response.statusCode}). Please try again later.',
         };
       }
 
@@ -2125,9 +2404,7 @@ class WalletService {
     required double amount,
   }) async {
     try {
-      final body = {
-        'amount': amount,
-      };
+      final body = {'amount': amount};
 
       final headers = await _getHeaders();
       // Correct URL pattern based on conversion-history: /wallet/v1/wallet/inr/...
@@ -2140,7 +2417,9 @@ class WalletService {
         body: json.encode(body),
       );
       debugPrint('INR to USDT Status: ${response.statusCode}');
-      debugPrint('INR to USDT Body: ${response.body.substring(0, response.body.length > 300 ? 300 : response.body.length)}');
+      debugPrint(
+        'INR to USDT Body: ${response.body.substring(0, response.body.length > 300 ? 300 : response.body.length)}',
+      );
 
       // Check if response is valid JSON
       bool isJson = false;
@@ -2157,7 +2436,8 @@ class WalletService {
         debugPrint('Failed to decode INR to USDT response after all attempts');
         return {
           'success': false,
-          'error': 'Server returned an invalid response (Status: ${response.statusCode}). Please try again later.',
+          'error':
+              'Server returned an invalid response (Status: ${response.statusCode}). Please try again later.',
         };
       }
 
@@ -2190,25 +2470,29 @@ class WalletService {
         'INR_AVAILABLE',
         'INRAVAILABLE',
         'INR_HOLDING',
-        'INRHOLDING'
+        'INRHOLDING',
       ];
       for (var targetKey in inrKeys) {
         final actualKey = data.keys.firstWhere(
-            (k) => k.toString().toUpperCase() == targetKey,
-            orElse: () => null);
+          (k) => k.toString().toUpperCase() == targetKey,
+          orElse: () => null,
+        );
         if (actualKey != null) {
           final val = _parseBalanceField(data[actualKey]);
           if (val > 0) return val;
         }
       }
       final coinKey = data.keys.firstWhere(
-          (k) => k.toString().toUpperCase() == 'COIN',
-          orElse: () => null);
+        (k) => k.toString().toUpperCase() == 'COIN',
+        orElse: () => null,
+      );
       final assetKey = data.keys.firstWhere(
-          (k) => k.toString().toUpperCase() == 'ASSET',
-          orElse: () => null);
-      final coinVal =
-          (data[coinKey] ?? data[assetKey])?.toString().toUpperCase();
+        (k) => k.toString().toUpperCase() == 'ASSET',
+        orElse: () => null,
+      );
+      final coinVal = (data[coinKey] ?? data[assetKey])
+          ?.toString()
+          .toUpperCase();
       if (coinVal == 'INR') {
         final val = _parseBalanceField(data);
         if (val > 0) return val;
@@ -2236,7 +2520,8 @@ class WalletService {
       return double.tryParse(cleaned) ?? 0.0;
     }
     if (val is Map) {
-      final total = val['total'] ??
+      final total =
+          val['total'] ??
           val['balance'] ??
           val['amount'] ??
           val['totalBalance'] ??
@@ -2253,66 +2538,89 @@ class WalletService {
 class Coin {
   final String id, name, symbol, icon;
   final List<Network> networks;
-  Coin({required this.id, required this.name, required this.symbol, required this.icon, required this.networks});
-  
+  Coin({
+    required this.id,
+    required this.name,
+    required this.symbol,
+    required this.icon,
+    required this.networks,
+  });
+
   factory Coin.fromJson(Map<String, dynamic> json) {
     debugPrint('Parsing coin from JSON: $json');
-    
+
     var netList = json['networks'] ?? [];
-    String symbol = (json['coinSymbol'] ?? json['symbol'] ?? json['shortName'] ?? 'COIN').toString();
-    String name = (json['coinName'] ?? json['name'] ?? json['fullName'] ?? symbol).toString();
+    String symbol =
+        (json['coinSymbol'] ?? json['symbol'] ?? json['shortName'] ?? 'COIN')
+            .toString();
+    String name =
+        (json['coinName'] ?? json['name'] ?? json['fullName'] ?? symbol)
+            .toString();
     String icon = (json['coinIcon'] ?? json['icon'] ?? '').toString();
-    
+
     // Handle different ID formats
-    String id = (json['_id'] ?? json['id'] ?? json['coinId'] ?? symbol).toString();
-    
+    String id = (json['_id'] ?? json['id'] ?? json['coinId'] ?? symbol)
+        .toString();
+
     // Parse networks properly
     List<Network> networks = [];
     if (netList is List) {
       networks = netList.map((n) => Network.fromJson(n)).toList();
     }
-    
+
     debugPrint('Parsed coin: $name ($symbol) with ${networks.length} networks');
-    
+
     return Coin(
       id: id,
-      name: name, 
+      name: name,
       symbol: symbol,
       icon: icon,
       networks: networks,
     );
   }
-
 }
 
 class Network {
   final String id, name, type;
   final bool isActive;
   final double? fee;
-  Network({required this.id, required this.name, required this.type, required this.isActive, this.fee});
-  
+  Network({
+    required this.id,
+    required this.name,
+    required this.type,
+    required this.isActive,
+    this.fee,
+  });
+
   factory Network.fromJson(Map<String, dynamic> json) {
     debugPrint('Parsing network from JSON: $json');
-    
+
     String name = (json['networkName'] ?? json['name'] ?? 'Unknown').toString();
     String type = (json['networkType'] ?? json['type'] ?? 'NETWORK').toString();
     String id = (json['_id'] ?? json['id'] ?? name).toString();
-    
+
     // Handle different active field names
     bool isActive = false;
     if (json['active'] != null) {
-      isActive = json['active'] is bool ? json['active'] : json['active'].toString().toLowerCase() == 'true';
+      isActive = json['active'] is bool
+          ? json['active']
+          : json['active'].toString().toLowerCase() == 'true';
     } else if (json['isActive'] != null) {
-      isActive = json['isActive'] is bool ? json['isActive'] : json['isActive'].toString().toLowerCase() == 'true';
+      isActive = json['isActive'] is bool
+          ? json['isActive']
+          : json['isActive'].toString().toLowerCase() == 'true';
     } else if (json['status'] != null) {
       isActive = json['status'].toString().toLowerCase() == 'active';
     } else {
       isActive = true; // Default to active if not specified
     }
-    
+
     // Parse fee if available - handle both numeric and string formats like "1 USD"
     double? fee;
-    String? feeRaw = json['fee']?.toString() ?? json['withdrawalFee']?.toString() ?? json['networkFee']?.toString();
+    String? feeRaw =
+        json['fee']?.toString() ??
+        json['withdrawalFee']?.toString() ??
+        json['networkFee']?.toString();
     if (feeRaw != null && feeRaw.isNotEmpty) {
       // Extract numeric part from strings like "1 USD" or "5 USD"
       final match = RegExp(r'^(\d+(?:\.\d+)?)').firstMatch(feeRaw);
@@ -2322,9 +2630,9 @@ class Network {
         fee = double.tryParse(feeRaw);
       }
     }
-    
+
     debugPrint('Parsed network: $name ($type) - active: $isActive, fee: $fee');
-    
+
     return Network(
       id: id,
       name: name,
@@ -2337,7 +2645,12 @@ class Network {
 
 class WalletBalance {
   final String coin, available, locked, total;
-  WalletBalance({required this.coin, required this.available, required this.locked, required this.total});
+  WalletBalance({
+    required this.coin,
+    required this.available,
+    required this.locked,
+    required this.total,
+  });
   factory WalletBalance.fromJson(Map<String, dynamic> json) {
     return WalletBalance(
       coin: json['coin']?.toString() ?? '',
@@ -2346,7 +2659,12 @@ class WalletBalance {
       total: json['total']?.toString() ?? '0.00',
     );
   }
-  Map<String, dynamic> toJson() => {'coin': coin, 'available': available, 'locked': locked, 'total': total};
+  Map<String, dynamic> toJson() => {
+    'coin': coin,
+    'available': available,
+    'locked': locked,
+    'total': total,
+  };
 }
 
 class WalletInfo {
@@ -2355,17 +2673,31 @@ class WalletInfo {
   WalletInfo({required this.type, required this.balances});
   factory WalletInfo.fromJson(Map<String, dynamic> json) {
     List<WalletBalance> balances = [];
-    if (json['balances'] != null) balances = (json['balances'] as List).map((b) => WalletBalance.fromJson(b)).toList();
+    if (json['balances'] != null)
+      balances = (json['balances'] as List)
+          .map((b) => WalletBalance.fromJson(b))
+          .toList();
     return WalletInfo(type: json['type']?.toString() ?? '', balances: balances);
   }
   WalletBalance? getBalance(String coin) {
     try {
-      return balances.firstWhere((b) => b.coin.toUpperCase() == coin.toUpperCase());
-    } catch (e) { return null; }
+      return balances.firstWhere(
+        (b) => b.coin.toUpperCase() == coin.toUpperCase(),
+      );
+    } catch (e) {
+      return null;
+    }
   }
 }
 
 class WalletUtils {
-  static const List<String> walletTypes = ['spot', 'p2p', 'bot', 'demo_bot', 'main'];
-  static String formatAmount(double amount, {int decimals = 8}) => amount.toStringAsFixed(decimals).replaceAll(RegExp(r'\.?0+$'), '');
+  static const List<String> walletTypes = [
+    'spot',
+    'p2p',
+    'bot',
+    'demo_bot',
+    'main',
+  ];
+  static String formatAmount(double amount, {int decimals = 8}) =>
+      amount.toStringAsFixed(decimals).replaceAll(RegExp(r'\.?0+$'), '');
 }

@@ -4,6 +4,7 @@ import 'dart:async';
 import '../services/wallet_service.dart';
 import '../services/unified_wallet_service.dart' as unified;
 import '../services/socket_service.dart';
+import '../services/auto_refresh_service.dart';
 
 class ConversionScreen extends StatefulWidget {
   const ConversionScreen({super.key});
@@ -217,12 +218,80 @@ class _ConversionScreenState extends State<ConversionScreen> {
           ),
         );
         
-        await unified.UnifiedWalletService.refreshAllBalances();
-        if (mounted) {
-          setState(() {
-            _inrBalance = unified.UnifiedWalletService.mainINRBalance;
-            _usdtBalance = unified.UnifiedWalletService.mainUSDTBalance;
-          });
+        // IMMEDIATE BALANCE REFRESH AFTER CONVERSION
+        debugPrint('ConversionScreen: Triggering immediate balance refresh after conversion...');
+        final previousInrBalance = _inrBalance;
+        final previousUsdtBalance = _usdtBalance;
+        final conversionAmount = amount;
+        final conversionWasInrToUsdt = isInrToUsdt;
+        
+        // Wait a moment for backend to process the conversion
+        await Future.delayed(const Duration(milliseconds: 500));
+        
+        // Multiple attempts to refresh balances
+        for (int attempt = 1; attempt <= 3; attempt++) {
+          debugPrint('ConversionScreen: Balance refresh attempt $attempt...');
+          
+          await Future.wait([
+            unified.UnifiedWalletService.refreshAllBalances(),
+            AutoRefreshService.forceRefreshAll(),
+          ]);
+          
+          // Wait for socket updates to potentially arrive
+          await Future.delayed(const Duration(milliseconds: 1000));
+          
+          // Check if balances actually updated
+          final newInrBalance = unified.UnifiedWalletService.totalINRBalance;
+          final newUsdtBalance = unified.UnifiedWalletService.mainUSDTBalance;
+          
+          debugPrint('ConversionScreen: After refresh attempt $attempt - INR: $newInrBalance, USDT: $newUsdtBalance');
+          
+          // Update local state
+          if (mounted) {
+            setState(() {
+              _inrBalance = newInrBalance;
+              _usdtBalance = newUsdtBalance;
+            });
+          }
+          
+          // If balances changed significantly, we're done
+          if ((newInrBalance - previousInrBalance).abs() > 0.01 ||
+              (newUsdtBalance - previousUsdtBalance).abs() > 0.01) {
+            debugPrint('ConversionScreen: Balances updated successfully on attempt $attempt');
+            break;
+          }
+          
+          // If this is the last attempt, we still update with latest balances
+          if (attempt == 3) {
+            debugPrint('ConversionScreen: Final update with latest balances');
+            
+            // Manual balance calculation as fallback
+            if (conversionAmount > 0) {
+              if (conversionWasInrToUsdt) {
+                // INR to USDT conversion
+                final calculatedUsdtIncrease = conversionAmount / _inrToUsdtRate;
+                final calculatedInrDecrease = conversionAmount;
+                
+                setState(() {
+                  _inrBalance = (_inrBalance - calculatedInrDecrease).clamp(0.0, double.infinity);
+                  _usdtBalance = _usdtBalance + calculatedUsdtIncrease;
+                });
+                
+                debugPrint('ConversionScreen: Manual calculation - INR decreased by $calculatedInrDecrease, USDT increased by $calculatedUsdtIncrease');
+              } else {
+                // USDT to INR conversion
+                final calculatedInrIncrease = conversionAmount * _usdtToInrRate;
+                final calculatedUsdtDecrease = conversionAmount;
+                
+                setState(() {
+                  _inrBalance = _inrBalance + calculatedInrIncrease;
+                  _usdtBalance = (_usdtBalance - calculatedUsdtDecrease).clamp(0.0, double.infinity);
+                });
+                
+                debugPrint('ConversionScreen: Manual calculation - USDT decreased by $calculatedUsdtDecrease, INR increased by $calculatedInrIncrease');
+              }
+            }
+          }
         }
         _fromController.clear();
         _toController.text = '0';

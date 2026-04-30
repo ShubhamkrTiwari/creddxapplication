@@ -32,6 +32,8 @@ dependencies:
   url_launcher: ^6.2.5
   android_intent_plus: ^5.3.1
   package_info_plus: ^8.3.1
+  app_links: ^6.3.2
+  upgrader: ^13.1.0
   
   # Play Store optimization dependencies
   # Remove device_preview for production builds

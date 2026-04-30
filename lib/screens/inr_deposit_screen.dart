@@ -32,6 +32,62 @@ class _InrDepositScreenState extends State<InrDepositScreen> {
     _amountController.addListener(() {
       setState(() {});
     });
+    // Check profile completeness when screen loads
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkProfileAndShowDialog();
+    });
+  }
+
+  // Check if profile is complete
+  bool _isProfileComplete() {
+    return _userService.hasEmail() &&
+           _userService.userPhone != null &&
+           _userService.userPhone!.isNotEmpty;
+  }
+
+  // Check profile and show dialog if incomplete
+  void _checkProfileAndShowDialog() {
+    if (!_isProfileComplete()) {
+      _showProfileRequiredDialog();
+    }
+  }
+
+  // Show profile completion required dialog
+  void _showProfileRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text(
+            'Profile Incomplete',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'Please complete your profile (email and phone number) before depositing INR.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).pop(); // Go back to previous screen
+              },
+              child: const Text('Go Back', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const UserProfileScreen()));
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
+              child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _loadDepositHistory() async {
@@ -53,6 +109,12 @@ class _InrDepositScreenState extends State<InrDepositScreen> {
           // API returns { message: "...", result: [...] }
           final transactions = data['result'] ?? data['transactions'];
           if (transactions is List) {
+            // Sort by createdAt in descending order (newest first)
+            transactions.sort((a, b) {
+              final dateA = a['createdAt']?.toString() ?? '';
+              final dateB = b['createdAt']?.toString() ?? '';
+              return dateB.compareTo(dateA);
+            });
             setState(() {
               _depositHistory = transactions;
             });
@@ -64,6 +126,12 @@ class _InrDepositScreenState extends State<InrDepositScreen> {
             debugPrint('INR Deposit Screen: No transactions found in data');
           }
         } else if (data is List) {
+          // Sort by createdAt in descending order (newest first)
+          data.sort((a, b) {
+            final dateA = a['createdAt']?.toString() ?? '';
+            final dateB = b['createdAt']?.toString() ?? '';
+            return dateB.compareTo(dateA);
+          });
           setState(() {
             _depositHistory = data;
           });
@@ -115,61 +183,6 @@ class _InrDepositScreenState extends State<InrDepositScreen> {
   }
 
   bool _isLoading = false;
-
-  // Check if profile is complete
-  bool _isProfileComplete() {
-    return _userService.hasEmail() && 
-           _userService.userPhone != null && 
-           _userService.userPhone!.isNotEmpty;
-  }
-
-  // Validate profile before proceeding
-  bool _validateUserRequirements() {
-    if (!_isProfileComplete()) {
-      _showProfileRequiredDialog();
-      return false;
-    }
-    return true;
-  }
-
-  // Show profile required dialog
-  void _showProfileRequiredDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1C1C1E),
-        title: const Text(
-          'Profile Incomplete',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-        content: const Text(
-          'Please complete your profile (email and phone number) to access INR deposit features.',
-          style: TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (context) => const UserProfileScreen(),
-                ),
-              );
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF84BD00),
-            ),
-            child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),
-          ),
-        ],
-      ),
-    );
-  }
 
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -589,10 +602,10 @@ class _InrDepositScreenState extends State<InrDepositScreen> {
                       senderAccount.isNotEmpty ? senderAccount : 'Bank Transfer',
                       style: const TextStyle(
                         color: Colors.white70,
-                        fontSize: 14,
+                        fontSize: 10,
                       ),
                       textAlign: TextAlign.right,
-                      maxLines: 2,
+                      maxLines: 3,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ],
@@ -619,10 +632,10 @@ class _InrDepositScreenState extends State<InrDepositScreen> {
               if (reference.toString().isNotEmpty)
                 Flexible(
                   child: Text(
-                    'Ref: ${reference.toString().length > 8 ? reference.toString().substring(0, 8) : reference.toString()}',
+                    'Ref: $reference',
                     style: const TextStyle(
                       color: Colors.white38,
-                      fontSize: 11,
+                      fontSize: 9,
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),

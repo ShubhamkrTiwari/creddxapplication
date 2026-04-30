@@ -8,6 +8,8 @@ import '../services/wallet_service.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
 import '../services/notification_service.dart';
+import '../services/unified_wallet_service.dart' as unified;
+import '../services/auto_refresh_service.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 import '../utils/coin_icon_mapper.dart';
 import 'user_profile_screen.dart';
@@ -413,6 +415,14 @@ class _WithdrawScreenState extends State<WithdrawScreen> with KYCUnlockMixin {
           backgroundColor: Color(0xFF84BD00),
         ),
       );
+      
+      // IMMEDIATE BALANCE REFRESH AFTER WITHDRAWAL
+      debugPrint('WithdrawScreen: Triggering immediate balance refresh after withdrawal...');
+      await Future.wait([
+        unified.UnifiedWalletService.refreshAllBalances(),
+        AutoRefreshService.forceRefreshAll(),
+      ]);
+      
       Navigator.of(context).pop();
     }
   }

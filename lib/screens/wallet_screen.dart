@@ -11,6 +11,7 @@ import '../services/spot_service.dart';
 import '../services/socket_service.dart';
 import '../services/auth_service.dart';
 import '../services/unified_wallet_service.dart' as unified;
+import '../services/auto_refresh_service.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 
 class WalletScreen extends StatefulWidget {
@@ -25,11 +26,12 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
   final NumberFormat _currencyFormat = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
   StreamSubscription? _walletSubscription;
   StreamSubscription? _coinSubscription;
-  StreamSubscription? _socketBalanceSubscription;
   
   bool _isLoading = true;
   String _walletAddress = 'Fetching...';
+  bool _isAutoRefreshing = false;
   
+  Map<String, dynamic>? _allBalanceData;
   unified.WalletBalance? _walletBalance;
   List<unified.CoinBalance> _coinBalances = [];
   double _inrBalance = 0.0; // Track INR for rebuilds
@@ -37,7 +39,6 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
   List<Map<String, dynamic>> _transferHistory = [];
   List<Map<String, dynamic>> _transactionHistory = [];
   List<Map<String, dynamic>> _conversionHistory = [];
-
 
   @override
   void initState() {
@@ -49,6 +50,7 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
     _setupStreams();
     _fetchUserData();
     _fetchHistoryData();
+    _fetchAllBalances();
 
     // Initial fetch if not already initialized
     unified.UnifiedWalletService.initialize();
@@ -67,7 +69,6 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
     WidgetsBinding.instance.removeObserver(this);
     _walletSubscription?.cancel();
     _coinSubscription?.cancel();
-    _socketBalanceSubscription?.cancel();
     _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     super.dispose();
@@ -81,18 +82,32 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
   }
 
   void _setupStreams() {
+    debugPrint('Wallet Screen: Setting up streams...');
+
+    // Force refresh wallet data when screen opens
+    unified.UnifiedWalletService.refreshAllBalances();
+
     _walletSubscription = unified.UnifiedWalletService.walletBalanceStream.listen((balance) {
       if (mounted) {
-        debugPrint('Wallet Screen: Balance update received');
-        debugPrint('Main USDT: ${unified.UnifiedWalletService.mainUSDTBalance}');
-        debugPrint('Main INR: ${unified.UnifiedWalletService.mainINRBalance}');
-        debugPrint('P2P Balance: ${balance?.p2pBalance}');
-        debugPrint('Spot Balance: ${balance?.spotBalance}');
-        debugPrint('Bot Balance: ${balance?.botBalance}');
+        debugPrint('Wallet Screen: Balance update received - balance: $balance');
+        debugPrint('Wallet Screen: Main USDT: ${unified.UnifiedWalletService.mainUSDTBalance}');
+        debugPrint('Wallet Screen: Main INR: ${unified.UnifiedWalletService.mainINRBalance}');
+        debugPrint('Wallet Screen: P2P Balance: ${unified.UnifiedWalletService.p2pUSDTBalance}');
+        debugPrint('Wallet Screen: Spot Balance: ${unified.UnifiedWalletService.spotUSDTBalance}');
+        debugPrint('Wallet Screen: Bot Balance: ${unified.UnifiedWalletService.botUSDTBalance}');
+        debugPrint('Wallet Screen: Total Equity: ${unified.UnifiedWalletService.totalEquityUSDT}');
+        _printAllBalances();
         setState(() {
           _walletBalance = balance;
           _inrBalance = unified.UnifiedWalletService.totalINRBalance;
+          _allBalanceData = {
+            'main': unified.UnifiedWalletService.mainUSDTBalance,
+            'spot': unified.UnifiedWalletService.spotUSDTBalance,
+            'p2p': unified.UnifiedWalletService.p2pUSDTBalance,
+            'bot': unified.UnifiedWalletService.botUSDTBalance,
+          };
           _isLoading = false;
+          debugPrint('Wallet Screen: setState called with _walletBalance=$balance, _inrBalance=${unified.UnifiedWalletService.totalINRBalance}');
         });
       }
     });
@@ -105,13 +120,7 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
       }
     });
 
-    // Direct socket listener for wallet summary updates (including bot balance)
-    _socketBalanceSubscription = SocketService.balanceStream.listen((data) {
-      if (mounted && (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary')) {
-        debugPrint('Wallet Screen: Wallet summary update received');
-        unified.UnifiedWalletService.refreshAllBalances();
-      }
-    });
+    // Socket listener removed - UnifiedWalletService already handles socket updates internally
 
     // Initial state
     _walletBalance = unified.UnifiedWalletService.walletBalance;
@@ -193,15 +202,75 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
     }
   }
 
+  Future<void> _fetchAllBalances() async {
+    try {
+      debugPrint('Wallet Screen: Fetching all balances directly from API...');
+      final result = await WalletService.getAllWalletBalances();
+      
+      if (result['success'] == true && mounted) {
+        setState(() {
+          _allBalanceData = result['data'];
+          _isLoading = false;
+        });
+        
+        // Also update unified service so other screens are in sync
+        if (_allBalanceData != null) {
+          unified.UnifiedWalletService.updateFromLoginData(
+            mainBalance: _allBalanceData!['main'] ?? _allBalanceData!['mainBalance'],
+            p2pBalance: double.tryParse((_allBalanceData!['p2p'] ?? _allBalanceData!['p2pBalance'] ?? 0.0).toString()),
+            botBalance: double.tryParse((_allBalanceData!['bot'] ?? _allBalanceData!['botBalance'] ?? 0.0).toString()),
+            spotBalance: double.tryParse((_allBalanceData!['spot'] ?? _allBalanceData!['spotBalance'] ?? 0.0).toString()),
+            demoBalance: double.tryParse((_allBalanceData!['demo'] ?? _allBalanceData!['demoBalance'] ?? 0.0).toString()),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching all balances: $e');
+    }
+  }
+
   Future<void> _onRefresh() async {
-    await Future.wait([
-      unified.UnifiedWalletService.refreshAllBalances(),
-      _fetchHistoryData(),
-    ]);
+    setState(() {
+      _isAutoRefreshing = true;
+    });
+    
+    try {
+      await Future.wait([
+        _fetchAllBalances(),
+        unified.UnifiedWalletService.refreshAllBalances(),
+        _fetchHistoryData(),
+      ]);
+      
+      // Also trigger auto-refresh service to reset timers
+      await AutoRefreshService.forceRefreshAll();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAutoRefreshing = false;
+        });
+      }
+    }
   }
 
 
 
+
+  void _printAllBalances() {
+    debugPrint('=== ALL WALLET BALANCES ===');
+    debugPrint('Total Equity USDT: ${unified.UnifiedWalletService.totalEquityUSDT}');
+    debugPrint('Total INR Balance: ${unified.UnifiedWalletService.totalINRBalance}');
+    debugPrint('Main USDT: ${unified.UnifiedWalletService.mainUSDTBalance}');
+    debugPrint('Main INR: ${unified.UnifiedWalletService.mainINRBalance}');
+    debugPrint('Spot USDT: ${unified.UnifiedWalletService.spotUSDTBalance}');
+    debugPrint('P2P USDT: ${unified.UnifiedWalletService.p2pUSDTBalance}');
+    debugPrint('Bot USDT: ${unified.UnifiedWalletService.botUSDTBalance}');
+    debugPrint('Bot INR: ${unified.UnifiedWalletService.botINRBalance}');
+    debugPrint('Coin Balances:');
+    for (var coin in _coinBalances) {
+      debugPrint('  ${coin.asset}: Free=${coin.free}, Locked=${coin.locked}, Total=${coin.total}');
+    }
+    debugPrint('=== END BALANCES ===');
+  }
 
   void _copyAddress() {
     Clipboard.setData(ClipboardData(text: _walletAddress));
@@ -222,10 +291,46 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
           style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.white),
-            onPressed: _onRefresh,
+          Stack(
+            children: [
+              IconButton(
+                icon: Icon(
+                  _isAutoRefreshing ? Icons.refresh : Icons.refresh,
+                  color: _isAutoRefreshing ? const Color(0xFF84BD00) : Colors.white,
+                ),
+                onPressed: _onRefresh,
+              ),
+              if (_isAutoRefreshing)
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF84BD00),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+            ],
           ),
+          const SizedBox(width: 8),
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              const Text(
+                'Auto-Refresh',
+                style: TextStyle(color: Color(0xFF84BD00), fontSize: 8, fontWeight: FontWeight.w500),
+              ),
+              Text(
+                'Every 30s',
+                style: const TextStyle(color: Colors.white54, fontSize: 7),
+              ),
+            ],
+          ),
+          const SizedBox(width: 12),
         ],
       ),
       body: _isLoading
@@ -256,7 +361,8 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
   }
 
   Widget _buildBalanceSection() {
-    final totalEquity = _walletBalance?.totalEquityUSDT ?? 0.0;
+    final totalBalance = _walletBalance?.totalBalance ?? 0.0;
+    debugPrint('Wallet Screen: _buildBalanceSection called with totalBalance=$totalBalance, _inrBalance=$_inrBalance');
 
     return Container(
       width: double.infinity,
@@ -301,7 +407,7 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
           ),
           const SizedBox(height: 12),
           Text(
-            _currencyFormat.format(totalEquity),
+            _currencyFormat.format(totalBalance),
             style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: -0.5),
           ),
           const SizedBox(height: 4),
@@ -543,14 +649,18 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
             double available = 0.0;
             double locked = 0.0;
 
-            if (_walletBalance != null) {
+            if (_allBalanceData != null) {
+              final spotVal = _allBalanceData!['spot'] ?? _allBalanceData!['spotBalance'] ?? 0.0;
+              final p2pVal = _allBalanceData!['p2p'] ?? _allBalanceData!['p2pBalance'] ?? 0.0;
+              final botVal = _allBalanceData!['bot'] ?? _allBalanceData!['botBalance'] ?? 0.0;
+              final mainVal = _allBalanceData!['main'] ?? _allBalanceData!['mainBalance'];
+              
               switch (walletCode) {
                 case 'main':
-                  // Show USDT balance for main wallet
-                  total = available = unified.UnifiedWalletService.mainUSDTBalance;
+                  total = available = _extractDouble(mainVal);
                   break;
                 case 'spot':
-                  total = available = _walletBalance!.spotBalance;
+                  total = available = _extractDouble(spotVal);
                   // Look for locked in coin balances
                   final usdtCoin = _coinBalances.where((c) => c.asset == 'USDT').firstOrNull;
                   if (usdtCoin != null) {
@@ -559,10 +669,30 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
                   }
                   break;
                 case 'p2p':
-                  total = available = _walletBalance!.p2pBalance;
+                  total = available = _extractDouble(p2pVal);
                   break;
                 case 'bot':
-                  total = available = _walletBalance!.botBalance;
+                  total = available = _extractDouble(botVal);
+                  break;
+              }
+            } else if (_walletBalance != null) {
+              switch (walletCode) {
+                case 'main':
+                  total = available = unified.UnifiedWalletService.mainUSDTBalance;
+                  break;
+                case 'spot':
+                  total = available = unified.UnifiedWalletService.spotUSDTBalance;
+                  final usdtCoin = _coinBalances.where((c) => c.asset == 'USDT').firstOrNull;
+                  if (usdtCoin != null) {
+                    locked = usdtCoin.locked;
+                    total = usdtCoin.total;
+                  }
+                  break;
+                case 'p2p':
+                  total = available = unified.UnifiedWalletService.p2pUSDTBalance;
+                  break;
+                case 'bot':
+                  total = available = unified.UnifiedWalletService.botUSDTBalance;
                   break;
               }
             }
@@ -1071,6 +1201,17 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
       case 'INR': return 'Indian Rupee';
       default: return coin;
     }
+  }
+
+  double _extractDouble(dynamic value) {
+    if (value == null) return 0.0;
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0.0;
+    if (value is Map) {
+      final usdt = value['USDT'] ?? value['usdt'] ?? value['balance'] ?? value['available'] ?? value['total'] ?? 0.0;
+      return _extractDouble(usdt);
+    }
+    return 0.0;
   }
 
   Widget _transactionHistoryItem(Map<String, dynamic> transaction) {

@@ -87,6 +87,104 @@ class BotService {
     };
   }
 
+  // Weekly benchmark comparison (Bot vs BTC/ETH)
+  // Endpoint: /bot/v1/api/user/weekly-benchmark
+  static Future<Map<String, dynamic>> getWeeklyBenchmark({
+    required String strategy,
+  }) async {
+    try {
+      debugPrint('=== FETCHING WEEKLY BENCHMARK ===');
+
+      if (strategy.trim().isEmpty) {
+        return {'success': false, 'error': 'Missing parameter: strategy'};
+      }
+
+      final uri = Uri.parse('$baseUrl/bot/v1/api/user/weekly-benchmark').replace(
+        queryParameters: <String, String>{
+          'strategy': strategy,
+        },
+      );
+
+      debugPrint('Weekly Benchmark API URL: $uri');
+      final response = await http.get(
+        uri,
+        headers: await _getHeaders(),
+      );
+
+      debugPrint('Weekly Benchmark API Response Status: ${response.statusCode}');
+      debugPrint('Weekly Benchmark API Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final decoded = json.decode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          final success = decoded['success'];
+          final isSuccess = success == true || success == 'true' || success == 1 || success == '1';
+          if (!isSuccess) {
+            return {
+              'success': false,
+              'error': decoded['message']?.toString() ?? 'Failed to fetch weekly benchmark',
+            };
+          }
+
+          final data = decoded['data'];
+          if (data is! Map<String, dynamic>) {
+            return {
+              'success': false,
+              'error': 'Invalid weekly benchmark response format',
+            };
+          }
+
+          double? _parseNum(dynamic v) {
+            if (v == null) return null;
+            if (v is num) return v.toDouble();
+            return double.tryParse(v.toString());
+          }
+
+          final snapshots = (data['snapshots'] is List) ? List<dynamic>.from(data['snapshots']) : <dynamic>[];
+
+          return {
+            'success': true,
+            'data': {
+              'snapshots': snapshots,
+              'botRoi': _parseNum(data['botRoi']),
+              'btcRoi': _parseNum(data['btcRoi']),
+              'vsBtc': _parseNum(data['vsBtc']),
+              'ethRoi': _parseNum(data['ethRoi']),
+              'vsEth': _parseNum(data['vsEth']),
+            },
+          };
+        }
+        return {
+          'success': false,
+          'error': 'Invalid weekly benchmark response format',
+        };
+      }
+
+      // Non-200: try to extract backend error message (common for 400).
+      try {
+        final decoded = json.decode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          final msg = decoded['message']?.toString() ??
+              decoded['error']?.toString() ??
+              decoded['msg']?.toString();
+          if (msg != null && msg.trim().isNotEmpty) {
+            return {'success': false, 'error': msg};
+          }
+        }
+      } catch (_) {
+        // ignore JSON parse errors
+      }
+
+      return {'success': false, 'error': 'Server error: ${response.statusCode}'};
+    } catch (e) {
+      debugPrint('Error fetching weekly benchmark: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
   // Get user's open positions
   static Future<Map<String, dynamic>> getUserBotPositions({
     required String strategy,
@@ -123,9 +221,9 @@ class BotService {
           };
         }
       } else if (response.statusCode == 404 || response.statusCode == 500) {
-        // Endpoint doesn't exist or server error - return mock data
-        debugPrint('Positions endpoint not available, returning mock data');
-        return _getMockPositionsData(strategy, symbol);
+        // Endpoint doesn't exist or server error - try user-trades endpoint
+        debugPrint('Positions endpoint not available, trying user-trades endpoint');
+        return await _getPositionsFromTrades(strategy, symbol);
       } else {
         return {
           'success': false,
@@ -161,9 +259,12 @@ class BotService {
       );
       
       debugPrint('Using user-trades endpoint for positions data');
+      debugPrint('User-trades status: ${response.statusCode}');
+      debugPrint('User-trades body: ${response.body}');
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
+        debugPrint('User-trades parsed data: $data');
         if (data['success'] == true) {
           // Transform trades data to positions format
           final Map<String, dynamic> transformedData = {
@@ -502,6 +603,30 @@ class BotService {
         'success': false,
         'error': 'Network error: $e',
       };
+    }
+  }
+
+  // Get total bot investment for a strategy/symbol
+  static Future<double> getTotalBotInvestment({
+    required String strategy,
+    required String symbol,
+  }) async {
+    try {
+      final result = await getUserBotTrades(
+        strategy: strategy,
+        symbol: symbol,
+      );
+      
+      if (result['success'] == true && result['data'] != null) {
+        final userInvestment = result['data']['userInvestment'];
+        if (userInvestment != null) {
+          return double.tryParse(userInvestment.toString()) ?? 0.0;
+        }
+      }
+      return 0.0;
+    } catch (e) {
+      debugPrint('Error getting total bot investment: $e');
+      return 0.0;
     }
   }
 
@@ -1222,12 +1347,22 @@ class BotService {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['success'] == true) {
-          // API returns data array directly as specified in the requirement
-          final List<dynamic> balanceData = data['data'] ?? [];
+          // Flexible handling of different API response structures
+          final dynamic rawData = data['data'];
+          List<dynamic> history = [];
+          
+          if (rawData is List) {
+            history = rawData;
+          } else if (rawData is Map && rawData['history'] is List) {
+            history = rawData['history'];
+          } else if (data['history'] is List) {
+            history = data['history'];
+          }
+
           return {
             'success': true,
-            'data': balanceData,
-            'history': balanceData, // Keep backward compatibility
+            'data': rawData, // Original data object/list
+            'history': history, // Extracted history list
           };
         } else {
           return {
@@ -1830,14 +1965,23 @@ class Transaction {
       date: DateTime.tryParse(json['date']?.toString() ?? json['createdAt']?.toString() ?? '') ?? DateTime.now(),
       description: json['description']?.toString(),
       reference: json['reference']?.toString(),
-      balance: double.tryParse(json['balance']?.toString() ?? '0'),
+      balance: json['balance'] != null ? double.tryParse(json['balance'].toString()) : null,
       fromAccount: json['fromAccount']?.toString(),
       toAccount: json['toAccount']?.toString(),
     );
   }
 
   String get formattedDate {
-    return '${date.day} ${_getMonthName(date.month)} ${date.year}';
+    final localDate = date.toLocal();
+    return '${localDate.day} ${_getMonthName(localDate.month)} ${localDate.year}';
+  }
+
+  String get formattedTime {
+    final localDate = date.toLocal();
+    final hour = localDate.hour > 12 ? localDate.hour - 12 : (localDate.hour == 0 ? 12 : localDate.hour);
+    final period = localDate.hour >= 12 ? 'PM' : 'AM';
+    final minute = localDate.minute.toString().padLeft(2, '0');
+    return '$hour:$minute $period';
   }
 
   String _getMonthName(int month) {
@@ -1849,13 +1993,17 @@ class Transaction {
   }
 
   String get formattedAmount {
-    if (type.toLowerCase().contains('debit') || type.toLowerCase().contains('withdraw')) {
-      return '-\$${amount.toStringAsFixed(2)}';
+    final lowerType = type.toLowerCase();
+    if (lowerType.contains('debit') || lowerType.contains('withdraw') || lowerType == 'transfer') {
+      return '-${amount.toStringAsFixed(2)} USDT';
     }
-    return '+\$${amount.toStringAsFixed(2)}';
+    return '+${amount.toStringAsFixed(2)} USDT';
   }
 
-  bool get isCredit => !(type.toLowerCase().contains('debit') || type.toLowerCase().contains('withdraw'));
+  bool get isCredit {
+    final lowerType = type.toLowerCase();
+    return !(lowerType.contains('debit') || lowerType.contains('withdraw') || lowerType == 'transfer');
+  }
 }
 
 class BotTrade {

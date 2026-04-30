@@ -6,7 +6,6 @@ import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../services/bot_service.dart';
-import 'bot_main_screen.dart';
 
 class BotHistoryScreen extends StatefulWidget {
   final bool showHeader;
@@ -46,6 +45,14 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
   double _btcRoi = 3.70;
   double _ethRoi = 0.61;
   bool _showComparison = false;
+  bool _isLoadingWeeklyBenchmark = false;
+  String? _weeklyBenchmarkError;
+  double? _weeklyBotRoi;
+  double? _weeklyBtcRoi;
+  double? _weeklyEthRoi;
+  double? _weeklyVsBtc;
+  double? _weeklyVsEth;
+  List<Map<String, dynamic>> _weeklySnapshots = const [];
 
   @override
   void initState() {
@@ -55,6 +62,67 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
     _loadTransactions();
     _loadAvailablePairs();
     _loadIncomeData();
+  }
+
+  Future<void> _loadWeeklyBenchmark({bool force = false}) async {
+    if (_isLoadingWeeklyBenchmark) return;
+    if (!force && (_weeklyBotRoi != null || _weeklyBenchmarkError != null)) return;
+
+    setState(() {
+      _isLoadingWeeklyBenchmark = true;
+      _weeklyBenchmarkError = null;
+    });
+
+    try {
+      final res = await BotService.getWeeklyBenchmark(
+        strategy: 'Omega-3X',
+      );
+      if (!mounted) return;
+
+      if (res['success'] == true && res['data'] is Map<String, dynamic>) {
+        final data = res['data'] as Map<String, dynamic>;
+        final rawSnapshots = data['snapshots'];
+        final snapshots = (rawSnapshots is List)
+            ? rawSnapshots
+                .whereType<dynamic>()
+                .map((e) => e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{})
+                .where((e) => e.isNotEmpty)
+                .toList()
+            : <Map<String, dynamic>>[];
+        setState(() {
+          _weeklySnapshots = snapshots;
+          _weeklyBotRoi = (data['botRoi'] as num?)?.toDouble();
+          _weeklyBtcRoi = (data['btcRoi'] as num?)?.toDouble();
+          _weeklyEthRoi = (data['ethRoi'] as num?)?.toDouble();
+          _weeklyVsBtc = (data['vsBtc'] as num?)?.toDouble();
+          _weeklyVsEth = (data['vsEth'] as num?)?.toDouble();
+          _isLoadingWeeklyBenchmark = false;
+        });
+        return;
+      }
+
+      setState(() {
+        _weeklyBenchmarkError = res['error']?.toString() ?? 'Failed to load weekly benchmark';
+        _isLoadingWeeklyBenchmark = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _weeklyBenchmarkError = e.toString();
+        _isLoadingWeeklyBenchmark = false;
+      });
+    }
+  }
+
+  String _fmtPct(double? v) {
+    if (v == null) return '--';
+    return '${v.toStringAsFixed(2)}%';
+  }
+
+  String _fmtBalance(dynamic v) {
+    final n = (v is num) ? v.toDouble() : double.tryParse(v?.toString() ?? '');
+    if (n == null) return '--';
+    return n.toStringAsFixed(2);
   }
 
   void _initializeTabController() {
@@ -323,6 +391,7 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
           for (var transactionData in transactionsList) {
             try {
               final transaction = Transaction.fromJson(transactionData);
+              debugPrint('Transaction parsed: type=${transaction.type}, status="${transaction.status}", amount=${transaction.amount}');
               parsedTransactions.add(transaction);
             } catch (e) {
               debugPrint('Error parsing transaction: $e');
@@ -1353,6 +1422,9 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
   }
 
   Widget _buildTransactionCard(Transaction transaction) {
+    // Always show COMPLETED status for all transactions
+    const String displayStatus = 'COMPLETED';
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(18),
@@ -1386,15 +1458,37 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        transaction.type,
+                        _getTransactionTypeLabel(transaction.type),
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00C851).withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: const Color(0xFF00C851).withOpacity(0.3),
+                            width: 0.5,
+                          ),
+                        ),
+                        child: const Text(
+                          'COMPLETED',
+                          style: TextStyle(
+                            color: Color(0xFF00C851),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
                       Text(
-                        transaction.formattedDate,
+                        '${transaction.formattedDate} • ${transaction.formattedTime}',
                         style: TextStyle(
                           color: Colors.white.withOpacity(0.35),
                           fontSize: 12,
@@ -1407,28 +1501,81 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
               Text(
                 transaction.formattedAmount,
                 style: TextStyle(
-                  color: transaction.isCredit ? const Color(0xFF00C851) : const Color(0xFFFF3B30),
+                  color: _getTransactionTypeLabel(transaction.type) == 'Withdraw' 
+                      ? const Color(0xFFFF3B30) 
+                      : const Color(0xFF00C851),
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
                 ),
               ),
             ],
           ),
-          if (transaction.description != null) ...[
-            const SizedBox(height: 12),
-            _buildHistoryMetric('Description:', transaction.description!),
-          ],
-          if (transaction.balance != null) ...[
-            const SizedBox(height: 8),
-            _buildHistoryMetric('Balance:', '\$${transaction.balance!.toStringAsFixed(2)}'),
-          ],
-          if (transaction.reference != null) ...[
-            const SizedBox(height: 8),
-            _buildHistoryMetric('Reference:', transaction.reference!),
-          ],
         ],
       ),
     );
+  }
+
+  String _getTransactionTypeLabel(String type) {
+    final lowerType = type.toLowerCase();
+    switch (lowerType) {
+      case '6':
+      case 'invest':
+      case 'deposit':
+      case 'investment':
+        return 'Invest';
+      case '5':
+      case '7':
+      case 'withdraw':
+      case 'withdrawal':
+      case 'debit':
+      case 'transfer':
+        return 'Withdraw';
+      default:
+        // Capitalize the first letter if it's text, or return as is
+        if (type.isEmpty) return 'Unknown';
+        if (RegExp(r'^[0-9]+$').hasMatch(type)) return 'Transaction'; // Fallback for unknown codes
+        return type[0].toUpperCase() + type.substring(1);
+    }
+  }
+
+  String _getStatusMessage(String status) {
+    final lowerStatus = status.toLowerCase().trim();
+    switch (lowerStatus) {
+      case '6':
+      case 'completed':
+      case 'success':
+      case '1':
+        return 'Completed';
+      case '5':
+      case 'pending':
+      case 'processing':
+      case '0':
+        return 'Pending';
+      case '7':
+      case 'failed':
+      case 'error':
+      case 'rejected':
+      case '2':
+        return 'Failed';
+      default:
+        return status.isEmpty ? 'Pending' : status;
+    }
+  }
+
+  Color _getStatusColor(String status) {
+    if (status.isEmpty) {
+      return const Color(0xFFFF9500);
+    }
+    final lowerStatus = status.toLowerCase().trim();
+    if (lowerStatus == '6' || lowerStatus == 'completed' || lowerStatus == 'success' || lowerStatus == '1') {
+      return const Color(0xFF00C851);
+    } else if (lowerStatus == '5' || lowerStatus == 'pending' || lowerStatus == 'processing' || lowerStatus == '0') {
+      return const Color(0xFFFF9500);
+    } else if (lowerStatus == '7' || lowerStatus == 'failed' || lowerStatus == 'error' || lowerStatus == 'rejected' || lowerStatus == '2') {
+      return const Color(0xFFFF3B30);
+    } else {
+      return const Color(0xFFFF9500);
+    }
   }
 
   Widget _buildEmptyTransactionsWidget() {
@@ -1751,6 +1898,9 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
             setState(() {
               _showComparison = !_showComparison;
             });
+            if (_showComparison) {
+              _loadWeeklyBenchmark();
+            }
           },
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1902,39 +2052,112 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
   }
 
   Widget _buildComparisonSummary() {
-    // Calculate Bot ROI from trades if possible, or use a realistic value
-    double totalUserPnl = 0;
-    for (var trade in _trades) {
-      totalUserPnl += trade.userPnl;
+    // Prefer weekly benchmark API values; fallback to local computed ROI.
+    double? botRoi = _weeklyBotRoi;
+    if (botRoi == null) {
+      double totalUserPnl = 0;
+      for (var trade in _trades) {
+        totalUserPnl += trade.userPnl;
+      }
+
+      if (_userInvestment > 0) {
+        botRoi = (totalUserPnl / _userInvestment) * 100;
+      } else {
+        botRoi = 0.60;
+      }
     }
-    
-    // Fallback ROI if no trades or investment is zero
-    double botRoi = 0.60;
-    if (_userInvestment > 0) {
-      botRoi = (totalUserPnl / _userInvestment) * 100;
-    } else if (_trades.isNotEmpty) {
-      // If we have trades but investment is not explicitly set in the response,
-      // maybe we can estimate or use a default. For now, use 0.60 as per dashboard.
-      botRoi = 0.60;
-    }
-    
-    final botVsBtc = botRoi - _btcRoi;
-    final botVsEth = botRoi - _ethRoi;
+
+    final btcRoi = _weeklyBtcRoi ?? _btcRoi;
+    final ethRoi = _weeklyEthRoi ?? _ethRoi;
+    final botVsBtc = _weeklyVsBtc ?? (botRoi - btcRoi);
+    final botVsEth = _weeklyVsEth ?? (botRoi - ethRoi);
     
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildComparisonRow('Omega-3X Bot ROI', '${botRoi.toStringAsFixed(2)}%', const Color(0xFF84BD00)),
+        if (_isLoadingWeeklyBenchmark)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Row(
+              children: [
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF84BD00)),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  'Loading benchmark...',
+                  style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12),
+                ),
+              ],
+            ),
+          )
+        else if (_weeklyBenchmarkError != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              _weeklyBenchmarkError!,
+              style: TextStyle(
+                color: (_weeklyBenchmarkError!.toLowerCase().contains('not enough data'))
+                    ? Colors.white.withOpacity(0.5)
+                    : const Color(0xFFFF9500),
+                fontSize: 12,
+              ),
+            ),
+          ),
+        if (_weeklyBenchmarkError != null &&
+            _weeklyBenchmarkError!.toLowerCase().contains('not enough data'))
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              'Benchmark will appear once you have more weekly activity.',
+              style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12),
+            ),
+          ),
+
+        _buildComparisonRow('Omega-3X Bot ROI', _fmtPct(botRoi), const Color(0xFF84BD00)),
         const SizedBox(height: 8),
-        _buildComparisonRow('BTC ROI', '${_btcRoi.toStringAsFixed(2)}%', const Color(0xFF84BD00)),
+        _buildComparisonRow('BTC ROI', _fmtPct(btcRoi), const Color(0xFF84BD00)),
         const SizedBox(height: 8),
-        _buildComparisonRow('ETH ROI', '${_ethRoi.toStringAsFixed(2)}%', const Color(0xFF84BD00)),
+        _buildComparisonRow('ETH ROI', _fmtPct(ethRoi), const Color(0xFF84BD00)),
         const SizedBox(height: 12),
         Container(
           height: 1,
           color: Colors.white.withOpacity(0.05),
         ),
         const SizedBox(height: 12),
+        if (_weeklySnapshots.isNotEmpty) ...[
+          Text(
+            'Weekly balance snapshots',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.5),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ..._weeklySnapshots.take(7).map((s) {
+            final date = s['date']?.toString() ?? '--';
+            final balance = _fmtBalance(s['balance']);
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(date, style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12)),
+                  Text(balance, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            );
+          }),
+          const SizedBox(height: 12),
+          Container(
+            height: 1,
+            color: Colors.white.withOpacity(0.05),
+          ),
+          const SizedBox(height: 12),
+        ],
         Row(
           children: [
             Icon(
@@ -1948,6 +2171,28 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
                 botVsBtc >= 0 
                   ? 'Bot outperformed BTC by ${botVsBtc.toStringAsFixed(2)}%'
                   : 'Bot trailing BTC by ${botVsBtc.abs().toStringAsFixed(2)}%',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.7),
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Icon(
+              botVsBtc >= 0 && botVsEth >= 0 ? Icons.check_circle : Icons.info,
+              color: botVsBtc >= 0 && botVsEth >= 0 ? const Color(0xFF84BD00) : const Color(0xFFFF9500),
+              size: 14,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                botVsEth >= 0
+                    ? 'Bot outperformed ETH by ${botVsEth.toStringAsFixed(2)}%'
+                    : 'Bot trailing ETH by ${botVsEth.abs().toStringAsFixed(2)}%',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.7),
                   fontSize: 11,

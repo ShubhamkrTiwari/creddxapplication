@@ -22,11 +22,14 @@ class WithdrawCryptoScreen extends StatefulWidget {
   State<WithdrawCryptoScreen> createState() => _WithdrawCryptoScreenState();
 }
 
-class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnlockMixin {
+class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen>
+    with KYCUnlockMixin {
   final _addressController = TextEditingController();
   final _amountController = TextEditingController();
   String _selectedCoin = 'USDT';
+  String? _selectedCoinId;
   String _selectedNetwork = 'TRC20';
+  String? _selectedNetworkId;
   List<Coin> _coins = [];
   List<Network> _networks = [];
   bool _isLoading = true;
@@ -45,9 +48,9 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
   bool _isLoadingHistory = false;
   List<dynamic> _withdrawalHistory = [];
   String? _historyError;
-  
+
   final UserService _userService = UserService();
-  
+
   @override
   void initState() {
     super.initState();
@@ -62,9 +65,9 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
 
   // Check if profile is complete
   bool _isProfileComplete() {
-    return _userService.hasEmail() && 
-           _userService.userPhone != null && 
-           _userService.userPhone!.isNotEmpty;
+    return _userService.hasEmail() &&
+        _userService.userPhone != null &&
+        _userService.userPhone!.isNotEmpty;
   }
 
   // Show KYC verification required dialog
@@ -91,10 +94,21 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
             ElevatedButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) =>
+                        const KYCDigiLockerInstructionScreen(),
+                  ),
+                );
               },
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
-              child: const Text('Complete KYC', style: TextStyle(color: Colors.black)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF84BD00),
+              ),
+              child: const Text(
+                'Complete KYC',
+                style: TextStyle(color: Colors.black),
+              ),
             ),
           ],
         );
@@ -126,10 +140,20 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
             ElevatedButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const UserProfileScreen()));
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const UserProfileScreen(),
+                  ),
+                );
               },
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
-              child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF84BD00),
+              ),
+              child: const Text(
+                'Complete Profile',
+                style: TextStyle(color: Colors.black),
+              ),
             ),
           ],
         );
@@ -143,24 +167,30 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
       _showKYCRequiredDialog();
       return false;
     }
-    
+
     if (!_isProfileComplete()) {
       _showProfileRequiredDialog();
       return false;
     }
-    
+
     return true;
   }
-  
+
   void _subscribeToBalanceUpdates() {
     _balanceSubscription = SocketService.balanceStream.listen((data) {
       if (mounted && data['type'] == 'balance_update') {
         final payload = data['data'] ?? data;
-        
-        if (payload['wallet_type'] == 'spot' || payload['usdt_available'] != null) {
-          final usdtAvailable = double.tryParse(payload['usdt_available']?.toString() ?? 
-                               payload['available']?.toString() ?? '0') ?? _availableBalance;
-          
+
+        if (payload['wallet_type'] == 'spot' ||
+            payload['usdt_available'] != null) {
+          final usdtAvailable =
+              double.tryParse(
+                payload['usdt_available']?.toString() ??
+                    payload['available']?.toString() ??
+                    '0',
+              ) ??
+              _availableBalance;
+
           setState(() {
             _availableBalance = usdtAvailable;
           });
@@ -168,16 +198,16 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
       }
     });
   }
-  
+
   Future<void> _fetchData() async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
-    
+
     try {
       final coinsData = await WalletService.getAllCoins();
-      
+
       if (mounted) {
         setState(() {
           _coins = coinsData
@@ -187,11 +217,12 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
 
           if (_coins.isNotEmpty) {
             _selectedCoin = _coins.first.symbol;
+            _selectedCoinId = _coins.first.id;
           }
-          
+
           _isLoading = false;
         });
-        
+
         if (_coins.isNotEmpty) {
           await _updateNetworksForCoin(_coins.first);
         }
@@ -206,45 +237,52 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
       }
     }
   }
-  
+
   Future<void> _updateNetworksForCoin(Coin coin) async {
     setState(() {
       _isLoadingNetworks = true;
     });
 
-    // Use hardcoded network list: Ethereum, Binance Smart Chain, Polygon
-    await Future.delayed(const Duration(milliseconds: 300)); // Simulate loading
-    
     if (mounted) {
       setState(() {
-        _networks = [
-          Network(name: 'Ethereum', type: 'ERC20', isActive: true, fee: 0.0),
-          Network(name: 'Binance Smart Chain', type: 'BEP20', isActive: true, fee: 0.0),
-          Network(name: 'Polygon', type: 'POLYGON', isActive: true, fee: 0.0),
-        ];
-        _selectedNetwork = _networks.first.name;
+        final activeNetworks = coin.networks
+            .where((n) => n.isActive)
+            .toList(growable: false);
+        _networks = activeNetworks.isNotEmpty ? activeNetworks : coin.networks;
+
+        if (_networks.isNotEmpty) {
+          _selectedNetwork = _networks.first.name;
+          _selectedNetworkId = _networks.first.id;
+        } else {
+          _selectedNetworkId = null;
+        }
         _isLoadingNetworks = false;
       });
     }
   }
-  
+
   void _onCoinChanged(String coinSymbol) async {
     setState(() {
       _selectedCoin = coinSymbol;
     });
     final selectedCoin = _coins.firstWhere((coin) => coin.symbol == coinSymbol);
+    setState(() => _selectedCoinId = selectedCoin.id);
     await _updateNetworksForCoin(selectedCoin);
     _fetchAvailableBalance();
   }
-  
+
   void _onNetworkChanged(String networkName) {
     setState(() {
       _selectedNetwork = networkName;
+      final match = _networks.where((n) => n.name == networkName).toList();
+      _selectedNetworkId = match.isNotEmpty
+          ? match.first.id
+          : _selectedNetworkId;
     });
     _fetchAvailableBalance();
     _fetchWithdrawalFees();
   }
-  
+
   Future<void> _fetchAvailableBalance() async {
     setState(() {
       _isFetchingBalance = true;
@@ -265,7 +303,8 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
               final mainBalance = data['mainBalance'] as Map;
               final usdtBalance = mainBalance['USDT'];
               if (usdtBalance != null) {
-                availableBalance = double.tryParse(usdtBalance.toString()) ?? 0.0;
+                availableBalance =
+                    double.tryParse(usdtBalance.toString()) ?? 0.0;
               }
             }
 
@@ -278,12 +317,20 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
                   if (balances is List) {
                     for (var b in balances) {
                       if (b['coin']?.toString().toUpperCase() == 'USDT') {
-                        availableBalance += double.tryParse(b['available']?.toString() ?? '0') ?? 0.0;
+                        availableBalance +=
+                            double.tryParse(
+                              b['available']?.toString() ?? '0',
+                            ) ??
+                            0.0;
                       }
                     }
                   } else if (balances is Map && balances['USDT'] is Map) {
                     final usdtData = balances['USDT'];
-                    availableBalance += double.tryParse(usdtData['available']?.toString() ?? '0') ?? 0.0;
+                    availableBalance +=
+                        double.tryParse(
+                          usdtData['available']?.toString() ?? '0',
+                        ) ??
+                        0.0;
                   }
                 }
               }
@@ -291,14 +338,16 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
 
             // Check direct available fields
             if (availableBalance == 0.0) {
-              availableBalance = double.tryParse(
-                data['available_balance']?.toString() ??
-                data['availableBalance']?.toString() ??
-                data['available']?.toString() ??
-                data['balance']?.toString() ??
-                data['usdt_available']?.toString() ??
-                '0.0'
-              ) ?? 0.0;
+              availableBalance =
+                  double.tryParse(
+                    data['available_balance']?.toString() ??
+                        data['availableBalance']?.toString() ??
+                        data['available']?.toString() ??
+                        data['balance']?.toString() ??
+                        data['usdt_available']?.toString() ??
+                        '0.0',
+                  ) ??
+                  0.0;
             }
           }
 
@@ -310,25 +359,26 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
       });
     }
   }
-  
+
   Future<void> _fetchWithdrawalFees() async {
     if (_amountController.text.isEmpty) return;
-    
+
     setState(() {
       _isFetchingFees = true;
     });
-    
+
     final amount = double.tryParse(_amountController.text) ?? 0.0;
     final result = await WalletService.getWithdrawalFees(
       coin: _selectedCoin,
       network: _selectedNetwork,
       amount: amount,
     );
-    
+
     if (mounted) {
       setState(() {
         if (result != null && result['success'] == true) {
-          _withdrawalFees = double.tryParse(result['fee']?.toString() ?? '0.0') ?? 0.0;
+          _withdrawalFees =
+              double.tryParse(result['fee']?.toString() ?? '0.0') ?? 0.0;
         } else {
           _withdrawalFees = 0.0;
         }
@@ -342,8 +392,9 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
       _showErrorSnackBar('Please enter a valid address');
       return;
     }
-    
-    if (_amountController.text.isEmpty || double.tryParse(_amountController.text) == null) {
+
+    if (_amountController.text.isEmpty ||
+        double.tryParse(_amountController.text) == null) {
       _showErrorSnackBar('Please enter a valid amount');
       return;
     }
@@ -384,7 +435,9 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
       Navigator.pop(context);
 
       if (result == null) {
-        _showErrorSnackBar('Failed to process withdrawal: No response from server');
+        _showErrorSnackBar(
+          'Failed to process withdrawal: No response from server',
+        );
         return;
       }
 
@@ -394,7 +447,7 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
           title: 'Withdrawal Initiated',
           message: 'Your withdrawal request has been submitted successfully',
         );
-        
+
         _addressController.clear();
         _amountController.clear();
         _fetchAvailableBalance();
@@ -419,58 +472,76 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
     final total = amount + _withdrawalFees;
 
     return await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF1E1E20),
-          title: const Text(
-            'Confirm Withdrawal',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildConfirmationRow('Coin', _selectedCoin),
-              _buildConfirmationRow('Network', _selectedNetwork),
-              _buildConfirmationRow('Amount', '$amount $_selectedCoin'),
-              _buildConfirmationRow('Fee', '$_withdrawalFees $_selectedCoin'),
-              const Divider(color: Colors.white24, height: 20),
-              _buildConfirmationRow('Total', '$total $_selectedCoin', isBold: true),
-              const SizedBox(height: 16),
-              const Text(
-                'Address:',
-                style: TextStyle(color: Colors.white54, fontSize: 12),
+          context: context,
+          barrierDismissible: false,
+          builder: (BuildContext context) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E20),
+              title: const Text(
+                'Confirm Withdrawal',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                _addressController.text,
-                style: const TextStyle(color: Colors.white, fontSize: 13),
-                overflow: TextOverflow.ellipsis,
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildConfirmationRow('Coin', _selectedCoin),
+                  _buildConfirmationRow('Network', _selectedNetwork),
+                  _buildConfirmationRow('Amount', '$amount $_selectedCoin'),
+                  _buildConfirmationRow(
+                    'Fee',
+                    '$_withdrawalFees $_selectedCoin',
+                  ),
+                  const Divider(color: Colors.white24, height: 20),
+                  _buildConfirmationRow(
+                    'Total',
+                    '$total $_selectedCoin',
+                    isBold: true,
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Address:',
+                    style: TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _addressController.text,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
               ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF84BD00),
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Confirm'),
-            ),
-          ],
-        );
-      },
-    ) ?? false;
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF84BD00),
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Confirm'),
+                ),
+              ],
+            );
+          },
+        ) ??
+        false;
   }
 
-  Widget _buildConfirmationRow(String label, String value, {bool isBold = false}) {
+  Widget _buildConfirmationRow(
+    String label,
+    String value, {
+    bool isBold = false,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
@@ -478,10 +549,7 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
         children: [
           Text(
             label,
-            style: TextStyle(
-              color: Colors.white54,
-              fontSize: isBold ? 14 : 13,
-            ),
+            style: TextStyle(color: Colors.white54, fontSize: isBold ? 14 : 13),
           ),
           Text(
             value,
@@ -539,7 +607,10 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('OK', style: TextStyle(color: Color(0xFF84BD00))),
+              child: const Text(
+                'OK',
+                style: TextStyle(color: Color(0xFF84BD00)),
+              ),
             ),
           ],
         );
@@ -560,6 +631,8 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
               address: _addressController.text,
               amount: amount,
               otp: otp,
+              coinId: _selectedCoinId,
+              networkId: _selectedNetworkId,
             );
 
             bool success = res != null && res['success'] == true;
@@ -570,7 +643,9 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
 
             return {
               'success': success,
-              'message': res != null ? (res['error'] ?? res['message']) : 'Withdrawal failed'
+              'message': res != null
+                  ? (res['error'] ?? res['message'])
+                  : 'Withdrawal failed',
             };
           },
           onResend: () => WalletService.sendOtp(purpose: 'crypto_withdraw'),
@@ -605,7 +680,7 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
       context,
       MaterialPageRoute(builder: (context) => const QRScannerScreen()),
     );
-    
+
     if (result != null && result is String) {
       setState(() {
         _addressController.text = result;
@@ -636,7 +711,11 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
         ),
         title: const Text(
           'Withdraw Crypto',
-          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
         ),
         actions: [
           TextButton.icon(
@@ -708,7 +787,11 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
                 padding: const EdgeInsets.only(top: 8),
                 child: Row(
                   children: [
-                    const Icon(Icons.error_outline, color: Colors.red, size: 16),
+                    const Icon(
+                      Icons.error_outline,
+                      color: Colors.red,
+                      size: 16,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -722,7 +805,7 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
             const SizedBox(height: 20),
             _buildAddressInput(),
             const SizedBox(height: 20),
-            
+
             // KYC Requirement Warning
             if (!_isKYCCompleted())
               Container(
@@ -730,7 +813,10 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    colors: [Colors.orange.withOpacity(0.15), Colors.red.withOpacity(0.1)],
+                    colors: [
+                      Colors.orange.withOpacity(0.15),
+                      Colors.red.withOpacity(0.1),
+                    ],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
@@ -788,7 +874,13 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
                       height: 48,
                       child: ElevatedButton(
                         onPressed: () {
-                          Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  const KYCDigiLockerInstructionScreen(),
+                            ),
+                          );
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.orange,
@@ -810,7 +902,7 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
                 ),
               ),
             const SizedBox(height: 20),
-            
+
             _buildAmountInput(),
             const SizedBox(height: 20),
             _buildBalanceAndFeeInfo(),
@@ -825,9 +917,7 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
   Widget _buildHistoryView() {
     if (_isLoadingHistory) {
       return const Center(
-        child: CircularProgressIndicator(
-          color: Color(0xFF84BD00),
-        ),
+        child: CircularProgressIndicator(color: Color(0xFF84BD00)),
       );
     }
 
@@ -866,7 +956,11 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
             const SizedBox(height: 16),
             const Text(
               'No Withdrawal History',
-              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w500),
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w500,
+              ),
             ),
             const SizedBox(height: 8),
             const Text(
@@ -879,7 +973,10 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF84BD00),
                 foregroundColor: Colors.black,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
               ),
               child: const Text('Make a Withdrawal'),
             ),
@@ -896,226 +993,220 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
         padding: const EdgeInsets.all(16),
         itemCount: _withdrawalHistory.length,
         itemBuilder: (context, index) {
-          final withdrawal = _withdrawalHistory[index];
-          return _buildWithdrawalHistoryItem(withdrawal);
+          return _buildWithdrawalHistoryItem(
+            Map<String, dynamic>.from(_withdrawalHistory[index]),
+          );
         },
       ),
     );
   }
 
   Widget _buildWithdrawalHistoryItem(Map<String, dynamic> withdrawal) {
-    final amount = withdrawal['amount'] ?? withdrawal['total'] ?? withdrawal['value'] ?? '0';
-    final status = withdrawal['status'] ?? withdrawal['transactionStatus'] ?? 'pending';
-    final createdAt = withdrawal['createdAt'] ?? withdrawal['date'] ?? withdrawal['timestamp'];
-    final coin = withdrawal['coin'] ?? withdrawal['currency'] ?? withdrawal['asset'] ?? 'USDT';
-    final network = withdrawal['network'] ?? withdrawal['chain'] ?? withdrawal['blockchain'] ?? '';
-    final address = withdrawal['address'] ?? withdrawal['toAddress'] ?? withdrawal['destination'] ?? '';
-    final reference = withdrawal['referenceId'] ?? withdrawal['reference'] ?? withdrawal['id'] ?? withdrawal['_id'] ?? withdrawal['transactionId'] ?? '';
+    final amount = withdrawal['amount'] ?? '0';
+    final status = withdrawal['status']?.toString() ?? 'pending';
+    final createdAt = withdrawal['createdAt'];
+    final coin = withdrawal['coin']?.toString() ?? 'USDT';
+    final coinName = withdrawal['coinName']?.toString() ?? (coin == 'USDT' ? 'TetherUS' : coin);
+    final network = withdrawal['network']?.toString() ?? '';
+    final address = withdrawal['address']?.toString() ?? '';
+    final fee = withdrawal['fee'] ?? '0';
 
     Color statusColor;
-    IconData statusIcon;
-    switch (status.toString().toLowerCase()) {
-      case 'completed':
-      case 'success':
-      case 'approved':
-        statusColor = Colors.green;
-        statusIcon = Icons.check_circle;
-        break;
-      case 'pending':
-      case 'processing':
-        statusColor = Colors.orange;
-        statusIcon = Icons.pending;
-        break;
-      case 'failed':
-      case 'rejected':
-        statusColor = Colors.red;
-        statusIcon = Icons.cancel;
-        break;
-      default:
-        statusColor = Colors.grey;
-        statusIcon = Icons.help;
+    Color statusBackground;
+    final statusStr = status.toString();
+    String displayStatus = statusStr;
+    
+    // Status mapping: 1-pending, 2-Approved, 3-Cancelled, 4-Rejected, 5-completed
+    if (statusStr == '5' || statusStr.toLowerCase().contains('complete') || statusStr.toLowerCase().contains('success')) {
+      statusColor = const Color(0xFF84BD00);
+      statusBackground = const Color(0xFF84BD00).withOpacity(0.15);
+      displayStatus = 'Completed';
+    } else if (statusStr == '2' || statusStr.toLowerCase().contains('approve')) {
+      statusColor = const Color(0xFF84BD00);
+      statusBackground = const Color(0xFF84BD00).withOpacity(0.15);
+      displayStatus = 'Approved';
+    } else if (statusStr == '1' || statusStr.toLowerCase().contains('pending') || statusStr.toLowerCase().contains('process')) {
+      statusColor = const Color(0xFFF0B90B);
+      statusBackground = const Color(0xFFF0B90B).withOpacity(0.15);
+      displayStatus = 'Pending';
+    } else if (statusStr == '4' || statusStr.toLowerCase().contains('reject')) {
+      statusColor = const Color(0xFFFF6B6B);
+      statusBackground = const Color(0xFFFF6B6B).withOpacity(0.15);
+      displayStatus = 'Rejected';
+    } else if (statusStr == '3' || statusStr.toLowerCase().contains('cancel')) {
+      statusColor = Colors.white54;
+      statusBackground = Colors.white10;
+      displayStatus = 'Cancelled';
+    } else {
+      statusColor = Colors.grey;
+      statusBackground = Colors.grey.withOpacity(0.15);
+      displayStatus = _capitalizeStatus(statusStr);
     }
 
-    String formattedDate = 'Unknown date';
+    String formattedDate = '--';
     if (createdAt != null) {
       try {
         DateTime date;
         final createdAtStr = createdAt.toString();
-        
-        // Try parsing as ISO string first
         date = DateTime.tryParse(createdAtStr) ?? DateTime.now();
-        
-        // If parsing failed, try parsing as Unix timestamp
         if (date == DateTime.now() && createdAtStr.isNotEmpty) {
-          try {
-            final timestamp = int.tryParse(createdAtStr);
-            if (timestamp != null) {
-              date = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000);
-            }
-          } catch (e) {
-            // If all parsing fails, use current time
-            date = DateTime.now();
+          final timestamp = int.tryParse(createdAtStr);
+          if (timestamp != null) {
+            date = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000);
           }
         }
-        
-        // Format to local time with proper 12-hour format
-        formattedDate = DateFormat('dd MMM yyyy, hh:mm a').format(date.toLocal());
-        
-        // Debug logging to check the conversion
-        debugPrint('Original createdAt: $createdAtStr');
-        debugPrint('Parsed date: $date');
-        debugPrint('Formatted date: $formattedDate');
-        
+        formattedDate = DateFormat('MMM dd, yyyy, hh:mm a').format(date.toLocal());
       } catch (e) {
-        debugPrint('Error parsing date: $e');
         formattedDate = createdAt.toString();
       }
     }
+
+    final double amountValue = double.tryParse(amount.toString()) ?? 0.0;
+    final usdValue = withdrawal['usdValue'];
+    final double usdAmount = double.tryParse(usdValue?.toString() ?? amount.toString()) ?? amountValue;
+    final double feeValue = double.tryParse(fee.toString()) ?? 0.0;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF1C1C1E),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF2C2C2E)),
+        color: const Color(0xFF121212),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF1F1F1F)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Icon(statusIcon, color: statusColor, size: 20),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Withdraw ${coin.toString().toUpperCase()}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
+              CoinIconMapper.getCoinIcon(coin.toString().toUpperCase(), size: 36),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      coin.toString().toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
-                ],
+                    Text(
+                      coinName.toString(),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: statusColor.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(6),
+                  color: statusBackground,
+                  borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
-                  status.toString().toUpperCase(),
+                  displayStatus,
                   style: TextStyle(
                     color: statusColor,
-                    fontSize: 10,
+                    fontSize: 11,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
             ],
           ),
+          const SizedBox(height: 16),
+          const Divider(color: Color(0xFF2A2A2A), height: 1),
+          const SizedBox(height: 16),
+          _buildDetailRow('Amount', '${_trimAmount(amountValue)} ${coin.toString().toUpperCase()}'),
           const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Amount',
-                    style: TextStyle(color: Colors.white54, fontSize: 12),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${double.tryParse(amount.toString())?.toStringAsFixed(6) ?? amount} ${coin.toString().toUpperCase()}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-              if (network.toString().isNotEmpty)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    const Text(
-                      'Network',
-                      style: TextStyle(color: Colors.white54, fontSize: 12),
-                    ),
-                    const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF84BD00).withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        network.toString(),
-                        style: const TextStyle(
-                          color: Color(0xFF84BD00),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-            ],
+          _buildDetailRow('USD Value', usdAmount > 0 ? '\$${_trimAmount(usdAmount)}' : '--'),
+          const SizedBox(height: 12),
+          _buildDetailRow('Network', network.isEmpty ? '--' : network.toString()),
+          const SizedBox(height: 12),
+          _buildDetailRow(
+            'Address',
+            address.isEmpty ? '--' : _compactAddress(address.toString()),
+            isAddress: true,
+            fullAddress: address.toString(),
           ),
-          if (address.toString().isNotEmpty) ...[
-            const SizedBox(height: 12),
-            const Divider(color: Color(0xFF2C2C2E), height: 1),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                const Text(
-                  'To: ',
-                  style: TextStyle(color: Colors.white54, fontSize: 12),
-                ),
-                Expanded(
-                  child: Text(
-                    address.toString(),
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 12,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ],
           const SizedBox(height: 12),
-          const Divider(color: Color(0xFF2C2C2E), height: 1),
+          _buildDetailRow('Network Fee', '${_trimAmount(feeValue)} ${coin.toString().toUpperCase()}'),
           const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                formattedDate,
-                style: const TextStyle(
-                  color: Colors.white54,
-                  fontSize: 12,
-                ),
-              ),
-              if (reference.toString().isNotEmpty)
-                Text(
-                  'Ref: ${reference.toString().substring(0, reference.toString().length > 8 ? 8 : reference.toString().length)}',
-                  style: const TextStyle(
-                    color: Colors.white38,
-                    fontSize: 11,
-                  ),
-                ),
-            ],
-          ),
+          _buildDetailRow('Date', formattedDate),
         ],
       ),
     );
+  }
+
+  Widget _buildDetailRow(String label, String value, {bool isAddress = false, String? fullAddress}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.5),
+            fontSize: 13,
+          ),
+        ),
+        Row(
+          children: [
+            Text(
+              value,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            if (isAddress && value != '--') ...[
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: fullAddress ?? value));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Address copied'),
+                      duration: Duration(seconds: 1),
+                    ),
+                  );
+                },
+                child: Icon(
+                  Icons.copy,
+                  size: 14,
+                  color: Colors.white.withOpacity(0.5),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+
+  String _trimAmount(double amount) {
+    if (amount == 0) return '0';
+    return amount.toStringAsFixed(
+      amount.truncateToDouble() == amount ? 0 : (amount < 0.0001 ? 8 : 4),
+    ).replaceAll(RegExp(r'\.?0+$'), '');
+  }
+
+  String _compactAddress(String value) {
+    if (value.isEmpty) return '';
+    if (value.length <= 16) return value;
+    return '${value.substring(0, 6)}...${value.substring(value.length - 6)}';
+  }
+
+  String _capitalizeStatus(String value) {
+    if (value.isEmpty) return value;
+    final lower = value.toLowerCase();
+    return '${lower[0].toUpperCase()}${lower.substring(1)}';
   }
 
   Widget _buildCoinSelector() {
@@ -1147,7 +1238,11 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
                 ),
               ),
               const Spacer(),
-              const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 16),
+              const Icon(
+                Icons.arrow_forward_ios,
+                color: Colors.white54,
+                size: 16,
+              ),
             ],
           ),
         ),
@@ -1176,13 +1271,18 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
             child: Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFF84BD00).withOpacity(0.2),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    _selectedNetwork.isNotEmpty ? _selectedNetwork : 'Select Network',
+                    _selectedNetwork.isNotEmpty
+                        ? _selectedNetwork
+                        : 'Select Network',
                     style: const TextStyle(
                       color: Color(0xFF84BD00),
                       fontSize: 12,
@@ -1191,7 +1291,11 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
                   ),
                 ),
                 const Spacer(),
-                const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 16),
+                const Icon(
+                  Icons.arrow_forward_ios,
+                  color: Colors.white54,
+                  size: 16,
+                ),
               ],
             ),
           ),
@@ -1257,7 +1361,10 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
                   },
                   child: Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 16,
+                      horizontal: 12,
+                    ),
                     margin: const EdgeInsets.only(bottom: 8),
                     decoration: BoxDecoration(
                       color: network.name == _selectedNetwork
@@ -1281,7 +1388,11 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
                         ),
                         const Spacer(),
                         if (network.name == _selectedNetwork)
-                          const Icon(Icons.check, color: Color(0xFF84BD00), size: 20),
+                          const Icon(
+                            Icons.check,
+                            color: Color(0xFF84BD00),
+                            size: 20,
+                          ),
                       ],
                     ),
                   ),
@@ -1325,13 +1436,18 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.qr_code_scanner, color: Color(0xFF84BD00)),
+                icon: const Icon(
+                  Icons.qr_code_scanner,
+                  color: Color(0xFF84BD00),
+                ),
                 onPressed: _scanQRCode,
               ),
               IconButton(
                 icon: const Icon(Icons.paste, color: Colors.white54),
                 onPressed: () async {
-                  final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
+                  final clipboardData = await Clipboard.getData(
+                    Clipboard.kTextPlain,
+                  );
                   if (clipboardData != null && clipboardData.text != null) {
                     _addressController.text = clipboardData.text!;
                   }
@@ -1379,7 +1495,10 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
               GestureDetector(
                 onTap: _showMaxAmount,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFF84BD00).withOpacity(0.2),
                     borderRadius: BorderRadius.circular(4),
@@ -1483,10 +1602,7 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
         ),
         child: const Text(
           'Confirm & Send OTP',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
         ),
       ),
     );
@@ -1503,8 +1619,9 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
       _showErrorSnackBar('Please enter a valid address');
       return;
     }
-    
-    if (_amountController.text.isEmpty || double.tryParse(_amountController.text) == null) {
+
+    if (_amountController.text.isEmpty ||
+        double.tryParse(_amountController.text) == null) {
       _showErrorSnackBar('Please enter a valid amount');
       return;
     }
@@ -1530,7 +1647,7 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
     try {
       // Step 1: Send OTP
       final otpResult = await WalletService.sendOtp(purpose: 'crypto_withdraw');
-      
+
       Navigator.pop(context); // Close loading dialog
 
       if (otpResult['success'] != true) {
@@ -1553,15 +1670,17 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
                 amount: amount,
                 otp: otp,
               );
-              
+
               bool success = result != null && result['success'] == true;
               if (success) {
                 WalletService.getAllWalletBalances();
               }
-              
+
               return {
                 'success': success,
-                'message': result != null ? (result['error'] ?? result['message']) : 'Withdrawal failed'
+                'message': result != null
+                    ? (result['error'] ?? result['message'])
+                    : 'Withdrawal failed',
               };
             },
             onResend: () => WalletService.sendOtp(purpose: 'crypto_withdraw'),
@@ -1573,15 +1692,14 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
       if (verified == true && mounted) {
         await NotificationService.addNotification(
           title: 'Crypto Withdrawal Initiated',
-          message: 'Your withdrawal of $amount $_selectedCoin to ${_addressController.text.substring(0, 6)}... has been submitted.',
+          message:
+              'Your withdrawal of $amount $_selectedCoin to ${_addressController.text.substring(0, 6)}... has been submitted.',
           type: NotificationType.transaction,
         );
-        
+
         // Navigate to success screen
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (context) => _buildSuccessScreen(amount),
-          ),
+          MaterialPageRoute(builder: (context) => _buildSuccessScreen(amount)),
         );
       }
     } catch (e) {
@@ -1646,9 +1764,15 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
                     const SizedBox(height: 8),
                     _buildSuccessDetailRow('Amount', '$amount $_selectedCoin'),
                     const SizedBox(height: 8),
-                    _buildSuccessDetailRow('Address', '${_addressController.text.substring(0, 6)}...${_addressController.text.substring(_addressController.text.length > 6 ? _addressController.text.length - 6 : 0)}'),
+                    _buildSuccessDetailRow(
+                      'Address',
+                      '${_addressController.text.substring(0, 6)}...${_addressController.text.substring(_addressController.text.length > 6 ? _addressController.text.length - 6 : 0)}',
+                    ),
                     const SizedBox(height: 8),
-                    _buildSuccessDetailRow('Network Fee', '${_withdrawalFees.toStringAsFixed(6)} $_selectedCoin'),
+                    _buildSuccessDetailRow(
+                      'Network Fee',
+                      '${_withdrawalFees.toStringAsFixed(6)} $_selectedCoin',
+                    ),
                   ],
                 ),
               ),
@@ -1657,14 +1781,21 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton(
-                  onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
+                  onPressed: () =>
+                      Navigator.of(context).popUntil((route) => route.isFirst),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF84BD00),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                   child: const Text(
                     'Done',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
                   ),
                 ),
               ),
@@ -1679,8 +1810,18 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 14)),
-        Text(value, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white54, fontSize: 14),
+        ),
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       ],
     );
   }
@@ -1700,38 +1841,22 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
     });
 
     try {
-      debugPrint('Withdraw Crypto Screen: Fetching crypto withdrawal history...');
+      debugPrint(
+        'Withdraw Crypto Screen: Fetching crypto withdrawal history...',
+      );
       final result = await WalletService.getCryptoWithdrawalHistory(limit: 50);
       debugPrint('Withdraw Crypto Screen: API result: $result');
 
       if (result['success'] == true) {
         final data = result['data'];
         debugPrint('Withdraw Crypto Screen: Data type: ${data.runtimeType}');
-
-        if (data != null && data is Map) {
-          final transactions = data['transactions'];
-          if (transactions is List) {
-            setState(() {
-              _withdrawalHistory = transactions;
-            });
-            debugPrint('Withdraw Crypto Screen: Loaded ${transactions.length} transactions');
-          } else {
-            setState(() {
-              _withdrawalHistory = [];
-            });
-            debugPrint('Withdraw Crypto Screen: No transactions found in data');
-          }
-        } else if (data is List) {
-          setState(() {
-            _withdrawalHistory = data;
-          });
-          debugPrint('Withdraw Crypto Screen: Loaded ${data.length} transactions (direct list)');
-        } else {
-          setState(() {
-            _withdrawalHistory = [];
-          });
-          debugPrint('Withdraw Crypto Screen: Empty or invalid data structure');
-        }
+        final transactions = _extractWithdrawalHistoryItems(data);
+        setState(() {
+          _withdrawalHistory = transactions;
+        });
+        debugPrint(
+          'Withdraw Crypto Screen: Loaded ${transactions.length} transactions',
+        );
       } else {
         setState(() {
           _historyError = result['error'] ?? 'Failed to load history';
@@ -1749,6 +1874,195 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
         _isLoadingHistory = false;
       });
     }
+  }
+
+  List<Map<String, dynamic>> _extractWithdrawalHistoryItems(dynamic data) {
+    dynamic listCandidate = data;
+
+    if (data is Map) {
+      listCandidate =
+          data['transactions'] ??
+          data['result'] ??
+          data['withdrawals'] ??
+          data['docs'] ??
+          data['items'] ??
+          data['data'];
+    }
+
+    if (listCandidate is List) {
+      return listCandidate
+          .whereType<dynamic>()
+          .map((item) => _normalizeWithdrawalHistoryItem(item))
+          .toList();
+    }
+
+    return const [];
+  }
+
+  Map<String, dynamic> _normalizeWithdrawalHistoryItem(dynamic item) {
+    final withdrawal = item is Map<String, dynamic>
+        ? Map<String, dynamic>.from(item)
+        : Map<String, dynamic>.from(item as Map);
+
+    final coreSources = <Map<String, dynamic>>[
+      withdrawal,
+      _asMap(withdrawal['details']),
+      _asMap(withdrawal['withdrawal']),
+      _asMap(withdrawal['withdrawalDetails']),
+      _asMap(withdrawal['transaction']),
+      _asMap(withdrawal['transactionData']),
+      _asMap(withdrawal['txData']),
+      _asMap(withdrawal['data']),
+    ];
+
+    final extendedSources = <Map<String, dynamic>>[
+      ...coreSources,
+      _asMap(withdrawal['payload']),
+      _asMap(withdrawal['requestBody']),
+      _asMap(withdrawal['request_body']),
+      _asMap(withdrawal['meta']),
+    ];
+
+    dynamic pick(List<String> keys, List<Map<String, dynamic>> sources) {
+      for (final source in sources) {
+        for (final key in keys) {
+          final value = source[key];
+          if (value != null && value.toString().trim().isNotEmpty) {
+            return value;
+          }
+        }
+      }
+      return null;
+    }
+
+    String? pickString(List<String> keys, List<Map<String, dynamic>> sources) =>
+        pick(keys, sources)?.toString();
+
+    final coinRaw = pick(['coin', 'coinSymbol', 'currency', 'asset', 'symbol'], coreSources) ??
+          withdrawal['coin'];
+    String coinSymbol = 'USDT';
+    String coinName = 'TetherUS';
+
+    if (coinRaw is Map) {
+      coinSymbol = (coinRaw['symbol'] ?? coinRaw['coinSymbol'] ?? coinRaw['id'] ?? 'USDT').toString();
+      coinName = (coinRaw['name'] ?? coinRaw['coinName'] ?? coinSymbol).toString();
+    } else if (coinRaw != null) {
+      coinSymbol = coinRaw.toString();
+      coinName = coinSymbol == 'USDT' ? 'TetherUS' : coinSymbol;
+    }
+
+    final networkRaw = pick(['network', 'networkName', 'chain', 'blockchain', 'protocol'], extendedSources) ?? withdrawal['network'];
+    String networkName = '';
+    if (networkRaw is Map) {
+      networkName = (networkRaw['name'] ?? networkRaw['networkName'] ?? networkRaw['id'] ?? '').toString();
+    } else {
+      networkName = networkRaw?.toString() ?? '';
+    }
+
+    final feeRaw = pick([
+            'fee',
+            'withdrawalFee',
+            'networkFee',
+            'tx_fee',
+            'transactionFee',
+            'gasFee',
+            'feeAmount',
+          ], coreSources) ??
+          withdrawal['fee'];
+    String feeValue = '0';
+    if (feeRaw is Map) {
+      feeValue = (feeRaw['amount'] ?? feeRaw['value'] ?? feeRaw['fee'] ?? '0').toString();
+    } else {
+      feeValue = feeRaw?.toString() ?? '0';
+    }
+
+    final usdValueRaw = pick(['usdValue', 'usd_value', 'valueUsd', 'amountUsd'], coreSources) ??
+          withdrawal['usdValue'];
+    String usdValueStr = '';
+    if (usdValueRaw is Map) {
+      usdValueStr = (usdValueRaw['amount'] ?? usdValueRaw['value'] ?? usdValueRaw['usdValue'] ?? '').toString();
+    } else {
+      usdValueStr = usdValueRaw?.toString() ?? '';
+    }
+
+    return {
+      ...withdrawal,
+      'amount':
+          pick([
+            'amount',
+            'total',
+            'value',
+            'withdrawAmount',
+            'withdrawalAmount',
+            'requestedAmount',
+          ], coreSources) ??
+          withdrawal['amount'],
+      'status':
+          pick([
+            'status',
+            'transactionStatus',
+            'withdrawStatus',
+            'approvalStatus',
+          ], coreSources) ??
+          withdrawal['status'],
+      'createdAt':
+          pick([
+            'createdAt',
+            'created_at',
+            'updatedAt',
+            'timestamp',
+            'date',
+            'time',
+          ], coreSources) ??
+          withdrawal['createdAt'],
+      'coin': coinSymbol,
+      'coinName': coinName,
+      'network': networkName,
+      'address':
+          pickString([
+            'address',
+            'walletAddress',
+            'withdrawAddress',
+            'destinationAddress',
+            'toAddress',
+            'destination',
+            'receiverAddress',
+          ], coreSources) ??
+          withdrawal['address']?.toString() ??
+          '',
+      'reference':
+          pick([
+            'referenceId',
+            'reference',
+            'transactionId',
+            'withdrawalId',
+            'orderId',
+            'id',
+            '_id',
+          ], coreSources) ??
+          withdrawal['reference'],
+      'txHash':
+          pickString(
+            ['transactionHash', 'txHash', 'hash', 'blockHash'],
+            coreSources,
+          ) ??
+          '',
+      'fee': feeValue,
+      'memo':
+          pickString(['memo', 'note', 'remark', 'message'], extendedSources) ??
+          '',
+      'usdValue': usdValueStr,
+    };
+  }
+
+  Map<String, dynamic> _asMap(dynamic value) {
+    if (value is Map<String, dynamic>) {
+      return value;
+    }
+    if (value is Map) {
+      return Map<String, dynamic>.from(value);
+    }
+    return const {};
   }
 
   void _toggleHistory() {
@@ -1770,11 +2084,13 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen> with KYCUnl
 }
 
 class Coin {
+  final String id;
   final String symbol;
   final String name;
   final List<Network> networks;
 
   Coin({
+    required this.id,
     required this.symbol,
     required this.name,
     required this.networks,
@@ -1782,6 +2098,7 @@ class Coin {
 
   factory Coin.fromJson(Map<String, dynamic> json) {
     return Coin(
+      id: (json['_id'] ?? json['id'] ?? '').toString(),
       symbol: json['symbol']?.toString() ?? '',
       name: json['name']?.toString() ?? '',
       networks: (json['networks'] as List? ?? [])
@@ -1792,12 +2109,14 @@ class Coin {
 }
 
 class Network {
+  final String id;
   final String name;
   final String type;
   final bool isActive;
   final double fee;
 
   Network({
+    required this.id,
     required this.name,
     required this.type,
     required this.isActive,
@@ -1806,9 +2125,13 @@ class Network {
 
   factory Network.fromJson(Map<String, dynamic> json) {
     return Network(
+      id: (json['_id'] ?? json['id'] ?? '').toString(),
       name: json['name']?.toString() ?? '',
       type: json['type']?.toString() ?? '',
-      isActive: json['isActive'] == true || json['isActive'] == 1 || json['isActive'] == 'true',
+      isActive:
+          json['isActive'] == true ||
+          json['isActive'] == 1 ||
+          json['isActive'] == 'true',
       fee: double.tryParse(json['fee']?.toString() ?? '0') ?? 0.0,
     );
   }

@@ -32,21 +32,189 @@ class _UpdateProfileScreenState extends State<UpdateProfileScreen> {
   bool _isLoadingCities = false;
 
   final List<Map<String, String>> _countryCodes = [
-    {'code': '+91', 'country': 'India'},
-    {'code': '+1', 'country': 'USA'},
-    {'code': '+44', 'country': 'UK'},
+    // Major countries
+    {'code': '+93', 'country': 'Afghanistan'},
+    {'code': '+355', 'country': 'Albania'},
+    {'code': '+213', 'country': 'Algeria'},
+    {'code': '+376', 'country': 'Andorra'},
+    {'code': '+244', 'country': 'Angola'},
+    {'code': '+54', 'country': 'Argentina'},
+    {'code': '+374', 'country': 'Armenia'},
     {'code': '+61', 'country': 'Australia'},
-    {'code': '+86', 'country': 'China'},
-    {'code': '+81', 'country': 'Japan'},
-    {'code': '+49', 'country': 'Germany'},
-    {'code': '+33', 'country': 'France'},
-    {'code': '+971', 'country': 'UAE'},
-    {'code': '+65', 'country': 'Singapore'},
-    {'code': '+82', 'country': 'South Korea'},
-    {'code': '+7', 'country': 'Russia'},
-    {'code': '+39', 'country': 'Italy'},
-    {'code': '+34', 'country': 'Spain'},
+    {'code': '+43', 'country': 'Austria'},
+    {'code': '+994', 'country': 'Azerbaijan'},
+    {'code': '+973', 'country': 'Bahrain'},
+    {'code': '+880', 'country': 'Bangladesh'},
+    {'code': '+375', 'country': 'Belarus'},
+    {'code': '+32', 'country': 'Belgium'},
+    {'code': '+501', 'country': 'Belize'},
+    {'code': '+229', 'country': 'Benin'},
+    {'code': '+975', 'country': 'Bhutan'},
+    {'code': '+591', 'country': 'Bolivia'},
+    {'code': '+387', 'country': 'Bosnia and Herzegovina'},
+    {'code': '+267', 'country': 'Botswana'},
     {'code': '+55', 'country': 'Brazil'},
+    {'code': '+673', 'country': 'Brunei'},
+    {'code': '+359', 'country': 'Bulgaria'},
+    {'code': '+226', 'country': 'Burkina Faso'},
+    {'code': '+95', 'country': 'Burma (Myanmar)'},
+    {'code': '+257', 'country': 'Burundi'},
+    {'code': '+855', 'country': 'Cambodia'},
+    {'code': '+237', 'country': 'Cameroon'},
+    {'code': '+1', 'country': 'Canada'},
+    {'code': '+238', 'country': 'Cape Verde'},
+    {'code': '+236', 'country': 'Central African Republic'},
+    {'code': '+235', 'country': 'Chad'},
+    {'code': '+56', 'country': 'Chile'},
+    {'code': '+86', 'country': 'China'},
+    {'code': '+57', 'country': 'Colombia'},
+    {'code': '+269', 'country': 'Comoros'},
+    {'code': '+243', 'country': 'Congo'},
+    {'code': '+242', 'country': 'Congo (Republic)'},
+    {'code': '+506', 'country': 'Costa Rica'},
+    {'code': '+385', 'country': 'Croatia'},
+    {'code': '+53', 'country': 'Cuba'},
+    {'code': '+357', 'country': 'Cyprus'},
+    {'code': '+420', 'country': 'Czech Republic'},
+    {'code': '+45', 'country': 'Denmark'},
+    {'code': '+253', 'country': 'Djibouti'},
+    {'code': '+593', 'country': 'Ecuador'},
+    {'code': '+20', 'country': 'Egypt'},
+    {'code': '+503', 'country': 'El Salvador'},
+    {'code': '+240', 'country': 'Equatorial Guinea'},
+    {'code': '+291', 'country': 'Eritrea'},
+    {'code': '+372', 'country': 'Estonia'},
+    {'code': '+251', 'country': 'Ethiopia'},
+    {'code': '+679', 'country': 'Fiji'},
+    {'code': '+358', 'country': 'Finland'},
+    {'code': '+33', 'country': 'France'},
+    {'code': '+241', 'country': 'Gabon'},
+    {'code': '+220', 'country': 'Gambia'},
+    {'code': '+995', 'country': 'Georgia'},
+    {'code': '+49', 'country': 'Germany'},
+    {'code': '+233', 'country': 'Ghana'},
+    {'code': '+30', 'country': 'Greece'},
+    {'code': '+502', 'country': 'Guatemala'},
+    {'code': '+224', 'country': 'Guinea'},
+    {'code': '+245', 'country': 'Guinea-Bissau'},
+    {'code': '+592', 'country': 'Guyana'},
+    {'code': '+509', 'country': 'Haiti'},
+    {'code': '+504', 'country': 'Honduras'},
+    {'code': '+852', 'country': 'Hong Kong'},
+    {'code': '+36', 'country': 'Hungary'},
+    {'code': '+354', 'country': 'Iceland'},
+    {'code': '+91', 'country': 'India'},
+    {'code': '+62', 'country': 'Indonesia'},
+    {'code': '+98', 'country': 'Iran'},
+    {'code': '+964', 'country': 'Iraq'},
+    {'code': '+353', 'country': 'Ireland'},
+    {'code': '+972', 'country': 'Israel'},
+    {'code': '+39', 'country': 'Italy'},
+    {'code': '+225', 'country': 'Ivory Coast'},
+    {'code': '+81', 'country': 'Japan'},
+    {'code': '+962', 'country': 'Jordan'},
+    {'code': '+7', 'country': 'Kazakhstan'},
+    {'code': '+254', 'country': 'Kenya'},
+    {'code': '+686', 'country': 'Kiribati'},
+    {'code': '+965', 'country': 'Kuwait'},
+    {'code': '+996', 'country': 'Kyrgyzstan'},
+    {'code': '+856', 'country': 'Laos'},
+    {'code': '+371', 'country': 'Latvia'},
+    {'code': '+961', 'country': 'Lebanon'},
+    {'code': '+266', 'country': 'Lesotho'},
+    {'code': '+231', 'country': 'Liberia'},
+    {'code': '+218', 'country': 'Libya'},
+    {'code': '+423', 'country': 'Liechtenstein'},
+    {'code': '+370', 'country': 'Lithuania'},
+    {'code': '+352', 'country': 'Luxembourg'},
+    {'code': '+853', 'country': 'Macau'},
+    {'code': '+389', 'country': 'Macedonia'},
+    {'code': '+261', 'country': 'Madagascar'},
+    {'code': '+265', 'country': 'Malawi'},
+    {'code': '+60', 'country': 'Malaysia'},
+    {'code': '+960', 'country': 'Maldives'},
+    {'code': '+223', 'country': 'Mali'},
+    {'code': '+356', 'country': 'Malta'},
+    {'code': '+692', 'country': 'Marshall Islands'},
+    {'code': '+222', 'country': 'Mauritania'},
+    {'code': '+230', 'country': 'Mauritius'},
+    {'code': '+52', 'country': 'Mexico'},
+    {'code': '+691', 'country': 'Micronesia'},
+    {'code': '+373', 'country': 'Moldova'},
+    {'code': '+377', 'country': 'Monaco'},
+    {'code': '+976', 'country': 'Mongolia'},
+    {'code': '+382', 'country': 'Montenegro'},
+    {'code': '+212', 'country': 'Morocco'},
+    {'code': '+258', 'country': 'Mozambique'},
+    {'code': '+95', 'country': 'Myanmar'},
+    {'code': '+264', 'country': 'Namibia'},
+    {'code': '+674', 'country': 'Nauru'},
+    {'code': '+977', 'country': 'Nepal'},
+    {'code': '+31', 'country': 'Netherlands'},
+    {'code': '+64', 'country': 'New Zealand'},
+    {'code': '+505', 'country': 'Nicaragua'},
+    {'code': '+227', 'country': 'Niger'},
+    {'code': '+234', 'country': 'Nigeria'},
+    {'code': '+850', 'country': 'North Korea'},
+    {'code': '+47', 'country': 'Norway'},
+    {'code': '+968', 'country': 'Oman'},
+    {'code': '+92', 'country': 'Pakistan'},
+    {'code': '+680', 'country': 'Palau'},
+    {'code': '+507', 'country': 'Panama'},
+    {'code': '+675', 'country': 'Papua New Guinea'},
+    {'code': '+595', 'country': 'Paraguay'},
+    {'code': '+51', 'country': 'Peru'},
+    {'code': '+63', 'country': 'Philippines'},
+    {'code': '+48', 'country': 'Poland'},
+    {'code': '+351', 'country': 'Portugal'},
+    {'code': '+974', 'country': 'Qatar'},
+    {'code': '+40', 'country': 'Romania'},
+    {'code': '+7', 'country': 'Russia'},
+    {'code': '+250', 'country': 'Rwanda'},
+    {'code': '+378', 'country': 'San Marino'},
+    {'code': '+239', 'country': 'Sao Tome and Principe'},
+    {'code': '+966', 'country': 'Saudi Arabia'},
+    {'code': '+221', 'country': 'Senegal'},
+    {'code': '+381', 'country': 'Serbia'},
+    {'code': '+248', 'country': 'Seychelles'},
+    {'code': '+232', 'country': 'Sierra Leone'},
+    {'code': '+65', 'country': 'Singapore'},
+    {'code': '+421', 'country': 'Slovakia'},
+    {'code': '+386', 'country': 'Slovenia'},
+    {'code': '+677', 'country': 'Solomon Islands'},
+    {'code': '+252', 'country': 'Somalia'},
+    {'code': '+27', 'country': 'South Africa'},
+    {'code': '+82', 'country': 'South Korea'},
+    {'code': '+211', 'country': 'South Sudan'},
+    {'code': '+34', 'country': 'Spain'},
+    {'code': '+94', 'country': 'Sri Lanka'},
+    {'code': '+249', 'country': 'Sudan'},
+    {'code': '+597', 'country': 'Suriname'},
+    {'code': '+268', 'country': 'Swaziland'},
+    {'code': '+46', 'country': 'Sweden'},
+    {'code': '+41', 'country': 'Switzerland'},
+    {'code': '+963', 'country': 'Syria'},
+    {'code': '+886', 'country': 'Taiwan'},
+    {'code': '+992', 'country': 'Tajikistan'},
+    {'code': '+255', 'country': 'Tanzania'},
+    {'code': '+66', 'country': 'Thailand'},
+    {'code': '+228', 'country': 'Togo'},
+    {'code': '+676', 'country': 'Tonga'},
+    {'code': '+216', 'country': 'Tunisia'},
+    {'code': '+90', 'country': 'Turkey'},
+    {'code': '+993', 'country': 'Turkmenistan'},
+    {'code': '+256', 'country': 'Uganda'},
+    {'code': '+380', 'country': 'Ukraine'},
+    {'code': '+971', 'country': 'UAE'},
+    {'code': '+44', 'country': 'UK'},
+    {'code': '+598', 'country': 'Uruguay'},
+    {'code': '+1', 'country': 'USA'},
+    {'code': '+998', 'country': 'Uzbekistan'},
+    {'code': '+58', 'country': 'Venezuela'},
+    {'code': '+84', 'country': 'Vietnam'},
+    {'code': '+967', 'country': 'Yemen'},
+    {'code': '+260', 'country': 'Zambia'},
+    {'code': '+263', 'country': 'Zimbabwe'},
   ];
   
   @override
@@ -686,93 +854,219 @@ class _UpdateProfileScreenState extends State<UpdateProfileScreen> {
   }
 
   void _syncCountryCodeWithCountry(String countryName) {
-    // Enhanced country code mapping with more countries and API variations
+    // Comprehensive country code mapping - must match _countryCodes list
     final countryMapping = {
-      // Major countries with multiple name variations
-      'India': '+91',
-      'United States': '+1',
-      'USA': '+1',
-      'United States of America': '+1',
-      'UK': '+44',
-      'United Kingdom': '+44',
-      'Australia': '+61',
-      'China': '+86',
-      'Japan': '+81',
-      'Germany': '+49',
-      'France': '+33',
-      'UAE': '+971',
-      'United Arab Emirates': '+971',
-      'Singapore': '+65',
-      'South Korea': '+82',
-      'Korea': '+82',
-      'Russia': '+7',
-      'Italy': '+39',
-      'Spain': '+34',
-      'Brazil': '+55',
-      
-      // Additional countries
-      'Canada': '+1',
-      'Mexico': '+52',
-      'Argentina': '+54',
-      'Chile': '+56',
-      'Peru': '+51',
-      'Colombia': '+57',
-      'Venezuela': '+58',
-      
-      // European countries
-      'Netherlands': '+31',
-      'Holland': '+31',
-      'Belgium': '+32',
-      'Switzerland': '+41',
-      'Austria': '+43',
-      'Sweden': '+46',
-      'Norway': '+47',
-      'Denmark': '+45',
-      'Finland': '+358',
-      'Poland': '+48',
-      'Portugal': '+351',
-      'Greece': '+30',
-      'Ireland': '+353',
-      'Iceland': '+354',
-      
-      // Asian countries
-      'Pakistan': '+92',
-      'Bangladesh': '+880',
-      'Sri Lanka': '+94',
-      'Nepal': '+977',
-      'Malaysia': '+60',
-      'Thailand': '+66',
-      'Vietnam': '+84',
-      'Philippines': '+63',
-      'Indonesia': '+62',
-      'Hong Kong': '+852',
-      'Taiwan': '+886',
-      
-      // Middle East
-      'Saudi Arabia': '+966',
-      'Qatar': '+974',
-      'Kuwait': '+965',
-      'Bahrain': '+973',
-      'Oman': '+968',
-      'Israel': '+972',
-      'Turkey': '+90',
-      
-      // African countries
-      'South Africa': '+27',
-      'Egypt': '+20',
-      'Nigeria': '+234',
-      'Kenya': '+254',
-      'Morocco': '+212',
-      'Tunisia': '+216',
+      // A
+      'Afghanistan': '+93',
+      'Albania': '+355',
       'Algeria': '+213',
-      
-      // Oceanic countries
-      'New Zealand': '+64',
-      
-      // Misc
+      'Andorra': '+376',
+      'Angola': '+244',
+      'Argentina': '+54',
+      'Armenia': '+374',
+      'Australia': '+61',
+      'Austria': '+43',
+      'Azerbaijan': '+994',
+      // B
+      'Bahrain': '+973',
+      'Bangladesh': '+880',
+      'Belarus': '+375',
+      'Belgium': '+32',
+      'Belize': '+501',
+      'Benin': '+229',
+      'Bhutan': '+975',
+      'Bolivia': '+591',
+      'Bosnia and Herzegovina': '+387',
+      'Botswana': '+267',
+      'Brazil': '+55',
+      'Brunei': '+673',
+      'Bulgaria': '+359',
+      'Burkina Faso': '+226',
+      'Burundi': '+257',
+      // C
+      'Cambodia': '+855',
+      'Cameroon': '+237',
+      'Canada': '+1',
+      'Cape Verde': '+238',
+      'Central African Republic': '+236',
+      'Chad': '+235',
+      'Chile': '+56',
+      'China': '+86',
+      'Colombia': '+57',
+      'Comoros': '+269',
+      'Congo': '+243',
+      'Congo (Republic)': '+242',
+      'Costa Rica': '+506',
+      'Croatia': '+385',
+      'Cuba': '+53',
+      'Cyprus': '+357',
+      'Czech Republic': '+420',
+      // D
+      'Denmark': '+45',
+      'Djibouti': '+253',
+      // E
+      'Ecuador': '+593',
+      'Egypt': '+20',
+      'El Salvador': '+503',
+      'Equatorial Guinea': '+240',
+      'Eritrea': '+291',
+      'Estonia': '+372',
+      'Ethiopia': '+251',
+      // F
+      'Fiji': '+679',
+      'Finland': '+358',
+      'France': '+33',
+      // G
+      'Gabon': '+241',
+      'Gambia': '+220',
+      'Georgia': '+995',
+      'Germany': '+49',
+      'Ghana': '+233',
+      'Greece': '+30',
+      'Guatemala': '+502',
+      'Guinea': '+224',
+      'Guinea-Bissau': '+245',
+      'Guyana': '+592',
+      // H
+      'Haiti': '+509',
+      'Honduras': '+504',
+      'Hong Kong': '+852',
+      'Hungary': '+36',
+      // I
+      'Iceland': '+354',
+      'India': '+91',
+      'Indonesia': '+62',
       'Iran': '+98',
       'Iraq': '+964',
-      'Afghanistan': '+93',
+      'Ireland': '+353',
+      'Israel': '+972',
+      'Italy': '+39',
+      'Ivory Coast': '+225',
+      // J
+      'Japan': '+81',
+      'Jordan': '+962',
+      // K
+      'Kazakhstan': '+7',
+      'Kenya': '+254',
+      'Kiribati': '+686',
+      'Kuwait': '+965',
+      'Kyrgyzstan': '+996',
+      // L
+      'Laos': '+856',
+      'Latvia': '+371',
+      'Lebanon': '+961',
+      'Lesotho': '+266',
+      'Liberia': '+231',
+      'Libya': '+218',
+      'Liechtenstein': '+423',
+      'Lithuania': '+370',
+      'Luxembourg': '+352',
+      // M
+      'Macau': '+853',
+      'Macedonia': '+389',
+      'Madagascar': '+261',
+      'Malawi': '+265',
+      'Malaysia': '+60',
+      'Maldives': '+960',
+      'Mali': '+223',
+      'Malta': '+356',
+      'Marshall Islands': '+692',
+      'Mauritania': '+222',
+      'Mauritius': '+230',
+      'Mexico': '+52',
+      'Micronesia': '+691',
+      'Moldova': '+373',
+      'Monaco': '+377',
+      'Mongolia': '+976',
+      'Montenegro': '+382',
+      'Morocco': '+212',
+      'Mozambique': '+258',
+      'Myanmar': '+95',
+      // N
+      'Namibia': '+264',
+      'Nauru': '+674',
+      'Nepal': '+977',
+      'Netherlands': '+31',
+      'New Zealand': '+64',
+      'Nicaragua': '+505',
+      'Niger': '+227',
+      'Nigeria': '+234',
+      'North Korea': '+850',
+      'Norway': '+47',
+      // O
+      'Oman': '+968',
+      // P
+      'Pakistan': '+92',
+      'Palau': '+680',
+      'Panama': '+507',
+      'Papua New Guinea': '+675',
+      'Paraguay': '+595',
+      'Peru': '+51',
+      'Philippines': '+63',
+      'Poland': '+48',
+      'Portugal': '+351',
+      // Q
+      'Qatar': '+974',
+      // R
+      'Romania': '+40',
+      'Russia': '+7',
+      'Rwanda': '+250',
+      // S
+      'San Marino': '+378',
+      'Sao Tome and Principe': '+239',
+      'Saudi Arabia': '+966',
+      'Senegal': '+221',
+      'Serbia': '+381',
+      'Seychelles': '+248',
+      'Sierra Leone': '+232',
+      'Singapore': '+65',
+      'Slovakia': '+421',
+      'Slovenia': '+386',
+      'Solomon Islands': '+677',
+      'Somalia': '+252',
+      'South Africa': '+27',
+      'South Korea': '+82',
+      'South Sudan': '+211',
+      'Spain': '+34',
+      'Sri Lanka': '+94',
+      'Sudan': '+249',
+      'Suriname': '+597',
+      'Swaziland': '+268',
+      'Sweden': '+46',
+      'Switzerland': '+41',
+      'Syria': '+963',
+      // T
+      'Taiwan': '+886',
+      'Tajikistan': '+992',
+      'Tanzania': '+255',
+      'Thailand': '+66',
+      'Togo': '+228',
+      'Tonga': '+676',
+      'Tunisia': '+216',
+      'Turkey': '+90',
+      'Turkmenistan': '+993',
+      // U
+      'Uganda': '+256',
+      'Ukraine': '+380',
+      'UAE': '+971',
+      'United Arab Emirates': '+971',
+      'UK': '+44',
+      'United Kingdom': '+44',
+      'Uruguay': '+598',
+      'USA': '+1',
+      'United States': '+1',
+      'United States of America': '+1',
+      'Uzbekistan': '+998',
+      // V
+      'Venezuela': '+58',
+      'Vietnam': '+84',
+      // Y
+      'Yemen': '+967',
+      // Z
+      'Zambia': '+260',
+      'Zimbabwe': '+263',
+      // Burma/Myanmar alias
+      'Burma (Myanmar)': '+95',
     };
     
     // Try exact match first
@@ -819,6 +1113,73 @@ class _UpdateProfileScreenState extends State<UpdateProfileScreen> {
     }
   }
 
+  void _syncCountryWithCountryCode(String countryCode, String countryName) {
+    // Find the country in the loaded countries list
+    if (_countries.isEmpty) {
+      debugPrint('Countries list is empty, cannot sync country');
+      return;
+    }
+
+    // Try to find country by exact name match
+    Map<String, dynamic>? matchedCountry;
+    for (final country in _countries) {
+      final name = country['name']?.toString() ?? '';
+      if (name.toLowerCase() == countryName.toLowerCase()) {
+        matchedCountry = country;
+        break;
+      }
+    }
+
+    // If no exact match, try partial match for special cases
+    if (matchedCountry == null) {
+      final lowerCountryName = countryName.toLowerCase();
+      for (final country in _countries) {
+        final name = country['name']?.toString() ?? '';
+        final lowerName = name.toLowerCase();
+        if (lowerName.contains(lowerCountryName) || lowerCountryName.contains(lowerName)) {
+          matchedCountry = country;
+          break;
+        }
+      }
+    }
+
+    if (matchedCountry != null) {
+      final countryId = matchedCountry['id']?.toString() ??
+                        matchedCountry['_id']?.toString() ??
+                        matchedCountry['code']?.toString() ?? '';
+      final matchedCountryName = matchedCountry['name']?.toString() ?? countryName;
+
+      if (countryId.isNotEmpty && countryId != _selectedCountryId) {
+        setState(() {
+          _selectedCountryId = countryId;
+          _selectedCountryName = matchedCountryName;
+          // Reset state and city when country changes
+          _selectedStateId = null;
+          _selectedStateName = null;
+          _selectedCityId = null;
+          _selectedCityName = null;
+          _states = [];
+          _cities = [];
+        });
+        debugPrint('Auto-synced country: $matchedCountryName (ID: $countryId) for code: $countryCode');
+
+        // Show user feedback
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Country updated to $matchedCountryName'),
+            duration: const Duration(seconds: 2),
+            backgroundColor: const Color(0xFF84BD00),
+          ),
+        );
+
+        // Load states for the selected country
+        _loadStates(countryId);
+      }
+    } else {
+      debugPrint('No matching country found for: $countryName (code: $countryCode)');
+    }
+  }
+
   void _showCountryCodePicker() {
     FocusManager.instance.primaryFocus?.unfocus();
     FocusScope.of(context).requestFocus(FocusNode());
@@ -856,9 +1217,13 @@ class _UpdateProfileScreenState extends State<UpdateProfileScreen> {
                     final isSelected = country['code'] == _selectedCountryCode;
                     return ListTile(
                       onTap: () {
+                        final selectedCode = country['code']!;
+                        final selectedCountryName = country['country']!;
                         setState(() {
-                          _selectedCountryCode = country['code']!;
+                          _selectedCountryCode = selectedCode;
                         });
+                        // Sync country when country code is selected
+                        _syncCountryWithCountryCode(selectedCode, selectedCountryName);
                         Navigator.pop(context);
                       },
                       leading: Text(

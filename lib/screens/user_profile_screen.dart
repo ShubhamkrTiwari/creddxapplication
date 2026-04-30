@@ -9,6 +9,8 @@ import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:upgrader/upgrader.dart';
 import '../services/socket_service.dart';
 import '../services/spot_service.dart';
 import '../services/wallet_service.dart';
@@ -17,6 +19,7 @@ import 'invite_friends_screen.dart';
 import 'login_screen.dart';
 import 'update_profile_screen.dart';
 import 'referral_hub_screen.dart';
+import 'updates_screen.dart';
 import 'feedback_screen.dart';
 import 'kyc_digilocker_instruction_screen.dart';
 import 'withdraw_screen.dart';
@@ -26,9 +29,7 @@ import 'inr_withdraw_upi_screen.dart';
 import '../services/user_service.dart';
 import '../services/p2p_service.dart';
 import '../services/auth_service.dart';
-import '../services/app_update_service.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
-import '../widgets/update_banner.dart';
 
 class UserProfileScreen extends StatefulWidget {
   const UserProfileScreen({super.key});
@@ -56,6 +57,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   // Referral code state
   String? _referralCode;
   bool _isLoadingReferralCode = false;
+  bool _isUpdateAvailable = false;
+  String _currentVersion = "";
 
   // Wallet balance data from getWalletBalance API
   Map<String, dynamic> _apiWalletBalances = {};
@@ -87,8 +90,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     // Load user data and check KYC status immediately when screen loads
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadUserData();
-      // Check for app updates
-      AppUpdateService.checkForUpdate(context);
+      // App update check removed
     });
     
     _loadTrustedDevices();
@@ -97,6 +99,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     _loadAssetPrices();
     _loadConversionRate();
     _fetchWalletBalances();
+    _checkVersionUpdate();
     
     // Initialize UnifiedWalletService and refresh balances to get INR
     _initUnifiedWallet();
@@ -118,8 +121,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       }
     });
     
-    // Schedule periodic update checks
-    AppUpdateService.scheduleUpdateCheck(context);
+    // Periodic update checks removed
     
     // Refresh conversion rate every 5 minutes
     Timer.periodic(const Duration(minutes: 5), (timer) {
@@ -170,6 +172,15 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           debugPrint('Bot: $_botUSDT');
           debugPrint('Holding: $_holdingUSDT');
         });
+
+        // Aggressive grand total fetch as fallback
+        final grandTotal = await WalletService.getTotalUSDTBalance();
+        if (mounted && grandTotal > 0 && (_mainUSDT + _spotUSDT + _p2pUSDT + _botUSDT + _holdingUSDT) == 0) {
+          setState(() {
+            _mainUSDT = grandTotal; // Assign to main as fallback so it shows in total
+          });
+          debugPrint('Aggressive grand total fallback applied: $grandTotal');
+        }
       } else {
         debugPrint('API call failed or no data: $result');
         setState(() {
@@ -189,32 +200,50 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   double _extractUSDTFromWalletData(dynamic walletData) {
     if (walletData == null) return 0.0;
 
-    // Handle balances list format
-    if (walletData['balances'] is List) {
-      final balances = walletData['balances'] as List;
-      for (var balance in balances) {
-        if (balance['coin']?.toString().toUpperCase() == 'USDT') {
-          return double.tryParse(balance['total']?.toString() ?? balance['available']?.toString() ?? '0') ?? 0.0;
+    // 1. If it's a number, return it
+    if (walletData is num) return walletData.toDouble();
+    if (walletData is String) return double.tryParse(walletData) ?? 0.0;
+
+    if (walletData is Map) {
+      // 2. Check for USDT key (Map or Num)
+      final usdt = walletData['USDT'] ?? walletData['usdt'];
+      if (usdt != null) {
+        if (usdt is num) return usdt.toDouble();
+        if (usdt is String) return double.tryParse(usdt) ?? 0.0;
+        if (usdt is Map) {
+          final val = usdt['total'] ?? usdt['balance'] ?? usdt['available'] ?? usdt['free'] ?? usdt['amount'] ?? '0';
+          return double.tryParse(val.toString()) ?? 0.0;
         }
       }
-    }
 
-    // Handle balances map format
-    if (walletData['balances'] is Map) {
-      final usdtData = walletData['balances']['USDT'] ?? walletData['balances']['usdt'];
-      if (usdtData is Map) {
-        return double.tryParse(usdtData['total']?.toString() ?? usdtData['available']?.toString() ?? '0') ?? 0.0;
-      } else if (usdtData is num) {
-        return usdtData.toDouble();
+      // 3. Handle balances list format
+      if (walletData['balances'] is List) {
+        final balances = walletData['balances'] as List;
+        for (var b in balances) {
+          if (b is Map && (b['coin']?.toString().toUpperCase() == 'USDT' || b['asset']?.toString().toUpperCase() == 'USDT')) {
+            final val = b['total'] ?? b['balance'] ?? b['available'] ?? b['free'] ?? b['amount'] ?? '0';
+            return double.tryParse(val.toString()) ?? 0.0;
+          }
+        }
       }
-    }
 
-    // Direct USDT fields
-    if (walletData['USDT'] != null) {
-      final usdt = walletData['USDT'];
-      if (usdt is num) return usdt.toDouble();
-      if (usdt is Map) {
-        return double.tryParse(usdt['total']?.toString() ?? usdt['available']?.toString() ?? '0') ?? 0.0;
+      // 4. Handle balances map format
+      if (walletData['balances'] is Map) {
+        final balances = walletData['balances'] as Map;
+        final usdtData = balances['USDT'] ?? balances['usdt'];
+        if (usdtData != null) {
+          if (usdtData is num) return usdtData.toDouble();
+          if (usdtData is Map) {
+            final val = usdtData['total'] ?? usdtData['balance'] ?? usdtData['available'] ?? usdtData['free'] ?? usdtData['amount'] ?? '0';
+            return double.tryParse(val.toString()) ?? 0.0;
+          }
+        }
+      }
+
+      // 5. Direct common fields (if the Map itself represents the USDT balance)
+      final val = walletData['total'] ?? walletData['balance'] ?? walletData['available'] ?? walletData['free'] ?? walletData['amount'];
+      if (val != null) {
+        return double.tryParse(val.toString()) ?? 0.0;
       }
     }
 
@@ -247,27 +276,21 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       }
     } catch (e) {
       debugPrint('_initUnifiedWallet error: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingWallet = false);
+      }
     }
   }
 
   void _subscribeToBalance() {
-    // Subscribe to UnifiedWalletService for INR balance updates
+    // Subscribe to UnifiedWalletService for all balance updates
     _unifiedWalletSubscription = unified.UnifiedWalletService.walletBalanceStream.listen((walletBalance) {
-      if (walletBalance != null && mounted) {
-        final mainBalance = walletBalance.mainBalance;
-        if (mainBalance != null) {
-          final inrVal = mainBalance['INR'] ?? mainBalance['inr'] ?? mainBalance['Inr'];
-          if (inrVal != null) {
-            final inrAmount = double.tryParse(inrVal.toString()) ?? 0.0;
-            debugPrint('UserProfileScreen: INR from UnifiedWalletService: $inrAmount');
-            setState(() {
-              _walletBalances['inr'] = inrAmount;
-              _walletBalances['INR'] = inrAmount;
-              _walletBalances['mainBalance'] = mainBalance;
-              _isLoadingWallet = false;
-            });
-          }
-        }
+      if (mounted) {
+        setState(() {
+          _isLoadingWallet = walletBalance == null;
+          // Trigger rebuild to refresh _getCoinBalance results
+        });
       }
     });
 
@@ -896,6 +919,27 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
   }
 
+  Future<void> _checkVersionUpdate() async {
+    try {
+      final PackageInfo packageInfo = await PackageInfo.fromPlatform();
+      setState(() {
+        _currentVersion = packageInfo.version;
+      });
+
+      // We use the same Upgrader instance to check for updates
+      final upgrader = Upgrader();
+      await upgrader.initialize();
+      
+      if (upgrader.isUpdateAvailable()) {
+        setState(() {
+          _isUpdateAvailable = true;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error checking version update: $e');
+    }
+  }
+
   Future<void> _loadUserData() async {
     // Load user data from /auth/me endpoint (includes KYC status)
     await _userService.initUserData();
@@ -1096,8 +1140,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       ),
       body: Column(
         children: [
-          // Update Banner
-          UpdateBanner(),
           Expanded(
             child: SingleChildScrollView(
               child: Column(
@@ -1150,10 +1192,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   const SizedBox(height: 12),
                   _buildProfileInfoRow('Mobile', '${_userService.userCountryCode ?? '+91'} ${_userService.userPhone ?? 'Not provided'}'),
                   const SizedBox(height: 12),
-                  _buildProfileInfoRow('Sign-Up Time', _userService.signUpTime ?? '12/11/2025 | 12:30:45'),
-                  const SizedBox(height: 12),
-                  _buildProfileInfoRow('Last Log-In', _userService.lastLogin ?? '11/12/2025 | 11:02:12'),
-                  const SizedBox(height: 12),
+                  // Sign-Up Time and Last Log-In hidden as per request
+                  // _buildProfileInfoRow('Sign-Up Time', _userService.signUpTime ?? '12/11/2025 | 12:30:45'),
+                  // const SizedBox(height: 12),
+                  // _buildProfileInfoRow('Last Log-In', _userService.lastLogin ?? '11/12/2025 | 11:02:12'),
+                  // const SizedBox(height: 12),
                   _buildReferralCodeRow(),
                   const SizedBox(height: 12),
                   _buildLocationInfoRows(),
@@ -1175,7 +1218,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   const SizedBox(height: 24),
                   _buildInviteFriendsTile(),
                   const SizedBox(height: 24),
-                  _buildSettingsTile(),
+                  _buildUpdatesTile(),
                   const SizedBox(height: 24),
                   _buildLogoutTile(),
                 ],
@@ -1194,13 +1237,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     final bool isCompleted = _userService.isKYCVerified();
     final bool isPending = _userService.isKYCPending();
     final bool canStart = _userService.isKYCNotStarted() || _userService.isKYCRejected();
+    final bool canRestart = _userService.canRestartKYC(); // Pending but document not verified
     
-    print('🔍 UI BUILD KYC: Status="${_userService.kycStatus}", isCompleted=$isCompleted, isPending=$isPending, canStart=$canStart');
+    print('🔍 UI BUILD KYC: Status="${_userService.kycStatus}", isCompleted=$isCompleted, isPending=$isPending, canStart=$canStart, canRestart=$canRestart');
 
     return GestureDetector(
       onTap: () async {
-        if (canStart) {
-          // If KYC not started, go to instruction screen
+        if (canStart || canRestart) {
+          // If KYC not started or incomplete, go to instruction screen
           final result = await Navigator.push(
             context,
             MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen())
@@ -1287,26 +1331,45 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 ],
               )
             else if (isPending)
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    _userService.kycStatus,
-                    style: TextStyle(
-                      color: _userService.getKYCStatusColor(),
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
+              canRestart
+                ? Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF84BD00),
+                      borderRadius: BorderRadius.circular(6),
                     ),
-                  ),
-                  if (_userService.kycSubmittedAt != null) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      _userService.kycSubmittedAt!,
-                      style: const TextStyle(color: Colors.white38, fontSize: 10),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Restart KYC',
+                          style: const TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.arrow_forward_ios, color: Colors.black, size: 10),
+                      ],
                     ),
-                  ],
-                ],
-              )
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        _userService.kycStatus,
+                        style: TextStyle(
+                          color: _userService.getKYCStatusColor(),
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      if (_userService.kycSubmittedAt != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          _userService.kycSubmittedAt!,
+                          style: const TextStyle(color: Colors.white38, fontSize: 10),
+                        ),
+                      ],
+                    ],
+                  )
             else
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -1347,6 +1410,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   String _getKYCDescription() {
+    // If KYC is pending but document not submitted, show incomplete message
+    if (_userService.canRestartKYC()) {
+      return 'KYC incomplete - click to restart';
+    }
     switch (_userService.kycStatus) {
       case 'Completed':
         return 'Your identity has been verified';
@@ -1459,16 +1526,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     );
   }
 
-  Widget _buildSettingsTile() {
+  Widget _buildUpdatesTile() {
     return GestureDetector(
-      onTap: () async {
-        await Navigator.push(
+      onTap: () {
+        Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => const UpdateProfileScreen()),
+          MaterialPageRoute(builder: (context) => const UpdatesScreen()),
         );
-        if (mounted) {
-          _loadUserData();
-        }
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -1478,14 +1542,37 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         ),
         child: Row(
           children: [
-            const Icon(Icons.settings, color: Color(0xFF84BD00), size: 22),
+            const Icon(Icons.system_update, color: Color(0xFF84BD00), size: 22),
             const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'Settings',
-                style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Updates',
+                    style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                  ),
+                  if (_currentVersion.isNotEmpty)
+                    Text(
+                      'Version $_currentVersion',
+                      style: const TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                ],
               ),
             ),
+            if (_isUpdateAvailable)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF84BD00),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text(
+                  'NEW',
+                  style: TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.bold),
+                ),
+              ),
+            const SizedBox(width: 8),
             const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 14),
           ],
         ),
@@ -1640,16 +1727,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     final spotBalanceMap = _walletBalances['spotBalance'] is Map ? _walletBalances['spotBalance'] as Map<String, dynamic>? : {};
     final spotRawAssets = _walletBalances['spot_raw'] as List<dynamic>? ?? [];
     final spotAssets = _walletBalances['spot_assets'] as List<dynamic>? ?? [];
-    
-    debugPrint('=== Building Spot Holdings List ===');
-    debugPrint('spotBalances: ${spotBalances.length} items');
-    debugPrint('spotBalanceMap: ${spotBalanceMap?.length} items');
-    debugPrint('spotRawAssets: ${spotRawAssets.length} items');
-    debugPrint('spotAssets: ${spotAssets.length} items');
-    
+
+    // Also get from UnifiedWalletService
+    final unifiedSpotAssets = unified.UnifiedWalletService.walletBalance?.spotAssets ?? {};
+
     // Combine data from all sources for comprehensive display
     final Map<String, double> combinedHoldings = {};
-    
+
     // Helper to add to combinedHoldings
     void addToHoldings(String? coin, double amount) {
       if (coin != null && coin.isNotEmpty) {
@@ -1657,7 +1741,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         combinedHoldings[symbol] = (combinedHoldings[symbol] ?? 0.0) + amount;
       }
     }
-    
+
     // Add from spotBalances list
     for (final balance in spotBalances) {
       if (balance is Map) {
@@ -1667,13 +1751,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         addToHoldings(coin, available + locked);
       }
     }
-    
+
     // Add from spotBalanceMap
     spotBalanceMap?.forEach((coin, value) {
       final amount = double.tryParse(value.toString()) ?? 0.0;
       addToHoldings(coin, amount);
     });
-    
+
     // Add from spotRawAssets
     for (final asset in spotRawAssets) {
       if (asset is Map) {
@@ -1683,8 +1767,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         addToHoldings(coin, available + locked);
       }
     }
-    
-    // Add from spotAssets
+
+    // Add from spotAssets list
     for (final asset in spotAssets) {
       if (asset is Map) {
         final coin = asset['asset']?.toString() ?? asset['coin']?.toString();
@@ -1694,149 +1778,132 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       }
     }
 
-    // Filter: Show ALL system coins if available, otherwise combine holdings
-    final List<String> allCoins = _allSystemCoins.isNotEmpty 
-        ? (Set<String>.from(_allSystemCoins)..addAll(combinedHoldings.keys)).toList()
-        : combinedHoldings.keys.toList();
+    // Add from UnifiedWalletService spotAssets Map
+    unifiedSpotAssets.forEach((coin, data) {
+      double amount = 0.0;
+      if (data is num) {
+        amount = data.toDouble();
+      } else if (data is Map) {
+        final val = data['total'] ?? data['balance'] ?? data['available'] ?? data['free'] ?? '0';
+        amount = double.tryParse(val.toString()) ?? 0.0;
+      }
+      addToHoldings(coin, amount);
+    });
+
+    // For USDT, add total balance from all wallets (main + spot + p2p + bot)
+    // This ensures spot USDT shows the same as Coin view USDT (total across all wallets)
+    double totalUSDT = 0.0;
+    // 1. Try UnifiedWalletService (most accurate)
+    totalUSDT = unified.UnifiedWalletService.totalUSDTBalance;
+    // 2. Try pre-calculated aggregated fields from _fetchWalletBalances
+    if (totalUSDT == 0.0) {
+      totalUSDT = _mainUSDT + _spotUSDT + _p2pUSDT + _botUSDT + _holdingUSDT;
+    }
+    // 3. Try local _walletBalances map
+    if (totalUSDT == 0.0) {
+      final data = _walletBalances;
+      final usdtVal = data['usdt'] ?? data['USDT'] ?? data['usdt_balance'] ?? data['balance'];
+      if (usdtVal != null) {
+        if (usdtVal is num) totalUSDT = usdtVal.toDouble();
+        else if (usdtVal is String) totalUSDT = double.tryParse(usdtVal) ?? 0.0;
+      }
+    }
+    // 4. Try _apiWalletBalances as a last resort
+    if (totalUSDT == 0.0 && _apiWalletBalances.isNotEmpty) {
+      totalUSDT = _extractUSDTFromWalletData(_apiWalletBalances['main']) +
+                  _extractUSDTFromWalletData(_apiWalletBalances['spot']) +
+                  _extractUSDTFromWalletData(_apiWalletBalances['p2p']) +
+                  _extractUSDTFromWalletData(_apiWalletBalances['bot'] ?? _apiWalletBalances['demo_bot']) +
+                  _extractUSDTFromWalletData(_apiWalletBalances['holding']);
+    }
+    // Add the total USDT to combined holdings (this will show total USDT in spot section)
+    if (totalUSDT > 0) {
+      addToHoldings('USDT', totalUSDT);
+    }
+
+    // Get all coins: system coins + coins with holdings
+    // Include ALL coins from the system, even with 0 balance
+    final Set<String> allCoinsSet = {};
+
+    // Add all system coins from API
+    if (_allSystemCoins.isNotEmpty) {
+      allCoinsSet.addAll(_allSystemCoins);
+    }
+
+    // Add coins with actual balances
+    allCoinsSet.addAll(combinedHoldings.keys);
+
+    // Add default coins if no system coins available yet
+    if (allCoinsSet.isEmpty) {
+      allCoinsSet.addAll(['USDT', 'BTC', 'ETH', 'USDC', 'BNB']);
+    }
+
+    // Remove INR from spot
+    allCoinsSet.remove('INR');
+    allCoinsSet.remove('inr');
+
+    final List<String> allCoins = allCoinsSet.toList();
 
     // Sort: Priority coins first, then by balance descending, then alphabetical
-    final List<String> priorityCoins = ['INR', 'USDT', 'BTC', 'ETH'];
+    final List<String> priorityCoins = ['USDT', 'BTC', 'ETH', 'USDC', 'BNB', 'ADA', 'SOL', 'DOT', 'XRP', 'MATIC'];
     allCoins.sort((a, b) {
       final aPriority = priorityCoins.indexOf(a);
       final bPriority = priorityCoins.indexOf(b);
-      
+
       if (aPriority != -1 || bPriority != -1) {
         if (aPriority != -1 && bPriority != -1) return aPriority.compareTo(bPriority);
         return aPriority != -1 ? -1 : 1;
       }
-      
+
       final aBalance = combinedHoldings[a] ?? 0.0;
       final bBalance = combinedHoldings[b] ?? 0.0;
       if (bBalance != aBalance) return bBalance.compareTo(aBalance);
       return a.compareTo(b);
     });
 
+    // Build rows for each coin
     return Column(
-      children: allCoins.map((coin) {
+      children: allCoins.asMap().entries.map((entry) {
+        final index = entry.key;
+        final coin = entry.value;
         final balance = combinedHoldings[coin] ?? 0.0;
-        
+        final isLast = index == allCoins.length - 1;
+
         String formattedBalance;
-        if (coin == 'INR') {
-          formattedBalance = '${balance.toStringAsFixed(2)} $coin';
+        if (_isWalletHidden) {
+          formattedBalance = '***';
+        } else if (coin == 'INR') {
+          formattedBalance = balance.toStringAsFixed(2);
         } else if (coin == 'BTC') {
-          formattedBalance = '${balance.toStringAsFixed(8)} $coin';
+          formattedBalance = balance.toStringAsFixed(8);
         } else {
-          formattedBalance = '${balance.toStringAsFixed(6)} $coin';
+          formattedBalance = balance.toStringAsFixed(6);
         }
 
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.2),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.white.withOpacity(0.1), width: 1),
-          ),
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    flex: 2,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          coin, 
-                          style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          _isWalletHidden ? '*** $coin' : formattedBalance, 
-                          style: const TextStyle(color: Color(0xFF84BD00), fontSize: 14, fontWeight: FontWeight.w600),
-                        ),
-                      ],
-                    ),
+        return Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    coin,
+                    style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500),
                   ),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Deposit button
-                      GestureDetector(
-                        onTap: () {
-                          if (coin == 'INR') {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (context) => InrDepositScreen()),
-                            );
-                          } else {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => DepositScreen(),
-                              ),
-                            );
-                          }
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF84BD00),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Text(
-                            'Deposit',
-                            style: TextStyle(
-                              color: Colors.black,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      // Withdraw button
-                      GestureDetector(
-                        onTap: () {
-                          if (coin == 'INR') {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (context) => InrWithdrawUpiScreen()),
-                            );
-                          } else {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => WithdrawScreen(),
-                              ),
-                            );
-                          }
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.transparent,
-                            border: Border.all(color: const Color(0xFF84BD00), width: 1.5),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Text(
-                            'Withdraw',
-                            style: TextStyle(
-                              color: Color(0xFF84BD00),
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
+                ),
+                SizedBox(
+                  width: 120,
+                  child: Text(
+                    _isWalletHidden ? '*** $coin' : '$formattedBalance $coin',
+                    style: const TextStyle(color: Color(0xFF84BD00), fontSize: 14, fontWeight: FontWeight.w600),
+                    textAlign: TextAlign.right,
                   ),
-                ],
-              ),
-            ],
-          ),
+                ),
+              ],
+            ),
+            if (!isLast) const Divider(color: Colors.white10, height: 16),
+          ],
         );
       }).toList(),
     );
@@ -2027,7 +2094,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               }
               final items = _selectedView == 'wallet'
                 ? ['INR', 'Main', 'SPOT', 'P2P', 'Bot']
-                : _getAllCoinsWithBalances();
+                : ['INR', 'USDT'];
               return items.asMap().entries.map((entry) {
                 final index = entry.key;
                 final item = entry.value;
@@ -2051,7 +2118,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   String _getWalletBalance(String walletType) {
-    if (_isLoadingWallet) return '...';
+    if (_isLoadingWallet && !unified.UnifiedWalletService.isInitialized) return '...';
 
     // Use UnifiedWalletService like wallet screen
     double total = 0.0;
@@ -2060,15 +2127,19 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     switch (walletType.toUpperCase()) {
       case 'MAIN':
         total = unified.UnifiedWalletService.mainUSDTBalance;
+        if (total == 0.0) total = _mainUSDT;
         break;
       case 'SPOT':
         total = unified.UnifiedWalletService.spotUSDTBalance;
+        if (total == 0.0) total = _spotUSDT;
         break;
       case 'P2P':
         total = unified.UnifiedWalletService.p2pUSDTBalance;
+        if (total == 0.0) total = _p2pUSDT;
         break;
       case 'BOT':
         total = unified.UnifiedWalletService.botUSDTBalance;
+        if (total == 0.0) total = _botUSDT;
         break;
       case 'INR':
         currency = 'INR';
@@ -2080,7 +2151,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             total = double.tryParse(socketInr.toString()) ?? 0.0;
           }
         }
-        debugPrint('_getWalletBalance(INR): total=$total');
         break;
     }
 
@@ -2089,242 +2159,74 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
   
   String _getCoinBalance(String coin) {
-    if (_isLoadingWallet) return '...';
-    
-    final coinKey = coin.toLowerCase();
-    final data = _walletBalances;
     double total = 0.0;
     
-    // If no data from API, show 0.00 (no mock data)
-    if (_walletBalances.isEmpty) {
-      debugPrint('No coin balance data available from API');
-      if (_isWalletHidden) return '*** $coin';
-      return '0.00 $coin';
-    }
-    
-    // Special handling for INR
     if (coin == 'INR') {
-      // First try flat format: mainBalance.INR
-      if (data['mainBalance'] is Map && data['mainBalance']['INR'] != null) {
-        total = double.tryParse(data['mainBalance']['INR'].toString()) ?? 0.0;
-        debugPrint('Found INR in mainBalance flat format: $total');
-      }
-
-      // Check in spot_assets (from SpotService)
-      if (total == 0.0 && data['spot_assets'] is Map) {
-        final spotAssets = data['spot_assets'] as Map;
-        if (spotAssets['INR'] != null) {
-          total = double.tryParse(spotAssets['INR']['available']?.toString() ?? spotAssets['INR']['total']?.toString() ?? '0') ?? 0.0;
-          debugPrint('Found INR in spot_assets: $total');
-        }
-      }
-
-      // Check in raw_assets or spot_raw (from SpotService)
-      final rawAssets = data['spot_raw'] ?? data['raw_assets'];
-      if (total == 0.0 && rawAssets is List) {
-        for (final asset in rawAssets) {
-          if (asset is Map && asset['asset']?.toString().toUpperCase() == 'INR') {
-            total = double.tryParse(asset['available']?.toString() ?? asset['total']?.toString() ?? '0') ?? 0.0;
-            debugPrint('Found INR in raw assets: $total');
-            break;
-          }
-        }
-      }
-
-      // Direct keys fallback
-      if (total == 0.0 && data['inr'] != null) {
-        total = double.tryParse(data['inr'].toString()) ?? 0.0;
-      } else if (total == 0.0 && data['inr_available'] != null) {
-        total = double.tryParse(data['inr_available'].toString()) ?? 0.0;
-      } else if (total == 0.0 && data['inr_total'] != null) {
-        total = double.tryParse(data['inr_total'].toString()) ?? 0.0;
-      }
-      
-      // Check top-level assets map
-      if (total == 0.0 && data['assets'] is Map) {
-        final assets = data['assets'] as Map;
-        if (assets['INR'] != null) {
-          final val = assets['INR'];
-          if (val is Map) {
-            total = double.tryParse(val['available']?.toString() ?? val['total']?.toString() ?? '0') ?? 0.0;
-          } else {
-            total = double.tryParse(val.toString()) ?? 0.0;
-          }
-        }
-      }
-
-      // Check nested data structure
-      if (total == 0.0 && data['data'] != null) {
-        final nestedData = data['data'];
-        if (nestedData is Map) {
-          total = double.tryParse(nestedData['inr']?.toString() ?? '0') ?? 0.0;
-          if (total == 0.0) {
-            total = double.tryParse(nestedData['inr_available']?.toString() ?? '0') ?? 0.0;
-          }
-        }
+      total = unified.UnifiedWalletService.totalINRBalance;
+      if (total == 0.0) {
+        // Fallback to local _walletBalances map
+        final inrVal = _walletBalances['inr'] ?? _walletBalances['INR'] ?? 0.0;
+        total = double.tryParse(inrVal.toString()) ?? 0.0;
       }
     } else if (coin == 'USDT') {
-      // For USDT in Coin View, show only MAIN wallet balance (like INR)
-      // Try flat format first: mainBalance.USDT
-      if (data['mainBalance'] is Map && data['mainBalance']['USDT'] != null) {
-        total = double.tryParse(data['mainBalance']['USDT'].toString()) ?? 0.0;
-        debugPrint('Found USDT in mainBalance flat format: $total');
-      }
-
-      // Check nested main wallet format
-      if (total == 0.0 && data['main'] != null) {
-        final mainWallet = data['main'];
-        if (mainWallet is Map) {
-          final balances = mainWallet['balances'];
-          if (balances is List) {
-            for (final bal in balances) {
-              if (bal is Map && (bal['coin']?.toString().toUpperCase() == 'USDT' || bal['asset']?.toString().toUpperCase() == 'USDT')) {
-                final available = double.tryParse(bal['available']?.toString() ?? '0') ?? 0.0;
-                final locked = double.tryParse(bal['locked']?.toString() ?? '0') ?? 0.0;
-                total = double.tryParse(bal['total']?.toString() ?? '0') ?? (available + locked);
-                debugPrint('Found USDT in main wallet nested format: $total');
-                break;
-              }
-            }
-          } else if (mainWallet['usdt_total'] != null) {
-            total = double.tryParse(mainWallet['usdt_total'].toString()) ?? 0.0;
-          } else if (mainWallet['usdt'] != null) {
-            total = double.tryParse(mainWallet['usdt'].toString()) ?? 0.0;
-          }
-        }
-      }
-
-      // Check nested data structure
-      if (total == 0.0 && data['data'] != null) {
-        final nestedData = data['data'];
-        if (nestedData is Map) {
-          // Try mainBalance in nested data
-          if (nestedData['mainBalance'] is Map && nestedData['mainBalance']['USDT'] != null) {
-            total = double.tryParse(nestedData['mainBalance']['USDT'].toString()) ?? 0.0;
-          }
-          // Try main wallet in nested data
-          if (total == 0.0 && nestedData['main'] != null) {
-            final mainWallet = nestedData['main'];
-            if (mainWallet is Map && mainWallet['balances'] is List) {
-              for (final bal in mainWallet['balances']) {
-                if (bal is Map && (bal['coin']?.toString().toUpperCase() == 'USDT' || bal['asset']?.toString().toUpperCase() == 'USDT')) {
-                  final available = double.tryParse(bal['available']?.toString() ?? '0') ?? 0.0;
-                  final locked = double.tryParse(bal['locked']?.toString() ?? '0') ?? 0.0;
-                  total = double.tryParse(bal['total']?.toString() ?? '0') ?? (available + locked);
-                  break;
-                }
-              }
-            }
-          }
-        }
-      }
-
-      // Direct key fallback
-      if (total == 0.0 && data['usdt'] != null) {
-        total = double.tryParse(data['usdt'].toString()) ?? 0.0;
-      }
-      if (total == 0.0 && data['usdt_total'] != null) {
-        total = double.tryParse(data['usdt_total'].toString()) ?? 0.0;
-      }
-      if (total == 0.0 && data['usdt_available'] != null) {
-        total = double.tryParse(data['usdt_available'].toString()) ?? 0.0;
-      }
-    } else {
-      // For other coins (BTC, ETH, etc.), sum from all wallets
-      // First try flat format: mainBalance, spotBalance, p2pBalance, botBalance
-      final flatFieldMap = {
-        'main': 'mainBalance',
-        'spot': 'spotBalance',
-        'p2p': 'p2pBalance',
-        'bot': 'botBalance',
-      };
-
-      for (String walletType in flatFieldMap.keys) {
-        final fieldName = flatFieldMap[walletType]!;
-        if (data[fieldName] != null) {
-          final walletData = data[fieldName];
-          if (walletData is Map) {
-            if (walletData[coin] != null) {
-              final value = double.tryParse(walletData[coin].toString()) ?? 0.0;
-              total += value;
-              debugPrint('Found $coin in flat format $fieldName: $value');
-            }
-          } else if (walletData is num && coin == 'USDT') {
-            final value = walletData.toDouble();
-            total += value;
-            debugPrint('Found USDT as direct number in $fieldName: $value');
-          }
-        }
-      }
-
-      // Try nested format
+      // 1. Try UnifiedWalletService (most accurate)
+      total = unified.UnifiedWalletService.totalUSDTBalance;
+      
+      // 2. Try pre-calculated aggregated fields from _fetchWalletBalances
       if (total == 0.0) {
-        final walletTypes = ['main', 'spot', 'p2p', 'bot'];
-        for (String walletType in walletTypes) {
-          if (data[walletType] != null) {
-            final wallet = data[walletType];
-            if (wallet is Map) {
-              final balances = wallet['balances'];
-              if (balances is List) {
-                for (final bal in balances) {
-                  if (bal is Map && bal['coin']?.toString().toUpperCase() == coin) {
-                    final available = double.tryParse(bal['available']?.toString() ?? '0') ?? 0.0;
-                    final locked = double.tryParse(bal['locked']?.toString() ?? '0') ?? 0.0;
-                    total += available + locked;
-                    break;
-                  }
-                }
-              } else if (wallet['${coinKey}_total'] != null) {
-                total += double.tryParse(wallet['${coinKey}_total'].toString()) ?? 0.0;
-              } else if (wallet[coinKey] != null) {
-                total += double.tryParse(wallet[coinKey].toString()) ?? 0.0;
-              }
+        total = _mainUSDT + _spotUSDT + _p2pUSDT + _botUSDT + _holdingUSDT;
+      }
+      
+      // 3. Try local _walletBalances map thoroughly
+      if (total == 0.0) {
+        final data = _walletBalances;
+        
+        // Try common top-level keys
+        final usdtVal = data['usdt'] ?? data['USDT'] ?? data['usdt_balance'] ?? data['balance'];
+        if (usdtVal != null) {
+          if (usdtVal is num) total = usdtVal.toDouble();
+          else if (usdtVal is String) total = double.tryParse(usdtVal) ?? 0.0;
+        }
+        
+        // Try mainBalance nested key
+        if (total == 0.0 && data['mainBalance'] is Map) {
+          final main = data['mainBalance'] as Map;
+          final val = main['USDT'] ?? main['usdt'];
+          if (val != null) {
+            if (val is num) total = val.toDouble();
+            else if (val is Map) total = double.tryParse(val['total']?.toString() ?? val['available']?.toString() ?? '0') ?? 0.0;
+          }
+        }
+        
+        // Try summing across different wallets if present in _walletBalances
+        if (total == 0.0) {
+          final keys = ['main', 'spot', 'p2p', 'bot'];
+          for (var key in keys) {
+            if (data[key] is Map) {
+              final w = data[key] as Map;
+              final bal = w['usdt'] ?? w['USDT'] ?? w['balance'];
+              if (bal != null) total += double.tryParse(bal.toString()) ?? 0.0;
             }
           }
         }
       }
 
-      // Check nested data structure
-      if (total == 0.0 && data['data'] != null) {
-        final nestedData = data['data'];
-        if (nestedData is Map) {
-          for (String walletType in ['main', 'spot', 'p2p', 'bot']) {
-            if (nestedData[walletType] != null) {
-              final wallet = nestedData[walletType];
-              if (wallet is Map && wallet['balances'] is List) {
-                for (final bal in wallet['balances']) {
-                  if (bal is Map && bal['coin']?.toString().toUpperCase() == coin) {
-                    final available = double.tryParse(bal['available']?.toString() ?? '0') ?? 0.0;
-                    final locked = double.tryParse(bal['locked']?.toString() ?? '0') ?? 0.0;
-                    total += available + locked;
-                    break;
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-
-      // Direct key fallback
-      if (total == 0.0 && data[coinKey] != null) {
-        total = double.tryParse(data[coinKey].toString()) ?? 0.0;
-      }
-      if (total == 0.0 && data['${coinKey}_total'] != null) {
-        total = double.tryParse(data['${coinKey}_total'].toString()) ?? 0.0;
+      // 4. Try _apiWalletBalances as a last resort
+      if (total == 0.0 && _apiWalletBalances.isNotEmpty) {
+        total = _extractUSDTFromWalletData(_apiWalletBalances['main']) +
+                _extractUSDTFromWalletData(_apiWalletBalances['spot']) +
+                _extractUSDTFromWalletData(_apiWalletBalances['p2p']) +
+                _extractUSDTFromWalletData(_apiWalletBalances['bot'] ?? _apiWalletBalances['demo_bot']) +
+                _extractUSDTFromWalletData(_apiWalletBalances['holding']);
       }
     }
-    
+
     if (_isWalletHidden) return '*** $coin';
     
-    // Format based on coin type
-    if (coin == 'INR') {
-      return '${total.toStringAsFixed(2)} $coin';
-    } else if (coin == 'BTC') {
-      return '${total.toStringAsFixed(8)} $coin';
-    } else {
-      return '${total.toStringAsFixed(6)} $coin';
-    }
+    // If still 0 and loading, show dots
+    if (total == 0.0 && _isLoadingWallet) return '...';
+    
+    return '${total.toStringAsFixed(2)} $coin';
   }
   
 }

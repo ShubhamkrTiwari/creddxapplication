@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../services/wallet_service.dart';
 import '../services/notification_service.dart';
 import '../services/unified_wallet_service.dart';
@@ -1337,7 +1338,9 @@ class _WithdrawalHistoryBottomSheetState extends State<_WithdrawalHistoryBottomS
     try {
       final date = DateTime.tryParse(dateStr);
       if (date == null) return dateStr;
-      return '${date.day.toString().padLeft(2, '0')}-${date.month.toString().padLeft(2, '0')}-${date.year} • ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+      // Convert to IST (UTC+5:30)
+      final istDate = date.toUtc().add(const Duration(hours: 5, minutes: 30));
+      return DateFormat('dd MMM yyyy, hh:mm a').format(istDate);
     } catch (e) {
       return dateStr;
     }
@@ -1581,6 +1584,58 @@ class _WithdrawalHistoryBottomSheetState extends State<_WithdrawalHistoryBottomS
       ),
     );
   }
+
+  /// Normalize status from API (handles both int and string values)
+  int _normalizeStatus(dynamic status) {
+    if (status == null) return 1;
+    if (status is int) return status;
+    if (status is String) {
+      switch (status.toLowerCase()) {
+        case 'pending':
+        case 'processing':
+          return 1;
+        case 'completed':
+        case 'success':
+        case 'approved':
+          return 2;
+        case 'failed':
+        case 'rejected':
+        case 'cancelled':
+          return 3;
+        default:
+          return 1;
+      }
+    }
+    return 1;
+  }
+
+  /// Format date to IST timezone
+  String _formatISTDateTime(dynamic createdAt) {
+    if (createdAt == null) return 'Unknown';
+    try {
+      DateTime date;
+      final createdAtStr = createdAt.toString();
+
+      // Try parsing as ISO string first
+      date = DateTime.tryParse(createdAtStr) ?? DateTime.now();
+
+      // If parsing failed, try parsing as Unix timestamp
+      if (date == DateTime.now() && createdAtStr.isNotEmpty) {
+        final timestamp = int.tryParse(createdAtStr);
+        if (timestamp != null) {
+          date = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000);
+        }
+      }
+
+      // Convert to IST (UTC+5:30)
+      final istDate = date.toUtc().add(const Duration(hours: 5, minutes: 30));
+
+      // Format with AM/PM
+      return DateFormat('dd MMM yyyy, hh:mm a').format(istDate);
+    } catch (e) {
+      return createdAt.toString();
+    }
+  }
 }
 
 // INR Withdrawal History Bottom Sheet
@@ -1715,14 +1770,39 @@ class _WithdrawalHistorySheetState extends State<_WithdrawalHistorySheet> {
     );
   }
 
+  /// Normalize status from API (handles both int and string values)
+  int _normalizeStatus(dynamic status) {
+    if (status == null) return 1;
+    if (status is int) return status;
+    if (status is String) {
+      switch (status.toLowerCase()) {
+        case 'pending':
+        case 'processing':
+          return 1;
+        case 'completed':
+        case 'success':
+        case 'approved':
+          return 2;
+        case 'failed':
+        case 'rejected':
+        case 'cancelled':
+          return 3;
+        default:
+          return 1;
+      }
+    }
+    return 1;
+  }
+
   Widget _buildWithdrawalItem(Map<String, dynamic> withdrawal) {
     final amount = double.tryParse(withdrawal['amount']?.toString() ?? '0') ?? 0;
-    final status = withdrawal['status'] ?? 1;
+    final rawStatus = withdrawal['status'] ?? 1;
+    // Handle both integer and string status values from API
+    final status = _normalizeStatus(rawStatus);
     final withdrawType = withdrawal['withdrawType'] ?? withdrawal['withdraw_type'] ?? 1;
     final isUPI = withdrawType == 2;
     final createdAt = withdrawal['createdAt'] ?? withdrawal['created_at'];
-    final date = createdAt != null ? DateTime.tryParse(createdAt.toString()) ?? DateTime.now() : DateTime.now();
-    final formattedDate = '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
+    final formattedDate = _formatISTDateTime(createdAt);
 
     final bankDetails = withdrawal['bankDetails'] ?? withdrawal['withdrawDetails'] ?? withdrawal['bank_details'] ?? {};
     final bankName = bankDetails['bankName']?.toString() ?? bankDetails['bank_name']?.toString() ?? '';
@@ -1852,5 +1932,33 @@ class _WithdrawalHistorySheetState extends State<_WithdrawalHistorySheet> {
         ],
       ),
     );
+  }
+
+  /// Format date to IST timezone
+  String _formatISTDateTime(dynamic createdAt) {
+    if (createdAt == null) return 'Unknown';
+    try {
+      DateTime date;
+      final createdAtStr = createdAt.toString();
+
+      // Try parsing as ISO string first
+      date = DateTime.tryParse(createdAtStr) ?? DateTime.now();
+
+      // If parsing failed, try parsing as Unix timestamp
+      if (date == DateTime.now() && createdAtStr.isNotEmpty) {
+        final timestamp = int.tryParse(createdAtStr);
+        if (timestamp != null) {
+          date = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000);
+        }
+      }
+
+      // Convert to IST (UTC+5:30)
+      final istDate = date.toUtc().add(const Duration(hours: 5, minutes: 30));
+
+      // Format with AM/PM
+      return DateFormat('dd MMM yyyy, hh:mm a').format(istDate);
+    } catch (e) {
+      return createdAt.toString();
+    }
   }
 }

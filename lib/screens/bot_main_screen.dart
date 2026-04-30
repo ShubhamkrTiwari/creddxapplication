@@ -1,15 +1,12 @@
 import 'package:flutter/material.dart';
 import 'bot_trade_screen.dart';
 import 'bot_dashboard_screen.dart';
-import 'package:creddx/screens/package_program_screen.dart';
 import 'bot_algorithm_screen.dart';
 import 'bot_positions_screen.dart';
 import 'subscription_screen.dart';
 import '../main_navigation.dart';
 import '../services/user_service.dart';
-import '../utils/kyc_unlock_mixin.dart';
 import 'user_profile_screen.dart';
-import 'kyc_digilocker_instruction_screen.dart';
 
 class BotMainScreen extends StatefulWidget {
   const BotMainScreen({super.key});
@@ -18,17 +15,10 @@ class BotMainScreen extends StatefulWidget {
   State<BotMainScreen> createState() => _BotMainScreenState();
 }
 
-class _BotMainScreenState extends State<BotMainScreen> with KYCUnlockMixin {
+class _BotMainScreenState extends State<BotMainScreen> {
   // Start with index 1 (Dashboard) as the default active tab
   int _selectedIndex = 1;
   final UserService _userService = UserService();
-
-  @override
-  void initState() {
-    super.initState();
-    // Refresh KYC status to ensure we have the latest status
-    refreshKYCStatus();
-  }
 
   @override
   void didChangeDependencies() {
@@ -42,51 +32,11 @@ class _BotMainScreenState extends State<BotMainScreen> with KYCUnlockMixin {
     }
   }
 
-  // Check if KYC is completed
-  bool _isKYCCompleted() {
-    return isKYCCompleted(); // Use the mixin method
-  }
-
   // Check if profile is complete
   bool _isProfileComplete() {
     return _userService.hasEmail() && 
            _userService.userPhone != null && 
            _userService.userPhone!.isNotEmpty;
-  }
-
-  // Show KYC verification required dialog
-  void _showKYCRequiredDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF1A1A1A),
-          title: const Text(
-            'KYC Verification Required',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-          ),
-          content: const Text(
-            'You need to complete KYC verification to access algorithmic trading features. Please complete your KYC process first.',
-            style: TextStyle(color: Colors.white70),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Later', style: TextStyle(color: Colors.grey)),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
-              child: const Text('Complete KYC', style: TextStyle(color: Colors.black)),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   // Show profile completion required dialog
@@ -124,18 +74,13 @@ class _BotMainScreenState extends State<BotMainScreen> with KYCUnlockMixin {
     );
   }
 
-  // Validate KYC and profile before proceeding
+  // Validate profile before proceeding (KYC not required for bot section)
   bool _validateUserRequirements() {
-    if (!_isKYCCompleted()) {
-      _showKYCRequiredDialog();
-      return false;
-    }
-    
     if (!_isProfileComplete()) {
       _showProfileRequiredDialog();
       return false;
     }
-    
+
     return true;
   }
 
