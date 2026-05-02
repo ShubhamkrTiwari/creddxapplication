@@ -29,7 +29,25 @@ class _KYCDigiLockerInstructionScreenState
       await _userService.fetchProfileDataFromAPI();
       if (!mounted) return;
 
+      debugPrint('=== Instruction Screen: KYC Status Check ===');
+      debugPrint('documentImageVerified: ${_userService.documentImageVerified}');
+      debugPrint('kycStatus: ${_userService.kycStatus}');
+      debugPrint('shouldResumeKYCAtSelfieStep: ${_userService.shouldResumeKYCAtSelfieStep}');
+      debugPrint('needsSelfieUpload: ${_userService.needsSelfieUpload()}');
+
+      // PRIORITY 1: If documents are verified, go directly to selfie (even if rejected)
+      if (_userService.documentImageVerified == true) {
+        debugPrint('✅ Instruction screen: Documents verified, redirecting to selfie');
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const KYCSelfieScreen()),
+        );
+        return;
+      }
+
+      // PRIORITY 2: Check if should resume at selfie step
       if (_userService.shouldResumeKYCAtSelfieStep) {
+        debugPrint('✅ Instruction screen: Should resume at selfie, redirecting');
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (context) => const KYCSelfieScreen()),
@@ -140,12 +158,29 @@ class _KYCDigiLockerInstructionScreenState
   }
 
   void _proceedToKYC() {
+    debugPrint('=== _proceedToKYC called ===');
+    debugPrint('documentImageVerified: ${_userService.documentImageVerified}');
+    debugPrint('isProfileComplete: ${_isProfileComplete()}');
+    
     if (_isProfileComplete()) {
+      // If documents already verified, go directly to selfie
+      if (_userService.documentImageVerified == true) {
+        debugPrint('✅ Instruction screen: Documents already verified, going to selfie');
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const KYCSelfieScreen()),
+        );
+        return;
+      }
+      
+      // Otherwise, go to DigiLocker screen
+      debugPrint('➡️ Going to DigiLocker screen');
       Navigator.push(
         context,
         MaterialPageRoute(builder: (context) => const KYCDigiLockerScreen()),
       );
     } else {
+      debugPrint('⚠️ Profile incomplete, showing dialog');
       _showProfileRequiredDialog();
     }
   }

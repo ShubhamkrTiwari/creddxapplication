@@ -27,12 +27,19 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 24  // Android 7.0+ for better security and features
-        targetSdk = 34  // Android 14 for Play Store compliance
+        targetSdk = 35  // Android 15 for Play Store compliance
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        
+
         // Play Store optimization
         multiDexEnabled = true
+
+        // Support for 16 KB memory page sizes (Android 15+ requirement)
+        ndk {
+            abiFilters.add("armeabi-v7a")
+            abiFilters.add("arm64-v8a")
+            abiFilters.add("x86_64")
+        }
     }
 
     signingConfigs {
@@ -61,7 +68,9 @@ android {
 }
 
 dependencies {
-    implementation("com.google.android.play:core:1.10.3")
+    // Split Play Core libraries for SDK 34+ compatibility
+    implementation("com.google.android.play:app-update:2.1.0")
+    implementation("com.google.android.play:review:2.0.2")
 }
 
 

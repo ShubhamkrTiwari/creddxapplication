@@ -22,6 +22,7 @@ import 'referral_hub_screen.dart';
 import 'updates_screen.dart';
 import 'feedback_screen.dart';
 import 'kyc_digilocker_instruction_screen.dart';
+import 'kyc_selfie_screen.dart';
 import 'withdraw_screen.dart';
 import 'deposit_screen.dart';
 import 'inr_deposit_screen.dart';
@@ -134,8 +135,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Refresh user data when screen regains focus (includes KYC status checking)
-    _loadUserData();
+    // Force refresh user data when screen regains focus (includes KYC status checking)
+    // This ensures status is always up-to-date from /auth/me
+    debugPrint('Profile screen: didChangeDependencies - forcing KYC status refresh');
+    _userService.fetchProfileDataFromAPI().then((_) {
+      if (mounted) {
+        setState(() {});
+      }
+    });
   }
   
   
@@ -998,11 +1005,33 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         ),
       );
 
+      // Store the current status before refresh
+      String previousStatus = _userService.kycStatus;
+      
       // Fetch fresh KYC status from /auth/me endpoint only
       await _userService.fetchProfileDataFromAPI();
       
       String currentStatus = _userService.kycStatus;
-      print('✅ Refresh KYC - Status from /me endpoint: "$currentStatus"');
+      print('✅ Refresh KYC - Previous: "$previousStatus", Current: "$currentStatus"');
+      
+      // If status hasn't changed and it's still the same, it might be due to rate limit
+      // Check if we should show a rate limit message
+      if (previousStatus == currentStatus && currentStatus == 'Pending') {
+        // Try to check via KYC status endpoint to see if we get rate limit error
+        final kycCheckResult = await _userService.checkKYCStatusPost();
+        if (kycCheckResult['error'] != null && 
+            (kycCheckResult['error'].toString().toLowerCase().contains('limit') ||
+             kycCheckResult['error'].toString().toLowerCase().contains('429'))) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('API limit reached. Your KYC status will be updated automatically once processed.'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 4),
+            ),
+          );
+          return;
+        }
+      }
       
       // Show appropriate message based on status
       if (currentStatus == 'Completed') {
@@ -1022,7 +1051,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       } else if (currentStatus == 'Pending') {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('KYC status refreshed: Pending'),
+            content: Text('KYC status refreshed: Pending verification'),
             backgroundColor: Colors.orange,
           ),
         );
@@ -1036,12 +1065,24 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       }
     } catch (e) {
       print('Error refreshing KYC status: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error refreshing KYC status: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      // Check if error is related to rate limiting
+      if (e.toString().toLowerCase().contains('limit') || 
+          e.toString().toLowerCase().contains('429')) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('API limit reached. Please try again later.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error refreshing KYC status: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -1238,12 +1279,44 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     final bool isPending = _userService.isKYCPending();
     final bool canStart = _userService.isKYCNotStarted() || _userService.isKYCRejected();
     final bool canRestart = _userService.canRestartKYC(); // Pending but document not verified
+    final bool needsSelfieUpload = _userService.needsSelfieUpload(); // Document verified but selfie pending
     
-    print('🔍 UI BUILD KYC: Status="${_userService.kycStatus}", isCompleted=$isCompleted, isPending=$isPending, canStart=$canStart, canRestart=$canRestart');
+    // Check if rejection is due to name mismatch
+    final bool isNameMismatchRejection = _userService.kycStatus == 'Rejected' && 
+        _userService.kycRejectionReason != null && 
+        _userService.kycRejectionReason!.toLowerCase().contains('name mismatch');
+    
+    print('🔍 UI BUILD KYC: Status="${_userService.kycStatus}", isCompleted=$isCompleted, isPending=$isPending, canStart=$canStart, canRestart=$canRestart, needsSelfieUpload=$needsSelfieUpload, isNameMismatchRejection=$isNameMismatchRejection');
 
     return GestureDetector(
       onTap: () async {
-        if (canStart || canRestart) {
+        // Handle name mismatch rejection specifically
+        if (isNameMismatchRejection) {
+          _showNameMismatchDialog();
+          return;
+        }
+        
+        // CRITICAL: If rejected (but not name mismatch), always go to DigiLocker (fresh start)
+        if (_userService.kycStatus == 'Rejected') {
+          final result = await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen())
+          );
+          if (mounted) {
+            _loadUserData();
+            setState(() {});
+          }
+        } else if (needsSelfieUpload) {
+          // Document verified, need to upload selfie
+          final result = await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const KYCSelfieScreen(fromDigiLocker: true))
+          );
+          if (mounted) {
+            _loadUserData();
+            setState(() {});
+          }
+        } else if (canStart || canRestart) {
           // If KYC not started or incomplete, go to instruction screen
           final result = await Navigator.push(
             context,
@@ -1299,7 +1372,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    _getKYCDescription(),
+                    needsSelfieUpload ? 'Document verified - upload selfie to complete' : _getKYCDescription(),
                     style: const TextStyle(color: Colors.white54, fontSize: 12),
                   ),
                 ],
@@ -1350,26 +1423,47 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                       ],
                     ),
                   )
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        _userService.kycStatus,
-                        style: TextStyle(
-                          color: _userService.getKYCStatusColor(),
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
+                : needsSelfieUpload
+                  ? Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF84BD00),
+                        borderRadius: BorderRadius.circular(6),
                       ),
-                      if (_userService.kycSubmittedAt != null) ...[
-                        const SizedBox(height: 2),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.camera_alt, color: Colors.black, size: 12),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Upload Selfie',
+                            style: const TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(width: 4),
+                          const Icon(Icons.arrow_forward_ios, color: Colors.black, size: 10),
+                        ],
+                      ),
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
                         Text(
-                          _userService.kycSubmittedAt!,
-                          style: const TextStyle(color: Colors.white38, fontSize: 10),
+                          _userService.kycStatus,
+                          style: TextStyle(
+                            color: _userService.getKYCStatusColor(),
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
+                        if (_userService.kycSubmittedAt != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            _userService.kycSubmittedAt!,
+                            style: const TextStyle(color: Colors.white38, fontSize: 10),
+                          ),
+                        ],
                       ],
-                    ],
-                  )
+                    )
             else
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -1382,6 +1476,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   children: [
                     Text(
                       _userService.kycStatus == 'Not Started' ? 'Start KYC Now' : 
+                      isNameMismatchRejection ? 'Update Profile' :
                       _userService.kycStatus == 'Rejected' ? 'Restart KYC' : 'Start Verification',
                       style: const TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.bold),
                     ),
@@ -1397,6 +1492,15 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   IconData _getKYCIcon() {
+    // Check if rejection is due to name mismatch
+    final bool isNameMismatchRejection = _userService.kycStatus == 'Rejected' && 
+        _userService.kycRejectionReason != null && 
+        _userService.kycRejectionReason!.toLowerCase().contains('name mismatch');
+    
+    if (isNameMismatchRejection) {
+      return Icons.warning_amber;
+    }
+    
     switch (_userService.kycStatus) {
       case 'Completed':
         return Icons.verified;
@@ -1414,6 +1518,16 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     if (_userService.canRestartKYC()) {
       return 'KYC incomplete - click to restart';
     }
+    
+    // Check if rejection is due to name mismatch
+    final bool isNameMismatchRejection = _userService.kycStatus == 'Rejected' && 
+        _userService.kycRejectionReason != null && 
+        _userService.kycRejectionReason!.toLowerCase().contains('name mismatch');
+    
+    if (isNameMismatchRejection) {
+      return 'Name mismatch - Update profile for admin review';
+    }
+    
     switch (_userService.kycStatus) {
       case 'Completed':
         return 'Your identity has been verified';
@@ -1424,6 +1538,84 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       default:
         return 'Complete verification to unlock all features';
     }
+  }
+
+  void _showNameMismatchDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text(
+            'Name Mismatch Detected',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Your KYC was rejected because the name on your documents does not match your profile name.',
+                style: TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Please update your profile name to match your government documents. The admin will review your updated profile.',
+                style: TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Rejection Reason: ${_userService.kycRejectionReason ?? "Unknown"}',
+                style: const TextStyle(color: Colors.orange, fontSize: 12),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                // Navigate to update profile screen
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const UpdateProfileScreen()),
+                ).then((_) {
+                  // Refresh data when returning
+                  if (mounted) {
+                    _loadUserData();
+                    setState(() {});
+                    // Show message that admin will review
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Profile updated successfully. Admin will review your updated profile.'),
+                        backgroundColor: Color(0xFF84BD00),
+                        duration: Duration(seconds: 4),
+                      ),
+                    );
+                  }
+                });
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF84BD00),
+              ),
+              child: const Text(
+                'Update Profile Name',
+                style: TextStyle(color: Colors.black),
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Widget _buildReferralHubTile() {

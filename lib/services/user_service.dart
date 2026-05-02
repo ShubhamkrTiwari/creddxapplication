@@ -83,11 +83,16 @@ class UserService {
   String? get userCity => _userCity;
   String? get userCountryCode => _userCountryCode;
   String? get referralCode => _referralCode;
+  bool get documentImageVerified => _documentImageVerified ?? false;
   bool get shouldResumeKYCAtSelfieStep {
+    // IMPORTANT: If KYC is rejected, user must restart from DigiLocker (not selfie)
+    if (_kycStatus == 'Rejected') {
+      return false;
+    }
+    
     final documentVerified = _documentImageVerified == true;
     final selfieStatus = _selfieStatusValue;
-    final needsSelfieRetry =
-        selfieStatus == 0 || selfieStatus == 3 || _kycStatus == 'Rejected';
+    final needsSelfieRetry = selfieStatus == 0 || selfieStatus == 3;
     return documentVerified && needsSelfieRetry;
   }
 
@@ -244,7 +249,7 @@ class UserService {
         _kycStatus = _mapKycStatusFromAuthObject(rawKycStatus);
       } else {
         debugPrint(
-          '⚠️ No KYC data found in response, keeping existing status "$_kycStatus"',
+          '⚠️ No KYC data found in current auth/profile object. Relying on specialized status check.',
         );
       }
     }
@@ -259,6 +264,8 @@ class UserService {
   /// - selfieVerified: true/false
   /// - selfiestatus: 0 = not checked, 1 = pending, 3 = rejected
   void _parseKYCFromObject(Map<String, dynamic> kycObj) {
+    debugPrint('🔴🔴🔴 _parseKYCFromObject CALLED WITH: $kycObj');
+    
     // Extract fields from kyc object
     final kycCompleted = kycObj['kycCompleted'];
     final documentImageVerified = kycObj['documentImageVerified'];
@@ -268,81 +275,146 @@ class UserService {
         kycObj['kycStatus']?.toString() ?? kycObj['status']?.toString();
     final rejection = kycObj['rejection'];
 
-    debugPrint(
-      '_parseKYCFromObject: kycCompleted=$kycCompleted, documentImageVerified=$documentImageVerified, selfieVerified=$selfieVerified, selfieStatus=$selfieStatus, kycStatus=$kycStatus, rejection=$rejection',
-    );
+    debugPrint('🔴🔴🔴 EXTRACTED VALUES:');
+    debugPrint('  kycCompleted: $kycCompleted (type: ${kycCompleted.runtimeType})');
+    debugPrint('  documentImageVerified: $documentImageVerified (type: ${documentImageVerified.runtimeType})');
+    debugPrint('  selfieVerified: $selfieVerified (type: ${selfieVerified.runtimeType})');
+    debugPrint('  selfieStatus: $selfieStatus (type: ${selfieStatus.runtimeType})');
+    debugPrint('  kycStatus string: $kycStatus');
+    debugPrint('  rejection: $rejection');
 
     _documentImageVerified = documentImageVerified == true;
     _selfieStatusValue = selfieStatus is int
         ? selfieStatus
         : int.tryParse(selfieStatus?.toString() ?? '');
 
+    debugPrint('  _documentImageVerified set to: $_documentImageVerified');
+    debugPrint('  _selfieStatusValue set to: $_selfieStatusValue');
+
     String determinedStatus = 'Not Started';
 
     // Logic to determine KYC status based on multiple fields
     if (kycCompleted != null) {
-      // Check if rejection object exists (indicates rejection with reason)
-      if (rejection != null && rejection is Map<String, dynamic>) {
-        determinedStatus = 'Rejected';
-        _kycRejectionReason = rejection['reason']?.toString() ?? 'Unknown';
-        debugPrint('✅ KYC Status: REJECTED (rejection object present - Reason: $_kycRejectionReason)');
+      debugPrint('🔵 kycCompleted is NOT null, checking conditions...');
+      
+      // kycCompleted === 2 → Completed (highest priority)
+      if (kycCompleted == 2) {
+        determinedStatus = 'Completed';
+        debugPrint('✅✅✅ KYC Status: COMPLETED (kycCompleted=2)');
+      }
+      // kycCompleted === 1 → In progress, check other fields
+      else if (kycCompleted == 1) {
+        debugPrint('🟡 kycCompleted=1, checking sub-conditions...');
+        
+        // PRIORITY 1: Check for name mismatch rejection FIRST (highest priority - should always show)
+        if (rejection != null && rejection is Map<String, dynamic>) {
+          final rejectionType = rejection['type'];
+          final rejectionReason = rejection['reason']?.toString().toLowerCase() ?? '';
+          
+          // Special case: Name mismatch rejection should be shown even if documents are verified
+          if (rejectionType != null && rejectionReason.contains('name')) {
+            determinedStatus = 'Rejected';
+            _kycRejectionReason = rejection['reason']?.toString();
+            debugPrint('❌❌❌ KYC Status: REJECTED (name mismatch rejection - HIGHEST PRIORITY)');
+          }
+          // PRIORITY 2: Document verified + selfie uploaded (pending admin review)
+          else if (documentImageVerified == true && selfieStatus == 1) {
+            determinedStatus = 'Pending';
+            debugPrint(
+              '🟠🟠🟠 KYC Status: PENDING ADMIN APPROVAL (document verified + selfie uploaded, selfieStatus=1) - FRESH SUBMISSION',
+            );
+          }
+          // Document verified but selfie not uploaded yet - should allow selfie upload
+          else if (documentImageVerified == true && (selfieStatus == null || selfieStatus == 0)) {
+            determinedStatus = 'Pending';
+            debugPrint('🟠🟠🟠 KYC Status: PENDING (document verified, awaiting selfie, selfieStatus=$selfieStatus) - SKIPPING REJECTION');
+          }
+          // Other rejections only if documents not verified
+          else if (documentImageVerified != true) {
+            determinedStatus = 'Rejected';
+            _kycRejectionReason = rejection['reason']?.toString() ?? 'Unknown';
+            debugPrint('❌❌❌ KYC Status: REJECTED (rejection.type=$rejectionType, reason=$_kycRejectionReason, documents not verified)');
+          }
+        }
+        // PRIORITY 2: Document verified + selfie uploaded (pending admin review)
+        else if (documentImageVerified == true && selfieStatus == 1) {
+          determinedStatus = 'Pending';
+          debugPrint(
+            '🟠🟠🟠 KYC Status: PENDING ADMIN APPROVAL (document verified + selfie uploaded, selfieStatus=1) - FRESH SUBMISSION',
+          );
+        }
+        // Document verified but selfie not uploaded yet - should allow selfie upload
+        else if (documentImageVerified == true && (selfieStatus == null || selfieStatus == 0)) {
+          determinedStatus = 'Pending';
+          debugPrint('🟠🟠🟠 KYC Status: PENDING (document verified, awaiting selfie, selfieStatus=$selfieStatus)');
+        }
+        // PRIORITY 3: selfieStatus === 3 → Selfie was rejected
+        else if (selfieStatus == 3) {
+          determinedStatus = 'Rejected';
+          debugPrint('❌❌❌ KYC Status: REJECTED (selfieStatus=3)');
+        }
+        // Document not verified yet
+        else {
+          determinedStatus = 'Pending';
+          debugPrint(
+            '🟠🟠🟠 KYC Status: PENDING (document verification in progress)',
+          );
+        }
       }
       // kycCompleted === 3 → Rejected
       else if (kycCompleted == 3) {
         determinedStatus = 'Rejected';
         _kycRejectionReason = rejection?['reason']?.toString();
-        debugPrint('✅ KYC Status: REJECTED (kycCompleted=3)');
+        debugPrint('❌❌❌ KYC Status: REJECTED (kycCompleted=3)');
       }
-      // Aadhaar/document step already cleared, but selfie needs a fresh upload.
-      else if (documentImageVerified == true &&
-          (selfieStatus == 0 || selfieStatus == 3)) {
-        determinedStatus = 'Rejected';
-        debugPrint('✅ KYC Status: REJECTED (resume at selfie step)');
-      }
-      // kycCompleted === 2 → Completed
-      else if (kycCompleted == 2) {
-        determinedStatus = 'Completed';
-        debugPrint('✅ KYC Status: COMPLETED (kycCompleted=2)');
-      }
-      // kycCompleted === 1 → In progress, check other fields
-      else if (kycCompleted == 1) {
-        // selfieStatus === 3 → Selfie Rejected
-        if (selfieStatus == 3) {
+      // Check if rejection object exists (special case for name mismatch)
+      else if (rejection != null && rejection is Map<String, dynamic>) {
+        final rejectionType = rejection['type'];
+        final rejectionReason = rejection['reason']?.toString().toLowerCase() ?? '';
+        
+        // Special case: Name mismatch rejection should be shown even if documents are verified
+        if (rejectionType != null && rejectionReason.contains('name mismatch')) {
           determinedStatus = 'Rejected';
-          debugPrint('✅ KYC Status: REJECTED (selfieStatus=3)');
+          _kycRejectionReason = rejection['reason']?.toString();
+          debugPrint('❌❌❌ KYC Status: REJECTED (name mismatch rejection - special case, showing rejection)');
         }
-        // kycCompleted === 1 && documentImageVerified === true && selfieStatus === 1 → Pending Admin Approval
-        else if (documentImageVerified == true && selfieStatus == 1) {
-          determinedStatus = 'Pending';
-          debugPrint(
-            '✅ KYC Status: PENDING ADMIN APPROVAL (document verified + selfie pending)',
-          );
+        // Other rejections only if documents not verified
+        else if (documentImageVerified != true) {
+          determinedStatus = 'Rejected';
+          _kycRejectionReason = rejection['reason']?.toString() ?? 'Unknown';
+          debugPrint('❌❌❌ KYC Status: REJECTED (rejection object present - Reason: $_kycRejectionReason, documents not verified)');
         }
-        // kycCompleted === 1 && documentImageVerified === true → Document Verified (but selfie not done)
+        // If documents are verified and no name mismatch, treat as pending for selfie upload
         else if (documentImageVerified == true) {
           determinedStatus = 'Pending';
-          debugPrint('✅ KYC Status: DOCUMENT VERIFIED (pending selfie)');
+          debugPrint('🟠🟠🟠 KYC Status: PENDING (document verified, allowing selfie upload - ignoring rejection)');
         }
-        // kycCompleted === 1 but document not verified yet → In Progress
-        else {
-          determinedStatus = 'Pending';
-          debugPrint(
-            '✅ KYC Status: PENDING (document verification in progress)',
-          );
-        }
+      }
+      // If documents are verified but we reached here, treat as pending for selfie upload
+      else if (documentImageVerified == true) {
+        determinedStatus = 'Pending';
+        debugPrint('🟠🟠🟠 KYC Status: PENDING (document verified, allowing selfie upload - ignoring rejection)');
+      }
+      else {
+        debugPrint('⚠️ kycCompleted has unexpected value: $kycCompleted');
       }
     }
     // Fallback: Use kycStatus string if numeric fields are not available
     else if (kycStatus != null && kycStatus.isNotEmpty) {
+      debugPrint('🔵 kycCompleted is null, using kycStatus string: "$kycStatus"');
       determinedStatus = _mapKycStatusFromAuthObject(kycStatus);
       debugPrint(
         '✅ KYC Status: Using kycStatus string "$kycStatus" → "$determinedStatus"',
       );
     }
+    else {
+      debugPrint('⚠️⚠️⚠️ No kycCompleted or kycStatus found, defaulting to Not Started');
+    }
 
     // Update the KYC status
     _kycStatus = determinedStatus;
-    debugPrint('_parseKYCFromObject: Final KYC Status = "$_kycStatus"');
+    debugPrint('🔴🔴🔴 _parseKYCFromObject: FINAL KYC Status = "$_kycStatus"');
+    debugPrint('================================================================================');
   }
 
   /// Maps a raw KYC status string coming from the auth/profile user object to
@@ -399,6 +471,28 @@ class UserService {
 
         debugPrint('🔵 /auth/me Response Status: ${response.statusCode}');
         debugPrint('🔵 /auth/me Response Body: ${response.body}');
+
+        // Handle rate limit error (429)
+        if (response.statusCode == 429) {
+          debugPrint('⚠️ Rate limit reached (429) - keeping existing KYC status');
+          // Try to parse error message from response
+          try {
+            final errorData = json.decode(response.body);
+            final errorMsg = errorData['message'] ?? errorData['error'] ?? 'Rate limit exceeded';
+            debugPrint('⚠️ Rate limit message: $errorMsg');
+            // Don't update KYC status when rate limited - keep existing status
+            return;
+          } catch (e) {
+            debugPrint('⚠️ Could not parse rate limit error: $e');
+            return;
+          }
+        }
+
+        // Handle other error status codes
+        if (response.statusCode != 200) {
+          debugPrint('⚠️ Non-200 status code: ${response.statusCode} - keeping existing KYC status');
+          return;
+        }
 
         if (response.statusCode == 200) {
           final responseData = json.decode(response.body);
@@ -580,16 +674,60 @@ class UserService {
               await prefs.setString(_userEmailKey, _userEmail!);
             if (_userId != null) await prefs.setString(_userIdKey, _userId!);
 
-            // FIRST: Check for kycStatus at the top level of response (outside user object)
-            // This takes priority over any KYC data in the user object
+            // ALWAYS fetch KYC status from top-level kycStatus object in /auth/me response
+            // This is the source of truth for KYC status
+            debugPrint('🔍🔍🔍 FULL /auth/me RESPONSE DATA: $responseData');
+            debugPrint('🔍🔍🔍 PROFILE DATA: $profileData');
+            debugPrint('🔍🔍🔍 PROFILE DATA KEYS: ${profileData.keys.toList()}');
+            
             final kycStatusObj = responseData['kycStatus'];
+            debugPrint('🔍🔍🔍 TOP-LEVEL kycStatus object: $kycStatusObj');
+            
+            // Check for kyc field in user object
+            final userKycObj = profileData['kyc'];
+            debugPrint('🔍🔍🔍 USER OBJECT kyc field: $userKycObj');
+            
+            // Check for status field in user object (might be KYC status)
+            final userStatus = profileData['status'];
+            debugPrint('🔍🔍🔍 USER OBJECT status field: $userStatus (type: ${userStatus.runtimeType})');
+            
             if (kycStatusObj is Map) {
               debugPrint('🟢 Found top-level kycStatus object: $kycStatusObj');
               _parseKYCFromObject(Map<String, dynamic>.from(kycStatusObj));
+              
+              // CRITICAL FIX: Ensure top-level status overrides if it's "Completed"
+              final responseStatus = (responseData['status'] ?? '').toString().toLowerCase();
+              if (responseStatus == 'already_completed' || responseStatus == 'completed' || responseStatus == 'verified' || responseStatus == 'approved') {
+                debugPrint('✅ FORCE OVERRIDE: Setting status to Completed based on top-level API status: $responseStatus');
+                _kycStatus = 'Completed';
+              }
+            } else if (userKycObj is Map) {
+              debugPrint('🟡 Found kyc object in user data: $userKycObj');
+              _parseKYCFromObject(Map<String, dynamic>.from(userKycObj));
             } else {
-              // Fallback: Parse KYC status from user object (if kycStatus not at top level)
-              debugPrint('🟡 No top-level kycStatus, checking user object...');
+              // Fallback: Parse KYC status from user object fields
+              debugPrint('🟡 No kycStatus or kyc object found, parsing from user fields...');
               _parseAuthData(profileData);
+              
+              // CRITICAL: Fetch KYC status from dedicated endpoint since /auth/me doesn't include it
+              debugPrint('🔵🔵🔵 Fetching KYC status from /kyc/status endpoint...');
+              final kycStatusResult = await checkKYCStatusPost();
+              debugPrint('🔵🔵🔵 KYC Status API Result: $kycStatusResult');
+              
+              if (kycStatusResult['success'] == true) {
+                final kycData = kycStatusResult['data'];
+                if (kycData is Map) {
+                  debugPrint('🟢🟢🟢 Parsing KYC status from /kyc/status endpoint');
+                  _parseKYCFromObject(Map<String, dynamic>.from(kycData));
+                } else {
+                  // Use the validated status from checkKYCStatusPost
+                  final validatedStatus = kycStatusResult['status']?.toString() ?? 'Not Started';
+                  debugPrint('🟡🟡🟡 Using validated status from API: $validatedStatus');
+                  _kycStatus = validatedStatus;
+                }
+              } else {
+                debugPrint('⚠️⚠️⚠️ Failed to fetch KYC status: ${kycStatusResult['error']}');
+              }
             }
 
             // Save KYC status to SharedPreferences
@@ -1283,21 +1421,61 @@ class UserService {
                 responseData['error'] ??
                 responseData['message'] ??
                 'Failed to verify selfie',
+            'error_type': 'api_error',
           };
         }
-      } else {
-        String errorDetail = 'Server error: ${response.statusCode}';
-        if (response.statusCode == 404) {
-          errorDetail =
-              'KYC service endpoint not found. Please contact support.';
-        } else if (response.statusCode == 500) {
-          errorDetail = 'Internal server error. Please try again later.';
-        } else if (response.statusCode == 429) {
-          errorDetail =
-              'KYC limit exceeded. Please try again later or contact support.';
+      } else if (response.statusCode == 400) {
+        // Parse 400 error for specific messages
+        try {
+          final responseData = json.decode(response.body);
+          final errorMsg = responseData['error'] ?? responseData['message'] ?? 'Invalid request';
+          return {
+            'success': false,
+            'error': errorMsg,
+            'error_type': 'validation_error',
+          };
+        } catch (e) {
+          return {
+            'success': false,
+            'error': 'Invalid request. Please check your selfie and try again.',
+            'error_type': 'validation_error',
+          };
         }
-
-        return {'success': false, 'error': errorDetail};
+      } else if (response.statusCode == 404) {
+        return {
+          'success': false,
+          'error': 'KYC service endpoint not found. Please contact support.',
+          'error_type': 'not_found',
+        };
+      } else if (response.statusCode == 429) {
+        return {
+          'success': false,
+          'error': 'Too many requests. Please try again after some time.',
+          'error_type': 'rate_limit',
+        };
+      } else if (response.statusCode == 500) {
+        return {
+          'success': false,
+          'error': 'Server error. Please try again later.',
+          'error_type': 'server_error',
+        };
+      } else {
+        // Try to parse error message from response
+        try {
+          final responseData = json.decode(response.body);
+          final errorMsg = responseData['error'] ?? responseData['message'] ?? 'Server error: ${response.statusCode}';
+          return {
+            'success': false,
+            'error': errorMsg,
+            'error_type': 'server_error',
+          };
+        } catch (e) {
+          return {
+            'success': false,
+            'error': 'Server error: ${response.statusCode}',
+            'error_type': 'server_error',
+          };
+        }
       }
     } on SocketException catch (e) {
       print('SocketException in verifySelfieFromDigiLocker: $e');
@@ -1461,7 +1639,23 @@ class UserService {
             errorMsg = '$errorMsg ($errorDetails)';
           }
         }
-        return {'success': false, 'error': errorMsg};
+        
+        // Handle specific session-related errors
+        if (errorMsg.toLowerCase().contains('session already active') || 
+            errorMsg.toLowerCase().contains('already active')) {
+          return {
+            'success': false, 
+            'error': 'DigiLocker session already active. Please complete the existing session or wait for it to expire.',
+            'message': responseData['message'] ?? errorMsg,
+            'code': 'SESSION_ALREADY_ACTIVE'
+          };
+        }
+        
+        return {
+          'success': false, 
+          'error': errorMsg,
+          'message': responseData['message'] ?? errorMsg
+        };
       }
 
       final errorMsg =
@@ -1531,23 +1725,44 @@ class UserService {
         return {'success': false, 'error': 'User not authenticated'};
       }
 
+      debugPrint('🔵 checkDigiLockerStatus: Checking status for requestId: $requestId');
+
+      // Use the standard KYC status endpoint instead of DigiLocker-specific one
+      // since the DigiLocker status endpoint doesn't exist
       final response = await http
-          .get(
+          .post(
             Uri.parse(
-              'https://api11.hathmetech.com/api/v1/kyc/digilocker/status?request_id=$requestId&user_id=$userId',
+              'https://api11.hathmetech.com/api/user/v1/kyc/status',
             ),
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
               'Authorization': 'Bearer $token',
             },
+            body: json.encode({
+              'user_id': userId,
+              'request_id': requestId, // Include request_id for tracking
+            }),
           )
           .timeout(const Duration(seconds: 30));
 
-      print('DigiLocker Status Response: ${response.body}');
+      debugPrint('🔵 checkDigiLockerStatus Response Status: ${response.statusCode}');
+      debugPrint('🔵 checkDigiLockerStatus Response Body: ${response.body}');
 
-      if (response.statusCode == 200) {
+      if (response.statusCode == 200 || response.statusCode == 400) {
         final responseData = json.decode(response.body);
+        
+        // Even if success=false, check if we have data with documents
+        // This handles cases where backend returns error but documents are present
+        if (responseData['data'] != null) {
+          debugPrint('🔵 checkDigiLockerStatus: Data present in response');
+          return {
+            'success': true, // Override success to true if we have data
+            'data': responseData['data'],
+            'message': responseData['message'] ?? 'Status retrieved',
+          };
+        }
+        
         if (responseData['success'] == true) {
           return {
             'success': true,
@@ -1555,41 +1770,50 @@ class UserService {
             'message': responseData['message'] ?? 'Status retrieved',
           };
         } else {
+          // Return error but don't fail completely - let WebView handle it
           return {
             'success': false,
-            'error': responseData['error'] ?? 'Failed to get DigiLocker status',
+            'error': responseData['error'] ?? responseData['message'] ?? 'Failed to get DigiLocker status',
+            'data': responseData['data'], // Include data even on error
           };
         }
+      } else if (response.statusCode == 404) {
+        // Endpoint not found - fallback to profile check
+        debugPrint('⚠️ DigiLocker status endpoint not found, using profile data');
+        return {
+          'success': false,
+          'error': 'Endpoint not available',
+          'fallback_to_profile': true,
+        };
+      } else if (response.statusCode == 429) {
+        return {
+          'success': false,
+          'error': 'Rate limit exceeded. Please try again later.',
+          'error_type': 'rate_limit',
+        };
       } else {
         String errorDetail = 'Server error: ${response.statusCode}';
-        if (response.statusCode == 404) {
-          errorDetail =
-              'KYC service endpoint not found. Please contact support.';
-        } else if (response.statusCode == 500) {
+        if (response.statusCode == 500) {
           errorDetail = 'Internal server error. Please try again later.';
-        } else if (response.statusCode == 429) {
-          errorDetail =
-              'KYC limit exceeded. Please try again later or contact support.';
         }
-
         return {'success': false, 'error': errorDetail};
       }
     } on SocketException catch (e) {
-      print('SocketException in checkDigiLockerStatus: $e');
+      debugPrint('SocketException in checkDigiLockerStatus: $e');
       return {
         'success': false,
         'error': 'No internet connection. Please check your network and try again.',
         'error_type': 'no_internet',
       };
     } on TimeoutException catch (e) {
-      print('TimeoutException in checkDigiLockerStatus: $e');
+      debugPrint('TimeoutException in checkDigiLockerStatus: $e');
       return {
         'success': false,
         'error': 'Connection timed out. Please try again.',
         'error_type': 'timeout',
       };
     } catch (e) {
-      print('DigiLocker Status Error: $e');
+      debugPrint('DigiLocker Status Error: $e');
       return {
         'success': false,
         'error': NetworkErrorHandler.getErrorMessage(e),
@@ -2643,6 +2867,17 @@ class UserService {
   /// This happens when user opened Digilocker but didn't submit documents
   bool canRestartKYC() => _kycStatus == 'Pending' && _documentImageVerified != true;
 
+  /// Returns true when document is verified but selfie needs to be uploaded
+  /// This happens when user completed DigiLocker but hasn't uploaded selfie yet
+  /// IMPORTANT: Returns false if KYC is rejected (user must restart from DigiLocker)
+  bool needsSelfieUpload() {
+    final result = _kycStatus != 'Rejected' && 
+        _documentImageVerified == true && 
+        (_selfieStatusValue == null || _selfieStatusValue == 0);
+    debugPrint('🔧 needsSelfieUpload: status=$_kycStatus, docVerified=$_documentImageVerified, selfieStatus=$_selfieStatusValue → result=$result');
+    return result;
+  }
+
   // Get auth token from SharedPreferences
   Future<String?> getToken() async {
     final prefs = await SharedPreferences.getInstance();
@@ -2706,6 +2941,15 @@ class UserService {
   }
 
   Color getKYCStatusColor() {
+    // Check if rejection is due to name mismatch
+    final bool isNameMismatchRejection = _kycStatus == 'Rejected' && 
+        _kycRejectionReason != null && 
+        _kycRejectionReason!.toLowerCase().contains('name mismatch');
+    
+    if (isNameMismatchRejection) {
+      return Colors.orange;
+    }
+    
     switch (_kycStatus) {
       case 'Completed':
         return const Color(0xFF84BD00);

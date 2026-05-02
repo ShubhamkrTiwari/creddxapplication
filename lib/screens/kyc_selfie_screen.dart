@@ -27,7 +27,7 @@ class KYCSelfieScreen extends StatefulWidget {
   State<KYCSelfieScreen> createState() => _KYCSelfieScreenState();
 }
 
-class _KYCSelfieScreenState extends State<KYCSelfieScreen> {
+class _KYCSelfieScreenState extends State<KYCSelfieScreen> with WidgetsBindingObserver {
   XFile? _selfieImage;
   bool _isLoading = false;
   String _kycStatus = 'pending'; // pending, completed, rejected
@@ -36,7 +36,22 @@ class _KYCSelfieScreenState extends State<KYCSelfieScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _checkKYCStatus();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Refresh KYC status when app resumes
+      _checkKYCStatus();
+    }
   }
 
   Future<void> _checkKYCStatus() async {
@@ -160,9 +175,26 @@ class _KYCSelfieScreenState extends State<KYCSelfieScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Upload Selfie',
-          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+        Row(
+          children: [
+            const Text(
+              'Upload Selfie',
+              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: Colors.red, width: 1),
+              ),
+              child: const Text(
+                'Required',
+                style: TextStyle(color: Colors.red, fontSize: 11, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 8),
         const Text(
@@ -327,149 +359,172 @@ class _KYCSelfieScreenState extends State<KYCSelfieScreen> {
   }
 
   Widget _buildNavigationButtons() {
-    return Row(
+    final bool canProceed = _selfieImage != null && !_isLoading;
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(
-          child: ElevatedButton(
-            onPressed: () {
-              if (Navigator.canPop(context)) {
-                Navigator.pop(context);
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1C1C1E),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              elevation: 0,
-              padding: const EdgeInsets.symmetric(vertical: 16),
+        if (!canProceed && _selfieImage == null)
+          Container(
+            padding: const EdgeInsets.all(12),
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              color: Colors.orange.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.orange.withOpacity(0.3)),
             ),
-            child: const Text(
-              'Back',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: ElevatedButton(
-            onPressed: _validateAndProceed,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF84BD00),
-              foregroundColor: Colors.black,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              elevation: 0,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-            ),
-            child: const Text(
-              'Next',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, color: Colors.orange, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Please upload a selfie to continue',
+                    style: TextStyle(color: Colors.orange, fontSize: 13),
+                  ),
+                ),
+              ],
             ),
           ),
+        Row(
+          children: [
+            Expanded(
+              child: ElevatedButton(
+                onPressed: _isLoading ? null : () {
+                  if (Navigator.canPop(context)) {
+                    Navigator.pop(context);
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1C1C1E),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                child: const Text(
+                  'Back',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: ElevatedButton(
+                onPressed: canProceed ? _validateAndProceed : null,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF84BD00),
+                  foregroundColor: Colors.black,
+                  disabledBackgroundColor: const Color(0xFF84BD00).withOpacity(0.3),
+                  disabledForegroundColor: Colors.black54,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                child: _isLoading
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.black,
+                        ),
+                      )
+                    : const Text(
+                        'Next',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                      ),
+              ),
+            ),
+          ],
         ),
       ],
     );
   }
 
   void _validateAndProceed() async {
+    if (_selfieImage == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please upload a selfie to continue'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     try {
       if (widget.fromDigiLocker) {
         // For DigiLocker flow
-        if (_selfieImage != null) {
-          // Upload selfie
-          final result = await _userService.verifySelfieFromDigiLocker(
-            selfieImage: _selfieImage!,
-          );
+        final result = await _userService.verifySelfieFromDigiLocker(
+          selfieImage: _selfieImage!,
+        );
 
-          if (mounted) {
-            setState(() => _isLoading = false);
-            
-            if (result['success'] == true) {
-              // Show success message
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Selfie upload successful!'),
-                  backgroundColor: Color(0xFF84BD00),
-                ),
-              );
-              
-              // Navigate back to profile screen
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (context) => const UserProfileScreen()),
-                (route) => false,
-              );
-            } else {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(result['error'] ?? 'Failed to verify selfie'),
-                  backgroundColor: Colors.red,
-                ),
-              );
-            }
-          }
-        } else {
-          // Proceed without selfie
-          if (mounted) {
-            setState(() => _isLoading = false);
+        if (mounted) {
+          setState(() => _isLoading = false);
+          
+          if (result['success'] == true) {
+            // Show success message
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Proceeding to profile...'),
-                backgroundColor: Color(0xFF84BD00),
+              SnackBar(
+                content: Text(result['message'] ?? 'Selfie uploaded successfully!'),
+                backgroundColor: const Color(0xFF84BD00),
               ),
             );
             
-            // Navigate to profile directly
+            // Navigate back to profile screen
             Navigator.pushAndRemoveUntil(
               context,
               MaterialPageRoute(builder: (context) => const UserProfileScreen()),
               (route) => false,
+            );
+          } else {
+            // Handle specific error types
+            final errorType = result['error_type'];
+            final errorMsg = result['error'] ?? 'Failed to verify selfie';
+            
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(errorMsg),
+                backgroundColor: Colors.red,
+                duration: Duration(seconds: errorType == 'no_internet' ? 5 : 4),
+              ),
             );
           }
         }
       } else {
         // Legacy flow with document images
-        if (_selfieImage != null) {
-          final result = await _userService.verifySelfie(
-            selfieImage: _selfieImage!,
-            documentType: widget.documentType,
-            documentId: widget.documentId,
-          );
+        final result = await _userService.verifySelfie(
+          selfieImage: _selfieImage!,
+          documentType: widget.documentType,
+          documentId: widget.documentId,
+        );
 
-          if (mounted) {
-            setState(() => _isLoading = false);
+        if (mounted) {
+          setState(() => _isLoading = false);
+          
+          if (result['success'] == true) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('KYC submitted successfully!'),
+                backgroundColor: Color(0xFF84BD00),
+              ),
+            );
             
-            if (result['success'] == true) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('KYC submitted successfully!'),
-                  backgroundColor: Color(0xFF84BD00),
-                ),
-              );
-              
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (context) => const UserProfileScreen()),
-                (route) => false,
-              );
-            } else {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(result['error'] ?? 'Failed to submit KYC'),
-                  backgroundColor: Colors.red,
-                ),
-              );
-            }
-          }
-        } else {
-          // Proceed without selfie in legacy flow
-          if (mounted) {
-            setState(() => _isLoading = false);
             Navigator.pushAndRemoveUntil(
               context,
               MaterialPageRoute(builder: (context) => const UserProfileScreen()),
               (route) => false,
+            );
+          } else {
+            final errorMsg = result['error'] ?? 'Failed to submit KYC';
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(errorMsg),
+                backgroundColor: Colors.red,
+              ),
             );
           }
         }
@@ -479,8 +534,9 @@ class _KYCSelfieScreenState extends State<KYCSelfieScreen> {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Network error: $e'),
+            content: Text('Network error: ${e.toString()}'),
             backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
           ),
         );
       }
