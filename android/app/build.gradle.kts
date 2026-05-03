@@ -8,7 +8,8 @@ plugins {
 android {
     namespace = "com.creddx.android"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // NDK 28.2.13676358+ required for 16 KB page size support and jni plugin compatibility
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -28,8 +29,8 @@ android {
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 24  // Android 7.0+ for better security and features
         targetSdk = 35  // Android 15 for Play Store compliance
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
+        versionCode = 31
+        versionName = "3.4.2"
 
         // Play Store optimization
         multiDexEnabled = true
@@ -63,6 +64,55 @@ android {
             isDebuggable = true
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+        }
+    }
+
+    // App Bundle configuration for 16KB page size support
+    bundle {
+        language {
+            enableSplit = false
+        }
+        density {
+            enableSplit = true
+        }
+        abi {
+            enableSplit = true
+        }
+    }
+
+    // Packaging options for 16 KB page size support
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = false
+        }
+        // Exclude libraries that don't support 16KB page size
+        pickFirsts += listOf(
+            "lib/arm64-v8a/libbarhopper_v3.so",
+            "lib/arm64-v8a/libimage_processing_util_jni.so",
+            "lib/armeabi-v7a/libbarhopper_v3.so",
+            "lib/armeabi-v7a/libimage_processing_util_jni.so",
+            "lib/x86_64/libbarhopper_v3.so",
+            "lib/x86_64/libimage_processing_util_jni.so"
+        )
+        excludes += listOf(
+            "lib/arm64-v8a/libbarhopper_v3.so",
+            "lib/armeabi-v7a/libbarhopper_v3.so"
+        )
+    }
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = false
+            isShrinkResources = false
+            // Enable zipAlign for 16KB page size alignment
+            isZipAlignEnabled = true
+        }
+        debug {
+            isDebuggable = true
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+            isZipAlignEnabled = true
         }
     }
 }

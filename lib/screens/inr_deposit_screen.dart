@@ -442,7 +442,8 @@ class _InrDepositScreenState extends State<InrDepositScreen> {
     final createdAt = deposit['createdAt']?.toString() ?? '';
     final reference = deposit['txid']?.toString() ?? deposit['_id']?.toString() ?? '';
     final coin = deposit['category']?.toString().toUpperCase() ?? 'INR';
-    final senderAccount = deposit['senderAccountName']?.toString() ?? '';
+    final senderAccount = deposit['senderAccountName']?.toString() ?? deposit['sender_account_name']?.toString() ?? '';
+    final bankName = deposit['bankName']?.toString() ?? deposit['bank_name']?.toString() ?? '';
 
     // Handle status codes (API returns numeric status)
     String statusText;
@@ -466,7 +467,7 @@ class _InrDepositScreenState extends State<InrDepositScreen> {
         statusIcon = Icons.check_circle;
         break;
       case '4':
-        statusText = 'Failed';
+        statusText = 'Rejected';
         statusColor = Colors.red;
         statusIcon = Icons.cancel;
         break;
@@ -614,6 +615,31 @@ class _InrDepositScreenState extends State<InrDepositScreen> {
             ],
           ),
           const SizedBox(height: 12),
+          // Show bank name if available
+          if (bankName.isNotEmpty) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.account_balance, color: Colors.white54, size: 16),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Bank: $bankName',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
           const Divider(color: Color(0xFF2C2C2E), height: 1),
           const SizedBox(height: 12),
           Row(

@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
@@ -27,6 +28,7 @@ import 'withdraw_screen.dart';
 import 'deposit_screen.dart';
 import 'inr_deposit_screen.dart';
 import 'inr_withdraw_upi_screen.dart';
+import 'partner_program_screen.dart'; // Affiliate Program
 import '../services/user_service.dart';
 import '../services/p2p_service.dart';
 import '../services/auth_service.dart';
@@ -1278,10 +1280,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     final bool isCompleted = _userService.isKYCVerified();
     final bool isPending = _userService.isKYCPending();
     final bool canStart = _userService.isKYCNotStarted() || _userService.isKYCRejected();
-    final bool canRestart = _userService.canRestartKYC(); // Pending but document not verified
-    final bool needsSelfieUpload = _userService.needsSelfieUpload(); // Document verified but selfie pending
+    final bool canRestart = _userService.canRestartKYC();
+    final bool needsSelfieUpload = _userService.needsSelfieUpload();
     
-    // Check if rejection is due to name mismatch
     final bool isNameMismatchRejection = _userService.kycStatus == 'Rejected' && 
         _userService.kycRejectionReason != null && 
         _userService.kycRejectionReason!.toLowerCase().contains('name mismatch');
@@ -1290,41 +1291,32 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
     return GestureDetector(
       onTap: () async {
-        // Handle name mismatch rejection specifically
+        // Handle name mismatch rejection - show dialog
         if (isNameMismatchRejection) {
           _showNameMismatchDialog();
           return;
         }
         
-        // CRITICAL: If rejected (but not name mismatch), always go to DigiLocker (fresh start)
-        if (_userService.kycStatus == 'Rejected') {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen())
-          );
-          if (mounted) {
-            _loadUserData();
-            setState(() {});
-          }
-        } else if (needsSelfieUpload) {
-          // Document verified, need to upload selfie
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const KYCSelfieScreen(fromDigiLocker: true))
-          );
-          if (mounted) {
-            _loadUserData();
-            setState(() {});
-          }
-        } else if (canStart || canRestart) {
-          // If KYC not started or incomplete, go to instruction screen
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen())
-          );
-          if (mounted) {
-            _loadUserData();
-            setState(() {});
+        // If KYC not completed, open website KYC page
+        if (!isCompleted) {
+          try {
+            final url = Uri.parse('https://www.creddx.com/profile/kyc');
+            await launchUrl(url, mode: LaunchMode.externalApplication);
+            // Refresh status after user returns
+            await Future.delayed(const Duration(seconds: 2));
+            if (mounted) {
+              _refreshKYCStatus();
+            }
+          } catch (e) {
+            debugPrint('Error launching KYC URL: $e');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Could not open KYC page: $e'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
           }
         }
       },
@@ -1475,13 +1467,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      _userService.kycStatus == 'Not Started' ? 'Start KYC Now' : 
+                      _userService.kycStatus == 'Not Started' ? 'Complete KYC' : 
                       isNameMismatchRejection ? 'Update Profile' :
-                      _userService.kycStatus == 'Rejected' ? 'Restart KYC' : 'Start Verification',
+                      _userService.kycStatus == 'Rejected' ? 'Retry KYC' : 'Complete KYC',
                       style: const TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(width: 4),
-                    const Icon(Icons.arrow_forward_ios, color: Colors.black, size: 10),
+                    const Icon(Icons.open_in_new, color: Colors.black, size: 10),
                   ],
                 ),
               ),
@@ -1657,9 +1649,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   Widget _buildPartnerProgramTile() {
     return GestureDetector(
       onTap: () {
-        // TODO: Navigate to Partner Program screen
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Partner Program coming soon!')),
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const AffiliateProgramScreen()),
         );
       },
       child: Container(
@@ -1670,11 +1662,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         ),
         child: Row(
           children: [
-            const Icon(Icons.business_center, color: Color(0xFF84BD00), size: 22),
+            const Icon(Icons.people, color: Color(0xFF84BD00), size: 22),
             const SizedBox(width: 12),
             const Expanded(
               child: Text(
-                'Partner Program',
+                'Affiliate Program',
                 style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
               ),
             ),
@@ -1895,15 +1887,23 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     final country = _userService.userCountry;
     final state = _userService.userState;
     final city = _userService.userCity;
-    
+    final isFetchingLocation = _userService.isFetchingLocationNames;
+
     // Build location string, only include non-null and non-empty parts
     List<String> locationParts = [];
     if (city != null && city.isNotEmpty) locationParts.add(city);
     if (state != null && state.isNotEmpty) locationParts.add(state);
     if (country != null && country.isNotEmpty) locationParts.add(country);
-    
-    final locationText = locationParts.isNotEmpty ? locationParts.join(', ') : 'Location not provided';
-    
+
+    String locationText;
+    if (locationParts.isNotEmpty) {
+      locationText = locationParts.join(', ');
+    } else if (isFetchingLocation) {
+      locationText = 'Fetching location...';
+    } else {
+      locationText = 'Location not provided';
+    }
+
     return Column(
       children: [
         _buildProfileInfoRow('User ID', userId ?? 'Not provided'),

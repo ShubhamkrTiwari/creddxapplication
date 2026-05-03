@@ -3,6 +3,7 @@ import '../services/auth_service.dart';
 import '../services/p2p_service.dart';
 import '../services/kyc_service.dart';
 import 'login_screen.dart';
+import 'affiliate_program_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String? userId; // Added userId parameter
@@ -437,6 +438,59 @@ class _ProfileScreenState extends State<ProfileScreen>
       child: SingleChildScrollView(
         child: Column(
           children: [
+            // Affiliate Program Button
+            GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const AffiliateProgramScreen(),
+                  ),
+                );
+              },
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 16),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF84BD00), Color(0xFF6A9600)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.people, color: Colors.white, size: 24),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Affiliate Program',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'View your referral income',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 16),
+                  ],
+                ),
+              ),
+            ),
             _buildDetailItem('30D Trades', trades30d.toString()),
             _buildDetailItem('Trade Counterparties', counterparties.toString()),
             _buildDetailItem('Total Completed Trades', totalTrades.toString()),

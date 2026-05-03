@@ -4,8 +4,8 @@ import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'otp_verification_screen.dart';
-import 'kyc_digilocker_instruction_screen.dart';
 import '../services/wallet_service.dart';
 import '../utils/kyc_unlock_mixin.dart';
 import '../services/socket_service.dart';
@@ -280,9 +280,22 @@ class _SendScreenState extends State<SendScreen> with SingleTickerProviderStateM
               child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
             ),
             ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 Navigator.of(context).pop();
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
+                try {
+                  final url = Uri.parse('https://www.creddx.com/profile/kyc');
+                  await launchUrl(url, mode: LaunchMode.externalApplication);
+                } catch (e) {
+                  debugPrint('Error launching KYC URL: $e');
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Could not open KYC page: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
               },
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
               child: const Text('Complete KYC', style: TextStyle(color: Colors.black)),
@@ -748,8 +761,21 @@ class _SendScreenState extends State<SendScreen> with SingleTickerProviderStateM
                     ),
                   ),
                   ElevatedButton(
-                    onPressed: () {
-                      Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
+                    onPressed: () async {
+                      try {
+                        final url = Uri.parse('https://www.creddx.com/profile/kyc');
+                        await launchUrl(url, mode: LaunchMode.externalApplication);
+                      } catch (e) {
+                        debugPrint('Error launching KYC URL: $e');
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Could not open KYC page: $e'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
+                      }
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.orange,

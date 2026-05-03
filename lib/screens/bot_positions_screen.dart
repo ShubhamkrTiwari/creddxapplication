@@ -198,15 +198,12 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
     // Use total investment from API (user-trades endpoint)
     final double userInvestment = _totalBotInvestment;
     final strategy = _positionData?['strategy'] ?? 'Omega-3X';
-    
-    // Debug logging
-    debugPrint('=== BOT POSITIONS DEBUG ===');
-    debugPrint('Positions count: ${_positions.length}');
-    debugPrint('User Investment: $userInvestment');
+
+    // Calculate total unrealized PnL only if positions exist
+    double totalUnrealizedPnL = 0.0;
     for (var pos in _positions) {
-      debugPrint('Position: ${pos.symbol}, Margin: ${pos.userMargin}, Leverage: ${pos.leverage}, Size: ${pos.size}');
+      totalUnrealizedPnL += pos.userUnrealizedProfit;
     }
-    debugPrint('===========================');
 
     return Container(
       margin: const EdgeInsets.all(16),
@@ -214,6 +211,7 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
       decoration: BoxDecoration(
         color: const Color(0xFF1C1C1E),
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF2C2C2E)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -244,63 +242,127 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
                   backgroundColor: const Color(0xFF84BD00),
                   foregroundColor: Colors.black,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(8),
                   ),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 ),
-                child: const Text('Balance Growth'),
+                child: const Text('Balance Growth', style: TextStyle(fontSize: 12)),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2C2C2E),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'Current Symbol',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.5),
-                        fontSize: 12,
-                      ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Total Invested',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '\$${userInvestment.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            color: Color(0xFF84BD00),
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _selectedPair,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+                    if (_positions.isNotEmpty)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            'Unrealized PnL',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.6),
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${totalUnrealizedPnL >= 0 ? '+' : ''}\$${totalUnrealizedPnL.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              color: totalUnrealizedPnL >= 0 ? const Color(0xFF84BD00) : const Color(0xFFFF3B30),
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
                   ],
                 ),
-              ),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                const SizedBox(height: 12),
+                Container(
+                  height: 1,
+                  color: Colors.white.withOpacity(0.1),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'Your Investment',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.5),
-                        fontSize: 12,
-                      ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Open Positions',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${_positions.length}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '\$${userInvestment.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+                    if (_positions.isNotEmpty)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            'Current Symbol',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.6),
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _positions.first.symbol,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
                   ],
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -350,6 +412,13 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
   }
 
   Widget _buildTradingChart() {
+    // Only show chart if there are open positions
+    if (_positions.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    
+    final chartSymbol = _positions.first.symbol;
+    
     return Container(
       height: 600,
       margin: const EdgeInsets.all(16),
@@ -379,7 +448,7 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      _selectedPair.replaceAll('-', '/'),
+                      chartSymbol.replaceAll('-', '/'),
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 18,
@@ -443,7 +512,7 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
           ),
           Expanded(
             child: TradingViewChart(
-              symbol: _selectedPair.replaceAll('-', ''),
+              symbol: chartSymbol.replaceAll('-', ''),
               theme: 'dark',
               interval: _getTradingViewInterval(),
               allowSymbolChange: false,
@@ -477,7 +546,7 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
   }
 
   Widget _buildPositionDetails() {
-    if (_positions.isEmpty) return const SizedBox();
+    if (_positions.isEmpty) return const SizedBox.shrink();
     
     final position = _positions.first;
     
@@ -623,16 +692,6 @@ class _BotPositionsScreenState extends State<BotPositionsScreen> {
                 child: _buildMetric('Leverage', '${position.leverage}x'),
               ),
             ],
-          ),
-          // Debug row
-          Container(
-            margin: const EdgeInsets.only(top: 8),
-            padding: const EdgeInsets.all(8),
-            color: Colors.red.withOpacity(0.2),
-            child: Text(
-              'DEBUG: Positions=${_positions.length}, Data=$_positionData',
-              style: const TextStyle(color: Colors.red, fontSize: 10),
-            ),
           ),
           const SizedBox(height: 12),
           Row(

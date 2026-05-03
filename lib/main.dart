@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:upgrader/upgrader.dart';
 import 'screens/splash_screen.dart';
 import 'widgets/maintenance_wrapper.dart';
@@ -6,7 +7,8 @@ import 'services/connectivity_service.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  // Initialize connectivity monitoring
+  SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   ConnectivityService.instance.initialize();
   runApp(const CreddXApp());
 }
@@ -28,6 +30,12 @@ class CreddXApp extends StatelessWidget {
           primary: const Color(0xFF90C128),
         ),
         useMaterial3: true,
+        pageTransitionsTheme: const PageTransitionsTheme(
+          builders: {
+            TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          },
+        ),
       ),
       builder: (context, child) => MaintenanceWrapper(
         apiBaseUrl: 'https://api11.hathmetech.com/api',

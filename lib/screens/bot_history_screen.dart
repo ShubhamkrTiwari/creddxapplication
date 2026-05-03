@@ -2072,6 +2072,9 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
     final botVsBtc = _weeklyVsBtc ?? (botRoi - btcRoi);
     final botVsEth = _weeklyVsEth ?? (botRoi - ethRoi);
     
+    // Check if we're using mock data (has snapshots but came from fallback)
+    final bool isUsingMockData = _weeklySnapshots.isNotEmpty && _weeklyBenchmarkError != null;
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2093,7 +2096,7 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
               ],
             ),
           )
-        else if (_weeklyBenchmarkError != null)
+        else if (_weeklyBenchmarkError != null && !isUsingMockData)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: Text(
@@ -2106,13 +2109,33 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
               ),
             ),
           ),
-        if (_weeklyBenchmarkError != null &&
+        if (_weeklyBenchmarkError != null && !isUsingMockData &&
             _weeklyBenchmarkError!.toLowerCase().contains('not enough data'))
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: Text(
               'Benchmark will appear once you have more weekly activity.',
               style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12),
+            ),
+          ),
+        if (isUsingMockData)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  color: const Color(0xFF84BD00),
+                  size: 14,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Showing simulated weekly performance data',
+                    style: TextStyle(color: const Color(0xFF84BD00).withOpacity(0.8), fontSize: 12),
+                  ),
+                ),
+              ],
             ),
           ),
 

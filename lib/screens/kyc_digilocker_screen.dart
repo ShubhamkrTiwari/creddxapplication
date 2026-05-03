@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/user_service.dart';
 import 'digilocker_webview_screen.dart';
@@ -236,7 +237,6 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen>
       if (initiateResult['success'] != true) {
         final errorMsg = initiateResult['error']?.toString() ?? 'Failed to initiate DigiLocker.';
         
-        // Check if it's a rate limit or maximum attempts error
         if (errorMsg.toLowerCase().contains('wait') || 
             errorMsg.toLowerCase().contains('retry') ||
             errorMsg.toLowerCase().contains('limit') ||
@@ -248,7 +248,6 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen>
             _hasHitLimitError = true;
           });
           
-          // Show user-friendly message
           String friendlyMsg = 'You have reached the maximum KYC attempts. Please wait 5-10 minutes before trying again.';
           if (errorMsg.toLowerCase().contains('already completed') || errorMsg.toLowerCase().contains('document') && errorMsg.toLowerCase().contains('verified')) {
             friendlyMsg = 'Your documents are already submitted and being verified.';
@@ -273,39 +272,28 @@ class _KYCDigiLockerScreenState extends State<KYCDigiLockerScreen>
         return;
       }
 
-      setState(() {
-        _isLoading = false;
-        _sessionStarted = true;
-      });
+      setState(() => _isLoading = false);
 
-      final result = await Navigator.push<Map<String, dynamic>>(
-        context,
-        MaterialPageRoute(
-          builder: (_) =>
-              DigiLockerWebViewScreen(kycUrl: kycUrl, requestId: _requestId),
-        ),
-      );
-
-      if (!mounted) return;
-
-      // If user closed WebView without completing (result is null),
-      // reset session to allow retry
-      if (result == null) {
-        setState(() {
-          _sessionStarted = false;
-          _isDigiLockerConnected = false;
-        });
-        _showError(
-          'DigiLocker was closed without completing. Please click "Start KYC with DigiLocker" again to retry.',
-        );
-        return;
-      }
-
-      await _handleWebFlowResult(result);
+      // Redirect to website for KYC
+      await _launchKYCWebsite(kycUrl);
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
       _showError('Error connecting to DigiLocker: $e');
+    }
+  }
+
+  Future<void> _launchKYCWebsite(String url) async {
+    try {
+      final uri = Uri.parse(url);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        setState(() => _sessionStarted = true);
+      } else {
+        _showError('Unable to open KYC website');
+      }
+    } catch (e) {
+      _showError('Error opening KYC website: $e');
     }
   }
 

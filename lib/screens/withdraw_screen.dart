@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'qr_scanner_screen.dart';
 import 'otp_verification_screen.dart';
 import 'dart:async';
@@ -13,7 +14,6 @@ import '../services/auto_refresh_service.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 import '../utils/coin_icon_mapper.dart';
 import 'user_profile_screen.dart';
-import 'kyc_digilocker_instruction_screen.dart';
 import '../utils/kyc_unlock_mixin.dart';
 
 class WithdrawScreen extends StatefulWidget {
@@ -266,7 +266,12 @@ class _WithdrawScreenState extends State<WithdrawScreen> with KYCUnlockMixin {
             ElevatedButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const UserProfileScreen(),
+                  ),
+                );
               },
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
               child: const Text('Complete KYC', style: TextStyle(color: Colors.black)),
@@ -641,8 +646,27 @@ class _WithdrawScreenState extends State<WithdrawScreen> with KYCUnlockMixin {
                         width: double.infinity,
                         height: 48,
                         child: ElevatedButton(
-                          onPressed: () {
-                            Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
+                          onPressed: () async {
+                            final url = Uri.parse('https://creddx.com/profile/kyc');
+                            if (await canLaunchUrl(url)) {
+                              await launchUrl(url, mode: LaunchMode.externalApplication);
+                              // Refresh status after user returns
+                              await Future.delayed(const Duration(seconds: 2));
+                              if (mounted) {
+                                // Refresh user data to get updated KYC status
+                                await _userService.fetchProfileDataFromAPI();
+                                setState(() {});
+                              }
+                            } else {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Could not open KYC page. Please try again.'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                              }
+                            }
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.orange,

@@ -186,11 +186,13 @@ class _DepositScreenState extends State<DepositScreen> {
   Widget _buildCoinRow(Coin coin) {
     return Row(
       children: [
-        CircleAvatar(
-          radius: 14,
-          backgroundColor: const Color(0xFF84BD00).withOpacity(0.2),
-          child: Text(coin.symbol.length > 2 ? coin.symbol.substring(0, 2).toUpperCase() : coin.symbol, style: const TextStyle(fontSize: 10, color: Color(0xFF84BD00), fontWeight: FontWeight.bold)),
-        ),
+        coin.symbol.toUpperCase() == 'USDT'
+            ? Image.asset('assets/images/usdt.png', width: 28, height: 28, fit: BoxFit.contain)
+            : CircleAvatar(
+                radius: 14,
+                backgroundColor: const Color(0xFF84BD00).withOpacity(0.2),
+                child: Text(coin.symbol.length > 2 ? coin.symbol.substring(0, 2).toUpperCase() : coin.symbol, style: const TextStyle(fontSize: 10, color: Color(0xFF84BD00), fontWeight: FontWeight.bold)),
+              ),
         const SizedBox(width: 12),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -205,9 +207,20 @@ class _DepositScreenState extends State<DepositScreen> {
   }
 
   Widget _buildNetworkRow(Network network) {
+    String? logoPath;
+    if (network.type.toUpperCase().contains('ERC') || network.name.toLowerCase().contains('ethereum')) {
+      logoPath = 'assets/images/eth.png';
+    } else if (network.type.toUpperCase().contains('BEP') || network.name.toLowerCase().contains('binance') || network.name.toLowerCase().contains('bsc')) {
+      logoPath = 'assets/images/bnb.png';
+    } else if (network.type.toUpperCase().contains('POLYGON') || network.name.toLowerCase().contains('polygon') || network.name.toLowerCase().contains('matic')) {
+      logoPath = 'assets/images/matic.png';
+    }
+
     return Row(
       children: [
-        const Icon(Icons.hub_outlined, color: Color(0xFF84BD00), size: 18),
+        logoPath != null
+            ? Image.asset(logoPath, width: 20, height: 20, fit: BoxFit.contain)
+            : const Icon(Icons.hub_outlined, color: Color(0xFF84BD00), size: 20),
         const SizedBox(width: 12),
         Text(network.name, style: const TextStyle(color: Colors.white, fontSize: 14)),
       ],

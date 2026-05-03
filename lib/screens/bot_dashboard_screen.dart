@@ -14,6 +14,7 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
   bool _isLoadingPerformance = true;
   bool _isLoadingTradeHistory = true;
   bool _isLoadingWeeklyBenchmark = true;
+  bool _isLoadingInvestment = true;
   String? _weeklyBenchmarkError;
   double? _weeklyBotRoi;
   double? _weeklyBtcRoi;
@@ -21,6 +22,8 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
   double? _weeklyVsBtc;
   double? _weeklyVsEth;
   List<Map<String, dynamic>> _weeklySnapshots = const [];
+  double _totalInvestment = 0.0;
+  List<BotPosition> _openPositions = [];
 
   // Performance data for each strategy
   Map<String, Map<String, String>> _performanceData = {
@@ -38,6 +41,38 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
     _fetchAllStrategyPerformance();
     _fetchTradeHistory();
     _loadWeeklyBenchmark();
+    _fetchInvestmentData();
+  }
+
+  Future<void> _fetchInvestmentData() async {
+    setState(() => _isLoadingInvestment = true);
+
+    try {
+      final result = await BotService.getUserBotPositions(
+        strategy: 'Omega-3X',
+        symbol: 'BTC-USDT',
+      );
+
+      if (result['success'] == true && result['data'] != null) {
+        final data = result['data'];
+        final investment = data['userInvestment'];
+        final positions = data['adjustedPositions'] as List<dynamic>? ?? [];
+
+        if (mounted) {
+          setState(() {
+            _totalInvestment = double.tryParse(investment?.toString() ?? '0') ?? 0.0;
+            _openPositions = positions.map((p) => BotPosition.fromJson(p)).toList();
+            _isLoadingInvestment = false;
+          });
+        }
+      } else if (mounted) {
+        setState(() => _isLoadingInvestment = false);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingInvestment = false);
+      }
+    }
   }
 
   Future<void> _loadWeeklyBenchmark() async {
@@ -212,6 +247,7 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
         ],
       ),
       body: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -226,6 +262,10 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
             
             // Top Strategies Section
             _buildTopStrategies(),
+            const SizedBox(height: 24),
+
+            // Investment Section
+            _buildInvestmentSection(),
             const SizedBox(height: 24),
 
             // Comparison with BTC/ETH Section
@@ -496,6 +536,7 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
         SizedBox(
           height: 280,
           child: ListView.builder(
+            physics: const BouncingScrollPhysics(),
             scrollDirection: Axis.horizontal,
             itemCount: 3,
             itemBuilder: (context, index) {
@@ -721,8 +762,145 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
           ),
           const SizedBox(height: 16),
           _buildBenchmarkComparison(),
+          if (_weeklySnapshots.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _buildWeeklySnapshotsChart(),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _buildWeeklySnapshotsChart() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D0D0D),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF2C2C2E)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Weekly Balance Trend',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                '${_weeklySnapshots.length} days',
+                style: const TextStyle(
+                  color: Color(0xFF8E8E93),
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 80,
+            child: _buildSnapshotsBarChart(),
+          ),
+          const SizedBox(height: 8),
+          _buildSnapshotsList(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSnapshotsBarChart() {
+    if (_weeklySnapshots.isEmpty) return const SizedBox.shrink();
+
+    final balances = _weeklySnapshots.map((s) {
+      final b = s['balance'];
+      return (b is num) ? b.toDouble() : double.tryParse(b?.toString() ?? '0') ?? 0.0;
+    }).toList();
+
+    if (balances.isEmpty) return const SizedBox.shrink();
+
+    final minBalance = balances.reduce((a, b) => a < b ? a : b);
+    final maxBalance = balances.reduce((a, b) => a > b ? a : b);
+    final range = maxBalance - minBalance;
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: List.generate(_weeklySnapshots.length, (index) {
+        final balance = balances[index];
+        final heightPercent = range > 0 ? (balance - minBalance) / range : 0.5;
+        final height = 20 + (heightPercent * 50); // Min 20, max 70
+
+        final dateStr = _weeklySnapshots[index]['date']?.toString() ?? '';
+        final dayLabel = dateStr.isNotEmpty ? dateStr.split('/').first : '${index + 1}';
+
+        return Expanded(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Container(
+                width: 8,
+                height: height,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF84BD00),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                dayLabel,
+                style: const TextStyle(
+                  color: Color(0xFF8E8E93),
+                  fontSize: 9,
+                ),
+              ),
+            ],
+          ),
+        );
+      }),
+    );
+  }
+
+  Widget _buildSnapshotsList() {
+    if (_weeklySnapshots.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      children: _weeklySnapshots.map((snapshot) {
+        final date = snapshot['date']?.toString() ?? '--';
+        final balance = snapshot['balance'];
+        final balanceValue = (balance is num)
+            ? balance.toDouble()
+            : double.tryParse(balance?.toString() ?? '0') ?? 0.0;
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                date,
+                style: const TextStyle(
+                  color: Color(0xFF8E8E93),
+                  fontSize: 11,
+                ),
+              ),
+              Text(
+                '\$${balanceValue.toStringAsFixed(2)}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
     );
   }
 
@@ -816,21 +994,12 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
               ),
             ),
           ),
-        if (_weeklyBenchmarkError != null &&
-            _weeklyBenchmarkError!.toLowerCase().contains('not enough data'))
-          const Padding(
-            padding: EdgeInsets.only(bottom: 12),
-            child: Text(
-              'Benchmark will appear once you have more weekly activity.',
-              style: TextStyle(color: Color(0xFF8E8E93), fontSize: 12),
-            ),
-          ),
 
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             const Text(
-              'Omega-3X Bot ROI',
+              '🧠 Omega-3X Bot ROI',
               style: TextStyle(
                 color: Color(0xFF8E8E93),
                 fontSize: 12,
@@ -838,8 +1007,8 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
             ),
             Text(
               _fmtPct(botRoi),
-              style: const TextStyle(
-                color: Color(0xFF84BD00),
+              style: TextStyle(
+                color: (botRoi != null && botRoi >= 0) ? const Color(0xFF84BD00) : const Color(0xFFFF3B30),
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
@@ -851,7 +1020,7 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             const Text(
-              'BTC ROI',
+              '₿ BTC ROI',
               style: TextStyle(
                 color: Color(0xFF8E8E93),
                 fontSize: 12,
@@ -859,8 +1028,8 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
             ),
             Text(
               _fmtPct(btcRoi),
-              style: const TextStyle(
-                color: Color(0xFF84BD00),
+              style: TextStyle(
+                color: (btcRoi != null && btcRoi >= 0) ? const Color(0xFF84BD00) : const Color(0xFFFF3B30),
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
@@ -872,7 +1041,7 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             const Text(
-              'ETH ROI',
+              'Ξ ETH ROI',
               style: TextStyle(
                 color: Color(0xFF8E8E93),
                 fontSize: 12,
@@ -880,8 +1049,8 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
             ),
             Text(
               _fmtPct(ethRoi),
-              style: const TextStyle(
-                color: Color(0xFF84BD00),
+              style: TextStyle(
+                color: (ethRoi != null && ethRoi >= 0) ? const Color(0xFF84BD00) : const Color(0xFFFF3B30),
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
@@ -894,37 +1063,6 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
           color: const Color(0xFF2C2C2E),
         ),
         const SizedBox(height: 12),
-        if (_weeklySnapshots.isNotEmpty) ...[
-          const Text(
-            'Weekly balance snapshots',
-            style: TextStyle(
-              color: Color(0xFF8E8E93),
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          ..._weeklySnapshots.take(7).map((s) {
-            final date = s['date']?.toString() ?? '--';
-            final balance = _fmtBalance(s['balance']);
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(date, style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 12)),
-                  Text(balance, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
-                ],
-              ),
-            );
-          }),
-          const SizedBox(height: 12),
-          Container(
-            height: 1,
-            color: const Color(0xFF2C2C2E),
-          ),
-          const SizedBox(height: 12),
-        ],
         Row(
           children: [
             Icon(
@@ -937,8 +1075,8 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
               child: Text(
                 (botVsBtc == null || botVsEth == null)
                     ? 'Benchmark data unavailable'
-                    : 'Bot ${botVsBtc >= 0 ? "outperformed" : "trailing"} BTC by ${botVsBtc.abs().toStringAsFixed(2)}%, '
-                      '${botVsEth >= 0 ? "outperformed" : "trailing"} ETH by ${botVsEth.abs().toStringAsFixed(2)}%',
+                    : '✅ Bot ${botVsBtc >= 0 ? "outperformed" : "trailing"} BTC by ${botVsBtc.abs().toStringAsFixed(2)}%, '
+                      'ETH by ${botVsEth.abs().toStringAsFixed(2)}%',
                 style: TextStyle(
                   color: (botVsBtc != null && botVsEth != null && botVsBtc >= 0 && botVsEth >= 0) ? const Color(0xFF84BD00) : const Color(0xFFFF9500),
                   fontSize: 12,
@@ -1040,7 +1178,7 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
           else
             ListView.separated(
               shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
+              physics: const ClampingScrollPhysics(),
               itemCount: _tradeHistory.length > 5 ? 5 : _tradeHistory.length,
               separatorBuilder: (context, index) => const Divider(
                 color: Color(0xFF2C2C2E),
@@ -1070,6 +1208,197 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
                 ),
               ),
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInvestmentSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF2C2C2E)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Your Investment',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              if (_isLoadingInvestment)
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Color(0xFF84BD00),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2C2C2E),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Total Invested',
+                  style: TextStyle(
+                    color: Color(0xFF8E8E93),
+                    fontSize: 14,
+                  ),
+                ),
+                Text(
+                  '\$${_totalInvestment.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                    color: Color(0xFF84BD00),
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Open Positions',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                '${_openPositions.length}',
+                style: const TextStyle(
+                  color: Color(0xFF8E8E93),
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (_openPositions.isEmpty && !_isLoadingInvestment)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'No open positions',
+                  style: TextStyle(
+                    color: Color(0xFF8E8E93),
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+            )
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const ClampingScrollPhysics(),
+              itemCount: _openPositions.length,
+              separatorBuilder: (context, index) => const Divider(
+                color: Color(0xFF2C2C2E),
+                height: 1,
+              ),
+              itemBuilder: (context, index) {
+                final position = _openPositions[index];
+                return _buildPositionItem(position);
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPositionItem(BotPosition position) {
+    final isProfit = position.userUnrealizedProfit >= 0;
+    final pnlColor = isProfit ? const Color(0xFF84BD00) : const Color(0xFFFF3B30);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: const Color(0xFF2C2C2E),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Center(
+              child: Text(
+                position.symbol.split('-').first,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  position.symbol,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${position.positionSide} ${position.leverage}x',
+                  style: const TextStyle(
+                    color: Color(0xFF8E8E93),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${isProfit ? "+" : ""}\$${position.userUnrealizedProfit.toStringAsFixed(2)}',
+                style: TextStyle(
+                  color: pnlColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '\$${position.markPrice.toStringAsFixed(2)}',
+                style: const TextStyle(
+                  color: Color(0xFF8E8E93),
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

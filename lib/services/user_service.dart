@@ -62,6 +62,7 @@ class UserService {
   String? _referralCode;
   bool? _documentImageVerified;
   int? _selfieStatusValue;
+  bool _isFetchingLocationNames = false;
 
   // Getters
   String? get userName => _userName;
@@ -78,11 +79,12 @@ class UserService {
   String? get kycRejectionReason => _kycRejectionReason;
   String? get ipAddress => _ipAddress;
   String? get userPhone => _userPhone;
-  String? get userCountry => _userCountry;
-  String? get userState => _userState;
-  String? get userCity => _userCity;
+  String? get userCountry => (_userCountry != null && _isObjectId(_userCountry!)) ? null : _userCountry;
+  String? get userState => (_userState != null && _isObjectId(_userState!)) ? null : _userState;
+  String? get userCity => (_userCity != null && _isObjectId(_userCity!)) ? null : _userCity;
   String? get userCountryCode => _userCountryCode;
   String? get referralCode => _referralCode;
+  bool get isFetchingLocationNames => _isFetchingLocationNames;
   bool get documentImageVerified => _documentImageVerified ?? false;
   bool get shouldResumeKYCAtSelfieStep {
     // IMPORTANT: If KYC is rejected, user must restart from DigiLocker (not selfie)
@@ -105,6 +107,11 @@ class UserService {
       final intValue = prefs.getInt(key);
       return intValue?.toString();
     }
+  }
+
+  // Helper to check if a value looks like a MongoDB ObjectID (24 hex characters)
+  bool _isObjectId(String value) {
+    return RegExp(r'^[0-9a-fA-F]{24}$').hasMatch(value);
   }
 
   // Initialize user data from SharedPreferences
@@ -2448,6 +2455,7 @@ class UserService {
 
   // Fetch location names from IDs and store them
   Future<void> _fetchLocationNames() async {
+    _isFetchingLocationNames = true;
     try {
       debugPrint('📍 Fetching location names from IDs...');
 
@@ -2535,6 +2543,8 @@ class UserService {
       );
     } catch (e) {
       debugPrint('Error fetching location names: $e');
+    } finally {
+      _isFetchingLocationNames = false;
     }
   }
 
@@ -3236,4 +3246,92 @@ class UserService {
   }
 
   static Map<String, dynamic>? get cachedReferralData => _cachedReferralData;
+
+  // Get level-wise income summary for affiliate program
+  static Future<Map<String, dynamic>> getLevelWiseSummary() async {
+    try {
+      final token = await AuthService.getToken();
+      if (token == null || token.isEmpty) {
+        return {'success': false, 'error': 'Authentication required'};
+      }
+
+      final response = await http.get(
+        Uri.parse(
+          'https://api11.hathmetech.com/api/bot/v1/api/user/income/level-wise-summary',
+        ),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          return data;
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to fetch level summary',
+          };
+        }
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching level-wise summary: $e');
+      return {
+        'success': false,
+        'error': NetworkErrorHandler.getErrorMessage(e),
+      };
+    }
+  }
+
+  // Get detailed level income summary for specific level
+  static Future<Map<String, dynamic>> getLevelIncomeSummary(int level) async {
+    try {
+      final token = await AuthService.getToken();
+      if (token == null || token.isEmpty) {
+        return {'success': false, 'error': 'Authentication required'};
+      }
+
+      final response = await http.get(
+        Uri.parse(
+          'https://api11.hathmetech.com/api/bot/v1/api/user/income/level-summary/$level',
+        ),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          return data;
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to fetch level summary',
+          };
+        }
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching level income summary: $e');
+      return {
+        'success': false,
+        'error': NetworkErrorHandler.getErrorMessage(e),
+      };
+    }
+  }
 }

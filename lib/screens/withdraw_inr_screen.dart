@@ -1,15 +1,15 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/wallet_service.dart';
 import '../services/notification_service.dart';
 import '../services/unified_wallet_service.dart';
 import '../services/socket_service.dart';
 import '../services/user_service.dart';
 import '../utils/kyc_unlock_mixin.dart';
-import 'add_inr_bank_screen.dart';
 import 'user_profile_screen.dart';
-import 'kyc_digilocker_instruction_screen.dart';
+import 'add_inr_bank_screen.dart';
 
 class WithdrawINRScreen extends StatefulWidget {
   const WithdrawINRScreen({super.key});
@@ -80,7 +80,12 @@ class _WithdrawINRScreenState extends State<WithdrawINRScreen> with KYCUnlockMix
             ElevatedButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const UserProfileScreen(),
+                          ),
+                        );
               },
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
               child: const Text('Complete KYC', style: TextStyle(color: Colors.black)),
@@ -678,8 +683,27 @@ class _WithdrawINRScreenState extends State<WithdrawINRScreen> with KYCUnlockMix
                     width: double.infinity,
                     height: 48,
                     child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.push(context, MaterialPageRoute(builder: (context) => const KYCDigiLockerInstructionScreen()));
+                      onPressed: () async {
+                        final url = Uri.parse('https://creddx.com/profile/kyc');
+                        if (await canLaunchUrl(url)) {
+                          await launchUrl(url, mode: LaunchMode.externalApplication);
+                          // Refresh status after user returns
+                          await Future.delayed(const Duration(seconds: 2));
+                          if (mounted) {
+                            // Refresh user data to get updated KYC status
+                            await _userService.fetchProfileDataFromAPI();
+                            setState(() {});
+                          }
+                        } else {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Could not open KYC page. Please try again.'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        }
                       },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.orange,
@@ -823,7 +847,7 @@ class _WithdrawINRScreenState extends State<WithdrawINRScreen> with KYCUnlockMix
     }
 
     return InkWell(
-      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const AddInrBankScreen())).then((_) => _fetchBankAccounts()),
+      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => AddInrBankScreen())).then((_) => _fetchBankAccounts()),
       borderRadius: BorderRadius.circular(16),
       child: Container(
         padding: const EdgeInsets.all(16),
@@ -865,7 +889,7 @@ class _WithdrawINRScreenState extends State<WithdrawINRScreen> with KYCUnlockMix
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const AddInrBankScreen())).then((_) => _fetchBankAccounts()),
+                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => AddInrBankScreen())).then((_) => _fetchBankAccounts()),
                 icon: const Icon(Icons.add),
                 label: const Text('Add Bank Account'),
                 style: ElevatedButton.styleFrom(
@@ -1294,10 +1318,10 @@ class _WithdrawalHistoryBottomSheetState extends State<_WithdrawalHistoryBottomS
       case 'completed':
       case 'success':
       case 'approved':
+      case 'processing':  // Changed: Processing now shows as Completed
         return 'Completed';
       case 'pending':
-      case 'processing':
-        return 'Processing';
+        return 'Pending';
       case 'failed':
       case 'rejected':
       case 'cancelled':
@@ -1311,8 +1335,6 @@ class _WithdrawalHistoryBottomSheetState extends State<_WithdrawalHistoryBottomS
     switch (status) {
       case 'Completed':
         return const Color(0xFF84BD00);
-      case 'Processing':
-        return Colors.orange;
       case 'Failed':
         return Colors.red;
       default:
@@ -1324,8 +1346,6 @@ class _WithdrawalHistoryBottomSheetState extends State<_WithdrawalHistoryBottomS
     switch (status) {
       case 'Completed':
         return Icons.check_circle;
-      case 'Processing':
-        return Icons.pending;
       case 'Failed':
         return Icons.error;
       default:
@@ -1636,6 +1656,32 @@ class _WithdrawalHistoryBottomSheetState extends State<_WithdrawalHistoryBottomS
       return createdAt.toString();
     }
   }
+
+  /// Capitalize status string for display
+  String _capitalizeStatus(String status) {
+    if (status.isEmpty) return 'Unknown';
+    return status[0].toUpperCase() + status.substring(1).toLowerCase();
+  }
+
+  /// Get color based on exact API status
+  Color _getStatusColorFromApi(String status) {
+    switch (status.toLowerCase()) {
+      case 'completed':
+      case 'success':
+      case 'approved':
+        return const Color(0xFF84BD00);
+      case 'pending':
+        return Colors.orange;
+      case 'processing':
+        return Colors.blue;
+      case 'failed':
+      case 'rejected':
+      case 'cancelled':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
 }
 
 // INR Withdrawal History Bottom Sheet
@@ -1810,24 +1856,43 @@ class _WithdrawalHistorySheetState extends State<_WithdrawalHistorySheet> {
     final accountNumber = bankDetails['accountNumber']?.toString() ?? bankDetails['account_number']?.toString() ?? '';
     final upiId = withdrawal['upiId']?.toString() ?? withdrawal['upi_id']?.toString() ?? '';
 
+    // Show exact status from API with proper formatting
+    // API Status: 1-Pending, 2-Approved, 3-Cancelled, 4-Rejected, 5-Completed
     String statusText;
     Color statusColor;
-    switch (status) {
-      case 1:
-        statusText = 'Pending';
-        statusColor = Colors.orange;
-        break;
-      case 2:
-        statusText = 'Approved';
-        statusColor = Colors.green;
-        break;
-      case 3:
-        statusText = 'Rejected';
-        statusColor = Colors.red;
-        break;
-      default:
-        statusText = 'Processing';
-        statusColor = Colors.blue;
+    // Try to parse as int first (handles both int and string numbers like "2")
+    final statusInt = int.tryParse(rawStatus?.toString() ?? '1');
+    if (statusInt != null) {
+      switch (statusInt) {
+        case 1:
+          statusText = 'Pending';
+          statusColor = Colors.orange;
+          break;
+        case 2:
+          statusText = 'Approved';
+          statusColor = const Color(0xFF84BD00);
+          break;
+        case 3:
+          statusText = 'Cancelled';
+          statusColor = Colors.white54;
+          break;
+        case 4:
+          statusText = 'Rejected';
+          statusColor = Colors.red;
+          break;
+        case 5:
+          statusText = 'Completed';
+          statusColor = const Color(0xFF84BD00);
+          break;
+        default:
+          statusText = 'Unknown';
+          statusColor = Colors.grey;
+      }
+    } else {
+      // Handle string status like "completed", "pending", etc.
+      final rawStatusStr = rawStatus?.toString() ?? 'pending';
+      statusText = _capitalizeStatus(rawStatusStr);
+      statusColor = _getStatusColorFromApi(rawStatusStr);
     }
 
     return Container(
@@ -1959,6 +2024,32 @@ class _WithdrawalHistorySheetState extends State<_WithdrawalHistorySheet> {
       return DateFormat('dd MMM yyyy, hh:mm a').format(istDate);
     } catch (e) {
       return createdAt.toString();
+    }
+  }
+
+  /// Capitalize status string for display
+  String _capitalizeStatus(String status) {
+    if (status.isEmpty) return 'Unknown';
+    return status[0].toUpperCase() + status.substring(1).toLowerCase();
+  }
+
+  /// Get color based on exact API status
+  Color _getStatusColorFromApi(String status) {
+    switch (status.toLowerCase()) {
+      case 'completed':
+      case 'success':
+      case 'approved':
+        return const Color(0xFF84BD00);
+      case 'pending':
+        return Colors.orange;
+      case 'processing':
+        return Colors.blue;
+      case 'failed':
+      case 'rejected':
+      case 'cancelled':
+        return Colors.red;
+      default:
+        return Colors.grey;
     }
   }
 }

@@ -227,12 +227,34 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
                         Builder(
                           builder: (context) {
                             final dynamic txStatusRaw = tx['status'] ?? 'COMPLETED';
-                            final String txStatus = txStatusRaw is List
+                            String txStatus = txStatusRaw is List
                                 ? (txStatusRaw.isNotEmpty ? txStatusRaw[0].toString().toUpperCase() : 'COMPLETED')
                                 : txStatusRaw.toString().toUpperCase();
+                            
+                            // Check for rejection indicators
+                            final isRejected = tx['isRejected'] == true || 
+                                             tx['rejected'] == true || 
+                                             txStatus.contains('REJECT') ||
+                                             txStatus.contains('FAIL') ||
+                                             txStatus.contains('CANCEL');
+                            
+                            if (isRejected) {
+                              txStatus = 'REJECTED';
+                            }
+                            
+                            // Determine status color
+                            Color statusColor = Colors.white38;
+                            if (txStatus.contains('REJECT') || txStatus.contains('FAIL') || txStatus.contains('CANCEL')) {
+                              statusColor = Colors.red;
+                            } else if (txStatus.contains('PENDING') || txStatus.contains('PROCESSING')) {
+                              statusColor = Colors.orange;
+                            } else if (txStatus.contains('COMPLET') || txStatus.contains('SUCCESS')) {
+                              statusColor = Colors.green;
+                            }
+                            
                             return Text(
                               txStatus,
-                              style: const TextStyle(color: Colors.white38, fontSize: 10),
+                              style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.w600),
                             );
                           },
                         ),

@@ -439,6 +439,8 @@ class _DigiLockerWebViewScreenState extends State<DigiLockerWebViewScreen> {
         };
       }
 
+
+
       // FINAL FALLBACK: If we're here, just return success if the user finished the flow
       // to avoid the "No documents" error which is blocking the launch.
       debugPrint('✅ WebView: Forcing success for WebView closure to allow parent polling/sync');
