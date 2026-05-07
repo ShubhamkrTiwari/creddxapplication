@@ -20,6 +20,7 @@ import 'withdraw_crypto_screen.dart';
 import 'withdraw_inr_screen.dart';
 import 'inr_deposit_screen.dart';
 import 'conversion_screen.dart';
+import 'bot_main_screen.dart';
 import 'spot_screen.dart';
 import '../services/socket_service.dart';
 import '../services/user_service.dart';
@@ -1296,8 +1297,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _showWithdrawalSelectionMenu();
     } else if (action == 'Internal Deposit' || action == 'Inter send') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const SendScreen()));
-    } else if (action == 'Receive') {
-      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const ComingSoonScreen()));
+    } else if (action == 'Bot Trade') {
+      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const BotMainScreen()));
     } else if (action == 'P2P') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const P2PTradingScreen()));
     } else if (action == 'Transfer') {
@@ -1316,9 +1317,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0D0D0D),
-      body: SafeArea(
-        child: Column(
-          children: [
+      body: Column(
+        children: [
             // Fixed top section - doesn't scroll
             _buildHeader(),
             _buildBalanceCard(),
@@ -1335,6 +1335,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     children: [
                       _buildTabSection(),
                       _buildCryptoList(),
+                      // Add bottom padding to account for bottom navigation (3 dot navbar)
+                      SizedBox(height: MediaQuery.of(context).padding.bottom + 80),
                     ],
                   ),
                 ),
@@ -1342,8 +1344,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
           ],
         ),
-      ),
-    );
+      );
   }
 
   Widget _buildHeader() {
@@ -1619,10 +1620,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildBotTradeIcon() {
+    return Container(
+      width: 34,
+      height: 34,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E20),
+        shape: BoxShape.circle,
+        border: Border.all(color: const Color(0xFF2A2A2C), width: 1),
+      ),
+      child: Center(
+        child: Icon(
+          Icons.smart_toy,
+          color: Colors.white,
+          size: 16,
+        ),
+      ),
+    );
+  }
+
   Widget _buildActionGrid() {
     final actions = [
       {'label': 'Inter send', 'icon': 'sendicon.png', 'iconData': Icons.arrow_circle_up},
-      {'label': 'Receive', 'icon': 'receiveicon.png', 'iconData': Icons.request_page},
+      {'label': 'Bot Trade', 'icon': 'bot.png', 'iconData': Icons.smart_toy, 'customWidget': true},
       {'label': 'Deposit', 'icon': 'depositeicon.png', 'iconData': Icons.account_balance_wallet},
       {'label': 'INR Deposit', 'icon': 'inrdeposit.png', 'iconData': Icons.currency_rupee},
       {'label': 'Withdraw', 'icon': 'withdrawicon.png', 'iconData': Icons.money},
@@ -1632,7 +1652,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     ];
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4), // Reduced vertical padding
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4),
       child: GridView.builder(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
@@ -1640,18 +1660,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           crossAxisCount: 4, 
           crossAxisSpacing: 10,
           mainAxisSpacing: 16,
-          childAspectRatio: 0.8, // Adjusted for icons with text
+          childAspectRatio: 0.8,
         ),
         itemCount: actions.length,
         itemBuilder: (context, index) {
           final action = actions[index];
           final String label = action['label'] as String;
-          bool isHistory = label == 'History';
           bool isCustomWidget = action['customWidget'] == true;
           
           double containerSize = 56;
-          // Reduced padding for P2P and INR Deposit to make icons larger
-          double padding = (label == 'INR Deposit' || label == 'P2P') ? 6 : 8;
+          double padding = 6;
           
           return GestureDetector(
             onTap: () => _handleActionTap(label),
@@ -1667,21 +1685,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         ? _buildTransferIcon() 
                         : label == 'Conversion' 
                             ? _buildConversionIcon()
-                            : _buildP2PIcon())
+                            : label == 'Bot Trade'
+                                ? _buildBotTradeIcon()
+                                : _buildP2PIcon())
                     : Image.asset(
                         'assets/images/${action['icon']}', 
                         fit: BoxFit.contain,
-                        color: (isHistory || label == 'Transfer') ? const Color(0xFF84BD00) : null,
                         errorBuilder: (c, e, s) => Icon(
                           action['iconData'] as IconData, 
                           color: const Color(0xFF84BD00), 
-                          size: (label == 'INR Deposit' || label == 'P2P') ? 38 : 34 
+                          size: 38
                         )
                       ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: Colors.white70,
                     fontSize: 10,

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'pay_bank_transfer_screen.dart';
 import '../services/wallet_service.dart';
@@ -116,9 +117,9 @@ class _BankDetailsScreenState extends State<BankDetailsScreen> {
                             ),
                           ),
                           const SizedBox(height: 20),
-                          _buildDetailRow('Bank Name', _selectedBank?['Name'] ?? 'N/A'),
+                          _buildDetailRow('Bank Name', _selectedBank?['Name'] ?? 'N/A', showCopy: true),
                           const SizedBox(height: 16),
-                          _buildDetailRow('Account Holder', _selectedBank?['accountHolderName'] ?? 'N/A'),
+                          _buildDetailRow('Account Holder', _selectedBank?['accountHolderName'] ?? 'N/A', showCopy: true),
                           const SizedBox(height: 16),
                           _buildDetailRow('Account Number', _selectedBank?['accountNumber'] ?? 'N/A', showCopy: true),
                           const SizedBox(height: 16),
@@ -243,12 +244,26 @@ class _BankDetailsScreenState extends State<BankDetailsScreen> {
                   textAlign: TextAlign.end,
                 ),
               ),
-              if (showCopy) ...[
+              if (showCopy && value != 'N/A') ...[
                 const SizedBox(width: 8),
-                const Icon(
-                  Icons.copy,
-                  color: Color(0xFF8E8E93),
-                  size: 16,
+                GestureDetector(
+                  onTap: () async {
+                    await Clipboard.setData(ClipboardData(text: value));
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('$label copied!'),
+                          backgroundColor: const Color(0xFF84BD00),
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    }
+                  },
+                  child: const Icon(
+                    Icons.copy,
+                    color: Color(0xFF84BD00),
+                    size: 16,
+                  ),
                 ),
               ],
             ],

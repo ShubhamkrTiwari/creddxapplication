@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
 import '../services/socket_service.dart';
+import '../services/unified_wallet_service.dart';
 import 'dart:async';
 
 class BotWithdrawScreen extends StatefulWidget {
@@ -65,26 +66,19 @@ class _BotWithdrawScreenState extends State<BotWithdrawScreen> {
   }
 
   void _subscribeToBotBalance() {
-    _balanceSubscription = SocketService.balanceStream.listen((data) {
-      if (mounted && (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary')) {
-        final balanceData = data['data'];
-        if (balanceData != null && balanceData is Map) {
-          final botBalance = balanceData['botBalance'] ?? balanceData['bot'];
-          if (botBalance != null) {
-            double newBalance = 0.0;
-            if (botBalance is num) {
-              newBalance = botBalance.toDouble();
-            } else if (botBalance is Map) {
-              newBalance = double.tryParse(botBalance['USDT']?.toString() ?? '0') ?? 0.0;
-            }
-            setState(() {
-              _liveBotBalance = newBalance;
-            });
-            debugPrint('Withdraw Screen: Bot balance updated: $newBalance');
-          }
-        }
+    _balanceSubscription = UnifiedWalletService.walletBalanceStream.listen((balance) {
+      if (mounted && balance != null) {
+        setState(() {
+          _liveBotBalance = balance.botBalance;
+        });
+        debugPrint('Withdraw Screen: Bot balance updated from UnifiedWalletService: ${_liveBotBalance}');
       }
     });
+
+    // Initial balance
+    if (UnifiedWalletService.walletBalance != null) {
+      _liveBotBalance = UnifiedWalletService.walletBalance!.botBalance;
+    }
   }
 
   Future<void> _fetchMaxWithdrawAmount() async {
@@ -180,6 +174,9 @@ class _BotWithdrawScreenState extends State<BotWithdrawScreen> {
           _liveBotBalance = _liveBotBalance + amount;
         });
 
+        // Refresh global balance
+        UnifiedWalletService.refreshBotBalance();
+
         _showSnackBar(result['message'] ?? 'Withdrawal successful!');
         Navigator.pop(context, true);
       } else {
@@ -193,7 +190,7 @@ class _BotWithdrawScreenState extends State<BotWithdrawScreen> {
   }
 
   void _setMaxAmount() {
-    _amountController.text = _maxWithdrawAmount.toStringAsFixed(2);
+    _amountController.text = _maxWithdrawAmount.toString();
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
@@ -259,7 +256,7 @@ class _BotWithdrawScreenState extends State<BotWithdrawScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        '${_maxWithdrawAmount.toStringAsFixed(2)} USDT',
+                        '$_maxWithdrawAmount USDT',
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 28,
@@ -345,7 +342,7 @@ class _BotWithdrawScreenState extends State<BotWithdrawScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Withdrawal will be processed from your active investment in ${widget.strategy['name']?.toString() ?? 'this strategy'}. Max withdraw: ${_maxWithdrawAmount.toStringAsFixed(2)} USDT',
+                          'Withdrawal will be processed from your active investment in ${widget.strategy['name']?.toString() ?? 'this strategy'}. Max withdraw: $_maxWithdrawAmount USDT',
                           style: const TextStyle(
                             color: Colors.orange,
                             fontSize: 12,

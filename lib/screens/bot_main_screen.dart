@@ -85,23 +85,14 @@ class _BotMainScreenState extends State<BotMainScreen> {
   }
 
   final List<Widget> _screens = [
-    const SizedBox.shrink(), // Home icon navigation trigger
-    const BotTradeScreen(), // Dashboard tab shows the Trading/Algos interface
+    const SizedBox.shrink(), // Placeholder - not used
+    const BotDashboardScreen(), // Dashboard tab shows the new dashboard design
     const BotAlgorithmScreen(), // Algos tab shows the Algorithm selection screen
     const BotPositionsScreen(), // Positions tab shows Open Positions
     const SubscriptionScreen(), // Subscribe
   ];
 
   void _onItemTapped(int index) {
-    if (index == 0) {
-      // Home click karne par wapas App Home Screen par navigation
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (context) => const MainNavigation()),
-        (route) => false,
-      );
-      return;
-    }
-    
     // Validate requirements for Algos (2), Positions (3), and Subscribe (4)
     if (index >= 2) {
       if (!_validateUserRequirements()) {
@@ -118,54 +109,100 @@ class _BotMainScreenState extends State<BotMainScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      body: _screens[_selectedIndex],
-      bottomNavigationBar: Container(
-        height: 85,
-        decoration: const BoxDecoration(
-          color: Colors.black,
-          border: Border(
-            top: BorderSide(color: Colors.white12, width: 0.5),
-          ),
-        ),
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(70),
         child: SafeArea(
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _buildNavItem(Icons.home_outlined, Icons.home, 'Home', 0),
-              _buildNavItem(Icons.dashboard_outlined, Icons.dashboard, 'Dashboard', 1),
-              _buildNavItem(Icons.psychology_outlined, Icons.psychology, 'Algos', 2),
-              _buildNavItem(Icons.trending_up_outlined, Icons.trending_up, 'Positions', 3),
-              _buildNavItem(Icons.subscriptions_outlined, Icons.subscriptions, 'Subscribe', 4),
-            ],
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.black,
+              border: Border(
+                bottom: BorderSide(color: Colors.white.withOpacity(0.1), width: 0.5),
+              ),
+            ),
+            child: Row(
+              children: [
+                // Back button
+                GestureDetector(
+                  onTap: () {
+                    Navigator.of(context).pushAndRemoveUntil(
+                      MaterialPageRoute(builder: (context) => const MainNavigation()),
+                      (route) => false,
+                    );
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    margin: const EdgeInsets.only(right: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF84BD00).withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFF84BD00).withOpacity(0.3), width: 1),
+                    ),
+                    child: const Icon(
+                      Icons.arrow_back_ios_rounded,
+                      color: Color(0xFF84BD00),
+                      size: 14,
+                    ),
+                  ),
+                ),
+                // Navigation items
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _buildTopNavItem(Icons.dashboard_outlined, 'Dashboard', 1),
+                        _buildTopNavItem(Icons.psychology_outlined, 'Algos', 2),
+                        _buildTopNavItem(Icons.trending_up_outlined, 'Positions', 3),
+                        _buildTopNavItem(Icons.subscriptions_outlined, 'Subscribe', 4),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
+      body: _screens[_selectedIndex],
     );
   }
 
-  Widget _buildNavItem(IconData icon, IconData activeIcon, String label, int index) {
+  Widget _buildTopNavItem(IconData icon, String label, int index) {
     final bool isActive = _selectedIndex == index;
     return GestureDetector(
       onTap: () => _onItemTapped(index),
       behavior: HitTestBehavior.opaque,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            isActive ? activeIcon : icon,
-            color: isActive ? const Color(0xFF84BD00) : Colors.white60,
-            size: 24,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        decoration: BoxDecoration(
+          color: isActive ? const Color(0xFF84BD00).withOpacity(0.15) : Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
+          border: isActive
+              ? Border.all(color: const Color(0xFF84BD00).withOpacity(0.3), width: 1)
+              : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
               color: isActive ? const Color(0xFF84BD00) : Colors.white60,
-              fontSize: 11,
-              fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+              size: 18,
             ),
-          ),
-        ],
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: isActive ? const Color(0xFF84BD00) : Colors.white60,
+                fontSize: 10,
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+              ),
+            )
+          ],
+        ),
       ),
     );
   }

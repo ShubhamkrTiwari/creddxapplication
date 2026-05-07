@@ -3046,9 +3046,11 @@ class UserService {
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
+        debugPrint('🔍 Raw referral API response: $data');
         if (data['success'] == true) {
           // Process the new API response format
           final processedData = _processReferralData(data);
+          debugPrint('🔍 Processed referral data: $processedData');
           _cachedReferralData = processedData;
           return {'success': true, 'data': processedData};
         } else {

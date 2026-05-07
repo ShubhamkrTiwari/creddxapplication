@@ -105,7 +105,7 @@ class _PayBankTransferScreenState extends State<PayBankTransferScreen> {
                   Row(
                     children: [
                       Text(
-                        '${widget.amount} USDT',
+                        '${widget.amount} INR',
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 16,

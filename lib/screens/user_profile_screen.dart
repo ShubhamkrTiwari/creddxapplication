@@ -1181,7 +1181,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         title: const Text('Profile', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
         centerTitle: true,
       ),
-      body: Column(
+      body: SafeArea(
+        child: Column(
         children: [
           Expanded(
             child: SingleChildScrollView(
@@ -1231,9 +1232,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                     ],
                   ),
                   const SizedBox(height: 20),
-                  _buildProfileInfoRow('Email', _userService.userEmail ?? 'Not provided'),
+                  _buildProfileInfoRow('Email', _userService.userEmail ?? 'Not provided', isCopyable: true),
                   const SizedBox(height: 12),
-                  _buildProfileInfoRow('Mobile', '${_userService.userCountryCode ?? '+91'} ${_userService.userPhone ?? 'Not provided'}'),
+                  _buildProfileInfoRow('Mobile', '${_userService.userCountryCode ?? '+91'} ${_userService.userPhone ?? 'Not provided'}', isCopyable: true),
                   const SizedBox(height: 12),
                   // Sign-Up Time and Last Log-In hidden as per request
                   // _buildProfileInfoRow('Sign-Up Time', _userService.signUpTime ?? '12/11/2025 | 12:30:45'),
@@ -1273,6 +1274,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     ),
     ],
     ),
+      ),
     );
   }
 
@@ -1811,12 +1813,38 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     );
   }
 
-  Widget _buildProfileInfoRow(String label, String value) {
+  Widget _buildProfileInfoRow(String label, String value, {bool isCopyable = false}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(label, style: const TextStyle(color: Colors.white38, fontSize: 13)),
-        Text(value, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+        Row(
+          children: [
+            Text(value, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+            if (isCopyable && value != 'Not provided') ...[
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () async {
+                  await Clipboard.setData(ClipboardData(text: value));
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Copied to clipboard!'),
+                        backgroundColor: Color(0xFF84BD00),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                },
+                child: const Icon(
+                  Icons.copy,
+                  color: Color(0xFF84BD00),
+                  size: 16,
+                ),
+              ),
+            ],
+          ],
+        ),
       ],
     );
   }
@@ -1906,7 +1934,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
     return Column(
       children: [
-        _buildProfileInfoRow('User ID', userId ?? 'Not provided'),
+        _buildProfileInfoRow('User ID', userId ?? 'Not provided', isCopyable: true),
         const SizedBox(height: 12),
         _buildProfileInfoRow('Location', locationText),
       ],

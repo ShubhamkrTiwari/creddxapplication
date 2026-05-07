@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import '../services/user_service.dart';
 
@@ -439,11 +440,17 @@ class _UpdateProfileScreenState extends State<UpdateProfileScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildFieldLabel('Name'),
-            _buildTextField(_nameController, 'Enter Name'),
+            _buildTextField(
+              _nameController,
+              'Enter Name',
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z\s]')),
+              ],
+            ),
             const SizedBox(height: 20),
             
             _buildFieldLabel('Email'),
-            _buildTextField(_emailController, 'Enter Email ID', readOnly: true),
+            _buildTextField(_emailController, 'Enter Email ID', readOnly: true, suffixIcon: Icons.copy),
             const SizedBox(height: 20),
             
             _buildFieldLabel('User ID'),
@@ -476,7 +483,14 @@ class _UpdateProfileScreenState extends State<UpdateProfileScreen> {
                   ),
                 ),
                 const SizedBox(width: 10),
-                Expanded(child: _buildTextField(_mobileController, 'Enter Mobile Number')),
+                Expanded(
+                  child: _buildTextField(
+                    _mobileController,
+                    'Enter Mobile Number',
+                    suffixIcon: Icons.copy,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 20),
@@ -554,17 +568,38 @@ class _UpdateProfileScreenState extends State<UpdateProfileScreen> {
     );
   }
 
-  Widget _buildTextField(TextEditingController controller, String hint, {bool readOnly = false, IconData? suffixIcon}) {
+  Widget _buildTextField(TextEditingController controller, String hint, {bool readOnly = false, IconData? suffixIcon, List<TextInputFormatter>? inputFormatters}) {
     return TextField(
       controller: controller,
       readOnly: readOnly,
+      inputFormatters: inputFormatters,
       style: const TextStyle(color: Colors.white, fontSize: 15),
       decoration: InputDecoration(
         hintText: hint,
         hintStyle: const TextStyle(color: Colors.white24),
         filled: true,
         fillColor: const Color(0xFF1C1C1E),
-        suffixIcon: suffixIcon != null ? Icon(suffixIcon, color: Colors.white54, size: 18) : null,
+        suffixIcon: suffixIcon != null
+            ? GestureDetector(
+                onTap: suffixIcon == Icons.copy
+                    ? () async {
+                        if (controller.text.isNotEmpty) {
+                          await Clipboard.setData(ClipboardData(text: controller.text));
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Copied to clipboard!'),
+                                backgroundColor: Color(0xFF84BD00),
+                                duration: Duration(seconds: 2),
+                              ),
+                            );
+                          }
+                        }
+                      }
+                    : null,
+                child: Icon(suffixIcon, color: Colors.white54, size: 18),
+              )
+            : null,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       ),

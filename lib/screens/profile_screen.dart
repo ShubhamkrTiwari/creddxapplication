@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/p2p_service.dart';
@@ -350,6 +351,10 @@ class _ProfileScreenState extends State<ProfileScreen>
             ],
           ),
           const SizedBox(height: 12),
+          if (user['userId'] != null || user['_id'] != null) ...[
+            _buildUserIdRow(user['userId']?.toString() ?? user['_id']?.toString() ?? ''),
+            const SizedBox(height: 12),
+          ],
           Text(
             registrationDays.contains('Ago') ? '$registrationDays since the first trade' : 'New User',
             style: const TextStyle(
@@ -384,6 +389,48 @@ class _ProfileScreenState extends State<ProfileScreen>
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildUserIdRow(String userId) {
+    return Row(
+      children: [
+        Text(
+          'User ID: ',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+          ),
+        ),
+        Text(
+          userId,
+          style: const TextStyle(
+            color: Color(0xFF8E8E93),
+            fontSize: 14,
+          ),
+        ),
+        const SizedBox(width: 8),
+        GestureDetector(
+          onTap: () async {
+            await Clipboard.setData(ClipboardData(text: userId));
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('User ID copied!'),
+                  backgroundColor: Color(0xFF84BD00),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            }
+          },
+          child: const Icon(
+            Icons.copy,
+            color: Color(0xFF84BD00),
+            size: 16,
+          ),
+        ),
+      ],
     );
   }
 

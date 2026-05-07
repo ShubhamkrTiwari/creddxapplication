@@ -195,27 +195,75 @@ class _UpiDetailsScreenState extends State<UpiDetailsScreen> {
                             ],
                           ),
                           const SizedBox(height: 16),
-                          // UPI ID with copy button
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                          // UPI ID and Amount with copy buttons
+                          Column(
                             children: [
-                              Text(
-                                _selectedUpi!['upiId'] ?? 'N/A',
-                                style: const TextStyle(color: Colors.white, fontSize: 16),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Text(
+                                    'UPI ID: ',
+                                    style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14),
+                                  ),
+                                  Text(
+                                    _selectedUpi!['upiId'] ?? 'N/A',
+                                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  GestureDetector(
+                                    onTap: () async {
+                                      await Clipboard.setData(ClipboardData(text: _selectedUpi!['upiId'] ?? ''));
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('UPI ID copied!'),
+                                            backgroundColor: Color(0xFF84BD00),
+                                            duration: Duration(seconds: 2),
+                                          ),
+                                        );
+                                      }
+                                    },
+                                    child: const Icon(
+                                      Icons.copy,
+                                      color: Color(0xFF84BD00),
+                                      size: 18,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(width: 8),
-                              GestureDetector(
-                                onTap: () {
-                                  Clipboard.setData(ClipboardData(text: _selectedUpi!['upiId'] ?? ''));
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('UPI ID copied to clipboard')),
-                                  );
-                                },
-                                child: const Icon(
-                                  Icons.copy,
-                                  color: Color(0xFF8E8E93),
-                                  size: 18,
-                                ),
+                              const SizedBox(height: 12),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Text(
+                                    'Amount: ',
+                                    style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14),
+                                  ),
+                                  Text(
+                                    '₹${widget.amount}',
+                                    style: const TextStyle(color: Color(0xFF84BD00), fontSize: 18, fontWeight: FontWeight.bold),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  GestureDetector(
+                                    onTap: () async {
+                                      await Clipboard.setData(ClipboardData(text: widget.amount));
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('Amount copied!'),
+                                            backgroundColor: Color(0xFF84BD00),
+                                            duration: Duration(seconds: 2),
+                                          ),
+                                        );
+                                      }
+                                    },
+                                    child: const Icon(
+                                      Icons.copy,
+                                      color: Color(0xFF84BD00),
+                                      size: 18,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           ),

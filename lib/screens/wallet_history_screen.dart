@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../services/wallet_service.dart';
+import '../services/bot_service.dart';
 
 class WalletHistoryScreen extends StatefulWidget {
   const WalletHistoryScreen({super.key});
@@ -16,12 +17,13 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
   List<dynamic> _transactions = [];
   List<dynamic> _transfers = [];
   List<dynamic> _conversions = [];
+  List<dynamic> _subscriptions = [];
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _fetchHistory();
   }
 
@@ -36,6 +38,8 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
         WalletService.getCompleteTransactionHistory(),
         WalletService.getWalletTransferHistory(),
         WalletService.getConversionHistory(limit: 50),
+        BotService.getSubscriptionHistory(),
+        BotService.getBotInvestmentHistory(),
       ]);
 
       if (mounted) {
@@ -43,6 +47,8 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
           final txResult = results[0];
           final transferResult = results[1];
           final conversionResult = results[2];
+          final subscriptionResult = results[3];
+          final botInvestmentResult = results[4];
 
           if (txResult['success'] == true) {
             final txData = txResult['data'] as Map<String, dynamic>;
@@ -74,6 +80,37 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
               }).toList();
             }
           }
+          if (subscriptionResult['success'] == true) {
+            final subscriptionData = subscriptionResult['data'];
+            if (subscriptionData is Map) {
+              _subscriptions = subscriptionData['subscriptions'] ?? [];
+            } else if (subscriptionData is List) {
+              _subscriptions = subscriptionData;
+            }
+          }
+          
+          // Merge bot investment transactions into main transactions list
+          if (botInvestmentResult['success'] == true) {
+            final botInvestmentData = botInvestmentResult['data'];
+            List<dynamic> botTransactions = [];
+            
+            if (botInvestmentData is Map) {
+              botTransactions = botInvestmentData['investments'] ?? [];
+            } else if (botInvestmentData is List) {
+              botTransactions = botInvestmentData;
+            }
+            
+            // Add bot transactions to main transactions list
+            _transactions.addAll(botTransactions);
+            
+            // Sort all transactions by date (newest first)
+            _transactions.sort((a, b) {
+              final aDate = DateTime.tryParse(a['createdAt']?.toString() ?? '') ?? DateTime.now();
+              final bDate = DateTime.tryParse(b['createdAt']?.toString() ?? '') ?? DateTime.now();
+              return bDate.compareTo(aDate);
+            });
+          }
+          
           _isLoading = false;
         });
       }
@@ -118,6 +155,7 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
             Tab(text: 'Transactions'),
             Tab(text: 'Transfers'),
             Tab(text: 'Conversions'),
+            Tab(text: 'Subscriptions'),
           ],
         ),
       ),
@@ -129,6 +167,7 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
                 _buildTransactionList(),
                 _buildTransferList(),
                 _buildConversionList(),
+                _buildSubscriptionList(),
               ],
             ),
     );
@@ -166,6 +205,7 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
           // Convert to local time if the parsed time is UTC
           final DateTime localDate = date.isUtc ? date.toLocal() : date;
           final bool isCredit = amount > 0 || type.toLowerCase().contains('deposit') || type.toLowerCase().contains('credit');
+          final bool isBotTransaction = type.toLowerCase().contains('bot');
           
           // Check for INR withdrawal details
           final bankDetails = tx['bankDetails'] ?? tx['withdrawDetails'] ?? tx['bank_details'];
@@ -187,13 +227,29 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
               children: [
                 Row(
                   children: [
-                    CircleAvatar(
-                      backgroundColor: (isCredit ? Colors.green : Colors.red).withValues(alpha: 0.1),
-                      child: Icon(
-                        isCredit ? Icons.arrow_downward : Icons.arrow_upward,
-                        color: isCredit ? Colors.green : Colors.red,
-                        size: 20,
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: isBotTransaction 
+                            ? const Color(0xFF84BD00).withOpacity(0.1)
+                            : (isCredit ? Colors.green : Colors.red).withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(12),
+                        border: isBotTransaction 
+                            ? Border.all(color: const Color(0xFF84BD00).withOpacity(0.3), width: 1)
+                            : null,
                       ),
+                      child: isBotTransaction 
+                          ? const Icon(
+                              Icons.smart_toy,
+                              color: Color(0xFF84BD00),
+                              size: 24,
+                            )
+                          : Icon(
+                              isCredit ? Icons.arrow_downward : Icons.arrow_upward,
+                              color: isCredit ? Colors.green : Colors.red,
+                              size: 20,
+                            ),
                     ),
                     const SizedBox(width: 16),
                     Expanded(
@@ -201,8 +257,12 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            isINRWithdrawal ? '${type.toUpperCase()} ${isUPI ? 'UPI' : 'BANK'}' : type.toUpperCase(),
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                            isINRWithdrawal ? '${_getTransactionTypeLabel(type)} ${isUPI ? 'UPI' : 'BANK'}' : _getTransactionTypeLabel(type),
+                            style: TextStyle(
+                              color: isBotTransaction ? const Color(0xFF84BD00) : Colors.white, 
+                              fontWeight: FontWeight.bold, 
+                              fontSize: 14
+                            ),
                           ),
                           const SizedBox(height: 4),
                           Text(
@@ -216,7 +276,7 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         Text(
-                          isINRWithdrawal ? '₹${amount.toStringAsFixed(2)}' : '${isCredit ? '+' : ''}$amount $coin',
+                          isINRWithdrawal ? '₹${amount.toStringAsFixed(2)}' : '${isCredit ? '+' : ''}$amount',
                           style: TextStyle(
                             color: isCredit ? Colors.green : Colors.red,
                             fontWeight: FontWeight.bold,
@@ -300,6 +360,47 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
                               'IFSC: ${bankDetails!['ifscCode']}',
                               style: const TextStyle(color: Colors.white54, fontSize: 11),
                             ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+                
+                // Show bot transaction details
+                if (isBotTransaction) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF84BD00).withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: const Color(0xFF84BD00).withOpacity(0.2),
+                        width: 1,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (tx['botName'] != null)
+                          Text(
+                            'Bot: ${tx['botName']}',
+                            style: const TextStyle(color: Color(0xFF84BD00), fontSize: 12, fontWeight: FontWeight.w600),
+                          ),
+                        if (tx['strategy'] != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Strategy: ${tx['strategy']}',
+                            style: const TextStyle(color: Colors.white70, fontSize: 12),
+                          ),
+                        ],
+                        if (tx['description'] != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            tx['description'].toString(),
+                            style: const TextStyle(color: Colors.white70, fontSize: 12),
+                          ),
                         ],
                       ],
                     ),
@@ -561,7 +662,7 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
                                 Icon(Icons.remove, color: Colors.red.withValues(alpha: 0.8), size: 12),
                                 const SizedBox(width: 2),
                                 Text(
-                                  amount.toStringAsFixed(2),
+                                  amount.toStringAsFixed(5),
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontWeight: FontWeight.w700,
@@ -734,7 +835,7 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
                                           ),
                                         ),
                                         Text(
-                                          '+${amount.toStringAsFixed(2)} $coin',
+                                          '+${amount.toStringAsFixed(5)} $coin',
                                           style: TextStyle(
                                             color: Colors.green.withValues(alpha: 0.8),
                                             fontSize: 10,
@@ -1012,7 +1113,7 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
                             style: const TextStyle(color: Colors.white70, fontSize: 12),
                           ),
                           Text(
-                            '${fromAmount.toStringAsFixed(2)} $fromCurrency',
+                            '${fromAmount.toStringAsFixed(5)} $fromCurrency',
                             style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
                           ),
                         ],
@@ -1043,6 +1144,212 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
                     ],
                   ),
                 ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  String _getTransactionTypeLabel(String type) {
+    final lowerType = type.toLowerCase();
+    switch (lowerType) {
+      case '6':
+      case 'invest':
+      case 'deposit':
+      case 'investment':
+        return 'Invest';
+      case '5':
+      case '7':
+      case 'withdraw':
+      case 'withdrawal':
+      case 'debit':
+      case 'transfer':
+        return 'Withdraw';
+      case 'subscription':
+        return 'Subscription';
+      case 'bot_invest':
+        return 'Bot Invest';
+      case 'bot_withdraw':
+        return 'Bot Withdraw';
+      default:
+        // Capitalize first letter if it's text, or return as is
+        if (type.isEmpty) return 'Unknown';
+        if (RegExp(r'^[0-9]+$').hasMatch(type)) return 'Transaction'; // Fallback for unknown codes
+        return type[0].toUpperCase() + type.substring(1);
+    }
+  }
+
+  Widget _buildSubscriptionList() {
+    if (_subscriptions.isEmpty) {
+      return _buildEmptyState('No subscriptions found');
+    }
+
+    return RefreshIndicator(
+      onRefresh: _fetchHistory,
+      color: const Color(0xFF84BD00),
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: _subscriptions.length,
+        itemBuilder: (context, index) {
+          final subscription = _subscriptions[index] is Map<String, dynamic>
+              ? _subscriptions[index] as Map<String, dynamic>
+              : Map<String, dynamic>.from(_subscriptions[index]);
+          
+          final String plan = subscription['plan']?.toString() ?? 'Basic Package';
+          final double amount = double.tryParse(subscription['amount']?.toString() ?? '0') ?? 0;
+          final String? timeStr = subscription['createdAt']?.toString() ??
+                                   subscription['created_at']?.toString() ??
+                                   subscription['timestamp']?.toString();
+          final DateTime date = timeStr != null
+              ? DateTime.tryParse(timeStr) ?? DateTime.now()
+              : DateTime.now();
+          final DateTime localDate = date.isUtc ? date.toLocal() : date;
+          final String status = subscription['status']?.toString().toUpperCase() ?? 'COMPLETED';
+          
+          // Status color
+          Color statusColor = Colors.green;
+          if (status.contains('PENDING') || status.contains('PROCESSING')) {
+            statusColor = Colors.orange;
+          } else if (status.contains('FAIL') || status.contains('CANCEL') || status.contains('REJECT')) {
+            statusColor = Colors.red;
+          }
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A1A1A),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: const Color(0xFF84BD00).withOpacity(0.2),
+                width: 1,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            const Color(0xFF84BD00).withOpacity(0.3),
+                            const Color(0xFF84BD00).withOpacity(0.1),
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: const Color(0xFF84BD00).withOpacity(0.4),
+                          width: 1,
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.card_membership,
+                        color: Color(0xFF84BD00),
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            plan,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Subscription Payment',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.7),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          '-\$${amount.toStringAsFixed(5)}',
+                          style: const TextStyle(
+                            color: Color(0xFFFF3B30),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: statusColor.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: statusColor.withOpacity(0.3),
+                              width: 1,
+                            ),
+                          ),
+                          child: Text(
+                            status,
+                            style: TextStyle(
+                              color: statusColor,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.access_time,
+                      color: Colors.white.withOpacity(0.5),
+                      size: 16,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      DateFormat('MMM dd, yyyy • hh:mm a').format(localDate),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+                // Additional subscription details
+                if (subscription['description'] != null) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      subscription['description'].toString(),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.7),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           );

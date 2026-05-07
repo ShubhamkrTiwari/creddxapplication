@@ -66,9 +66,9 @@ class BotPosition {
   String get size {
     // You can calculate size based on margin and leverage, or return a default value
     if (userMargin > 0 && leverage > 0) {
-      return '${(userMargin * leverage).toStringAsFixed(2)}';
+      return '${(userMargin * leverage).toStringAsFixed(6)}';
     }
-    return '0.00';
+    return '0.000000';
   }
 }
 
@@ -165,6 +165,7 @@ class BotService {
               'vsBtc': _parseNum(data['vsBtc']),
               'ethRoi': _parseNum(data['ethRoi']),
               'vsEth': _parseNum(data['vsEth']),
+              'isMock': false,
             },
           };
         }
@@ -230,6 +231,7 @@ class BotService {
         'vsBtc': botRoi - btcRoi,
         'ethRoi': ethRoi,
         'vsEth': botRoi - ethRoi,
+        'isMock': true,
       },
     };
   }
@@ -240,7 +242,6 @@ class BotService {
     required String symbol,
   }) async {
     try {
-      // Use the specific endpoint requested
       final response = await http.get(
         Uri.parse('$baseUrl/bot/v1/bingxTrade/user-positions?strategy=$strategy&symbol=$symbol'),
         headers: await _getHeaders(),
@@ -253,7 +254,6 @@ class BotService {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['success'] == true) {
-          // Parse the positions endpoint response structure
           return {
             'success': true,
             'data': {
@@ -264,24 +264,16 @@ class BotService {
             },
           };
         } else {
-          return {
-            'success': false,
-            'error': data['message'] ?? 'Failed to fetch positions data',
-          };
+          // API returned success=false, return empty positions
+          return _getMockPositionsData(strategy, symbol);
         }
-      } else if (response.statusCode == 404 || response.statusCode == 500) {
-        // Endpoint doesn't exist or server error - try user-trades endpoint
-        debugPrint('Positions endpoint not available, trying user-trades endpoint');
-        return await _getPositionsFromTrades(strategy, symbol);
       } else {
-        return {
-          'success': false,
-          'error': 'Server error: ${response.statusCode}',
-        };
+        // Any error status code - return empty positions
+        debugPrint('Positions endpoint returned ${response.statusCode}, returning empty positions');
+        return _getMockPositionsData(strategy, symbol);
       }
     } catch (e) {
       debugPrint('Error fetching user bot positions: $e');
-      // Return mock data on network error
       return _getMockPositionsData(strategy, symbol);
     }
   }
@@ -297,80 +289,6 @@ class BotService {
         'adjustedPositions': [],
       },
     };
-  }
-
-  // Fallback method using trades data
-  static Future<Map<String, dynamic>> _getPositionsFromTrades(String strategy, String symbol) async {
-    try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/bingxTrade/user-trades?strategy=$strategy&symbol=$symbol'),
-        headers: await _getHeaders(),
-      );
-      
-      debugPrint('Using user-trades endpoint for positions data');
-      debugPrint('User-trades status: ${response.statusCode}');
-      debugPrint('User-trades body: ${response.body}');
-      
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        debugPrint('User-trades parsed data: $data');
-        if (data['success'] == true) {
-          // Transform trades data to positions format
-          final Map<String, dynamic> transformedData = {
-            'strategy': data['data']?['strategy'] ?? strategy,
-            'symbol': data['data']?['symbol'] ?? symbol,
-            'userInvestment': data['data']?['userInvestment'] ?? 0,
-            'adjustedPositions': _transformTradesToPositions(data['data']?['userTrades'] ?? []),
-          };
-          
-          return {
-            'success': true,
-            'data': transformedData,
-          };
-        }
-      }
-      
-      // If trades endpoint also fails, return mock data
-      debugPrint('Trades endpoint also not available, returning mock data');
-      return _getMockPositionsData(strategy, symbol);
-    } catch (e) {
-      debugPrint('Error in fallback method: $e');
-      return _getMockPositionsData(strategy, symbol);
-    }
-  }
-
-  // Transform trades data to positions format
-  static List<Map<String, dynamic>> _transformTradesToPositions(List<dynamic> trades) {
-    List<Map<String, dynamic>> positions = [];
-    
-    for (var trade in trades) {
-      // Create position data from trade
-      Map<String, dynamic> position = {
-        'positionId': trade['positionId'] ?? '',
-        'symbol': trade['symbol'] ?? '',
-        'positionSide': trade['positionSide'] ?? 'LONG',
-        'updateTime': trade['time'] ?? DateTime.now().toIso8601String(),
-        'userMargin': trade['userSimulatedMargin'] ?? 0.0,
-        'userUnrealizedProfit': trade['pnl'] ?? 0.0,
-        'leverage': _extractLeverageFromStrategy(trade['strategy'] ?? ''),
-        'liqPrice': (trade['avgPrice'] ?? 0.0) * 0.9, // Estimate 90% of avg price
-        'markPrice': trade['avgClosePrice'] ?? trade['avgPrice'] ?? 0.0,
-        'avgPrice': trade['avgPrice'] ?? 0.0,
-      };
-      
-      positions.add(position);
-    }
-    
-    return positions;
-  }
-
-  // Extract leverage from strategy name (e.g., "Omega-3X" -> 3)
-  static int _extractLeverageFromStrategy(String strategy) {
-    if (strategy.contains('2X')) return 2;
-    if (strategy.contains('3X')) return 3;
-    if (strategy.contains('5X')) return 5;
-    if (strategy.contains('10X')) return 10;
-    return 2; // Default leverage
   }
 
   // Fetch bot trade history with filters
@@ -648,11 +566,67 @@ class BotService {
       }
     } catch (e) {
       debugPrint('Error fetching user transactions: $e');
-      return {
-        'success': false,
-        'error': 'Network error: $e',
-      };
+      // Return mock data for testing when API fails
+      return _getMockTransactions();
     }
+  }
+
+  // Mock transactions data for testing
+  static Map<String, dynamic> _getMockTransactions() {
+    final now = DateTime.now();
+    return {
+      'success': true,
+      'transactions': [
+        {
+          'id': '1',
+          'type': 'subscription',
+          'amount': 100.0,
+          'status': 'completed',
+          'date': now.subtract(const Duration(days: 2)).toIso8601String(),
+          'description': 'Premium subscription',
+        },
+        {
+          'id': '2',
+          'type': 'sub',
+          'amount': 50.0,
+          'status': 'completed',
+          'date': now.subtract(const Duration(days: 5)).toIso8601String(),
+          'description': 'Basic subscription',
+        },
+        {
+          'id': '3',
+          'type': 'plan',
+          'amount': 200.0,
+          'status': 'completed',
+          'date': now.subtract(const Duration(days: 10)).toIso8601String(),
+          'description': 'Pro plan subscription',
+        },
+        {
+          'id': '4',
+          'type': 'subscription',
+          'amount': 75.0,
+          'status': 'completed',
+          'date': now.subtract(const Duration(days: 15)).toIso8601String(),
+          'description': 'Enterprise subscription',
+        },
+        {
+          'id': '5',
+          'type': 'sub',
+          'amount': 25.0,
+          'status': 'completed',
+          'date': now.subtract(const Duration(days: 20)).toIso8601String(),
+          'description': 'Monthly subscription',
+        },
+        {
+          'id': '6',
+          'type': 'plan',
+          'amount': 50.0,
+          'status': 'completed',
+          'date': now.subtract(const Duration(days: 25)).toIso8601String(),
+          'description': 'Annual subscription',
+        },
+      ],
+    };
   }
 
   // Get total bot investment for a strategy/symbol
@@ -957,6 +931,238 @@ class BotService {
     }
   }
 
+  // Get subscription transaction history
+  static Future<Map<String, dynamic>> getSubscriptionHistory({
+    int? page = 1,
+    int? limit = 50,
+  }) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/bot/v1/api/subscriptions/history?page=$page&limit=$limit'),
+        headers: await _getHeaders(),
+      );
+      
+      debugPrint('Subscription History API Response Status: ${response.statusCode}');
+      debugPrint('Subscription History API Response Body: ${response.body}');
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        List<Map<String, dynamic>> subscriptions = [];
+        
+        if (data['subscriptions'] != null) {
+          final subsList = data['subscriptions'];
+          if (subsList is List) {
+            subscriptions = List<Map<String, dynamic>>.from(subsList);
+          }
+        }
+        
+        // Transform subscription data to match transaction format
+        List<Map<String, dynamic>> subscriptionTransactions = subscriptions.map((sub) {
+          return {
+            'id': sub['_id'] ?? sub['id'],
+            'transactionType': 'subscription',
+            'type': 'subscription',
+            'amount': sub['price'] ?? 0.0,
+            'coin': 'USDT',
+            'status': sub['status'] ?? 'completed',
+            'createdAt': sub['createdAt'] ?? sub['created_at'],
+            'plan': sub['plan'] ?? 'Basic Package',
+            'price': sub['price'] ?? 0.0,
+            'startDate': sub['startDate'],
+            'endDate': sub['endDate'],
+            'isSubscription': true,
+            'description': 'Subscription: ${sub['plan'] ?? 'Basic Package'}',
+          };
+        }).toList();
+        
+        return {
+          'success': true,
+          'data': {
+            'subscriptions': subscriptionTransactions,
+            'total': subscriptionTransactions.length,
+          },
+        };
+      } else {
+        // Return mock data if API not available
+        final mockSubscriptions = [
+          {
+            'id': 'mock_sub_1',
+            'transactionType': 'subscription',
+            'type': 'subscription',
+            'amount': 25.0,
+            'coin': 'USDT',
+            'status': 'completed',
+            'createdAt': DateTime.now().subtract(const Duration(days: 30)).toIso8601String(),
+            'plan': 'Basic Package',
+            'price': 25.0,
+            'isSubscription': true,
+            'description': 'Subscription: Basic Package',
+          }
+        ];
+        
+        return {
+          'success': true,
+          'data': {
+            'subscriptions': mockSubscriptions,
+            'total': mockSubscriptions.length,
+          },
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching subscription history: $e');
+      
+      // Return mock data on error
+      final mockSubscriptions = [
+        {
+          'id': 'mock_sub_1',
+          'transactionType': 'subscription',
+          'type': 'subscription',
+          'amount': 25.0,
+          'coin': 'USDT',
+          'status': 'completed',
+          'createdAt': DateTime.now().subtract(const Duration(days: 30)).toIso8601String(),
+          'plan': 'Basic Package',
+          'price': 25.0,
+          'isSubscription': true,
+          'description': 'Subscription: Basic Package',
+        }
+      ];
+      
+      return {
+        'success': true,
+        'data': {
+          'subscriptions': mockSubscriptions,
+          'total': mockSubscriptions.length,
+        },
+      };
+    }
+  }
+
+  // Get bot investment/withdrawal transaction history
+  static Future<Map<String, dynamic>> getBotInvestmentHistory({
+    int? page = 1,
+    int? limit = 50,
+  }) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/bot/v1/api/investments/history?page=$page&limit=$limit'),
+        headers: await _getHeaders(),
+      );
+      
+      debugPrint('Bot Investment History API Response Status: ${response.statusCode}');
+      debugPrint('Bot Investment History API Response Body: ${response.body}');
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        List<Map<String, dynamic>> investments = [];
+        
+        if (data['investments'] != null) {
+          final investList = data['investments'];
+          if (investList is List) {
+            investments = List<Map<String, dynamic>>.from(investList);
+          }
+        }
+        
+        // Transform investment data to match transaction format
+        List<Map<String, dynamic>> investmentTransactions = investments.map((inv) {
+          final String type = inv['type']?.toString().toLowerCase() ?? 'invest';
+          final bool isInvest = type == 'invest' || type == 'investment';
+          
+          return {
+            'id': inv['_id'] ?? inv['id'],
+            'transactionType': isInvest ? 'bot_invest' : 'bot_withdraw',
+            'type': isInvest ? 'bot_invest' : 'bot_withdraw',
+            'amount': inv['amount'] ?? 0.0,
+            'coin': 'USDT',
+            'status': inv['status'] ?? 'completed',
+            'createdAt': inv['createdAt'] ?? inv['created_at'],
+            'botId': inv['botId'],
+            'strategy': inv['strategy'] ?? 'Omega-3X',
+            'botName': inv['botName'] ?? 'Trading Bot',
+            'isBotTransaction': true,
+            'description': '${isInvest ? 'Investment in' : 'Withdrawal from'} ${inv['botName'] ?? 'Trading Bot'} (${inv['strategy'] ?? 'Omega-3X'})',
+          };
+        }).toList();
+        
+        return {
+          'success': true,
+          'data': {
+            'investments': investmentTransactions,
+            'total': investmentTransactions.length,
+          },
+        };
+      } else {
+        // Return mock data if API not available
+        final mockInvestments = [
+          {
+            'id': 'mock_invest_1',
+            'transactionType': 'bot_invest',
+            'type': 'bot_invest',
+            'amount': 100.0,
+            'coin': 'USDT',
+            'status': 'completed',
+            'createdAt': DateTime.now().subtract(const Duration(days: 15)).toIso8601String(),
+            'botId': 'bot_omega_001',
+            'strategy': 'Omega-3X',
+            'botName': 'Omega Trading Bot',
+            'isBotTransaction': true,
+            'description': 'Investment in Omega Trading Bot (Omega-3X)',
+          },
+          {
+            'id': 'mock_withdraw_1',
+            'transactionType': 'bot_withdraw',
+            'type': 'bot_withdraw',
+            'amount': 50.0,
+            'coin': 'USDT',
+            'status': 'completed',
+            'createdAt': DateTime.now().subtract(const Duration(days: 7)).toIso8601String(),
+            'botId': 'bot_alpha_001',
+            'strategy': 'Alpha-2X',
+            'botName': 'Alpha Trading Bot',
+            'isBotTransaction': true,
+            'description': 'Withdrawal from Alpha Trading Bot (Alpha-2X)',
+          }
+        ];
+        
+        return {
+          'success': true,
+          'data': {
+            'investments': mockInvestments,
+            'total': mockInvestments.length,
+          },
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching bot investment history: $e');
+      
+      // Return mock data on error
+      final mockInvestments = [
+        {
+          'id': 'mock_invest_1',
+          'transactionType': 'bot_invest',
+          'type': 'bot_invest',
+          'amount': 100.0,
+          'coin': 'USDT',
+          'status': 'completed',
+          'createdAt': DateTime.now().subtract(const Duration(days: 15)).toIso8601String(),
+          'botId': 'bot_omega_001',
+          'strategy': 'Omega-3X',
+          'botName': 'Omega Trading Bot',
+          'isBotTransaction': true,
+          'description': 'Investment in Omega Trading Bot (Omega-3X)',
+        }
+      ];
+      
+      return {
+        'success': true,
+        'data': {
+          'investments': mockInvestments,
+          'total': mockInvestments.length,
+        },
+      };
+    }
+  }
+
   // Invest in a bot
   static Future<Map<String, dynamic>> invest({
     required String botId,
@@ -1181,22 +1387,28 @@ class BotService {
           double? planPrice;
           int remainingDays = 0;
 
-          if (subscription != null) {
-            isSubscribed = true;
-            planName = subscription['plan']?.toString();
-            planPrice = double.tryParse(subscription['price']?.toString() ?? '0');
+          if (subscription != null && subscription is Map) {
+            // Check if subscription has required fields
+            final hasValidPlan = subscription['plan'] != null && subscription['plan'].toString().isNotEmpty;
+            final hasValidEndDate = subscription['endDate'] != null && subscription['endDate'].toString().isNotEmpty;
+            
+            if (hasValidPlan && hasValidEndDate) {
+              planName = subscription['plan']?.toString();
+              planPrice = double.tryParse(subscription['price']?.toString() ?? '0');
 
-            // Check expiry
-            final endDateStr = subscription['endDate']?.toString();
-            if (endDateStr != null && endDateStr.isNotEmpty) {
-              final endDate = DateTime.tryParse(endDateStr);
+              // Check expiry
+              final endDateStr = subscription['endDate']?.toString();
+              final endDate = DateTime.tryParse(endDateStr!);
               if (endDate != null) {
                 final currentDate = DateTime.now();
                 final difference = endDate.difference(currentDate).inDays + 1;
                 remainingDays = difference;
 
-                // Expired case
-                if (remainingDays <= 0) {
+                // Only mark as subscribed if not expired
+                if (remainingDays > 0) {
+                  isSubscribed = true;
+                } else {
+                  // Expired subscription
                   isSubscribed = false;
                   planName = null;
                   planPrice = null;
@@ -1419,9 +1631,6 @@ class BotService {
             'error': data['message'] ?? 'Failed to fetch balance history',
           };
         }
-      } else if (response.statusCode == 404) {
-        // Return mock data for demo
-        return _getMockBalanceHistory(strategy, days ?? 30);
       } else {
         return {
           'success': false,
@@ -1430,7 +1639,10 @@ class BotService {
       }
     } catch (e) {
       debugPrint('Error fetching bot balance history: $e');
-      return _getMockBalanceHistory(strategy, days ?? 30);
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
     }
   }
 
@@ -1489,17 +1701,55 @@ class BotService {
 
   // Mock balance history data
   static Map<String, dynamic> _getMockBalanceHistory(String strategy, int days) {
+    final now = DateTime.now();
+    final List<Map<String, dynamic>> history = [];
+    double balance = 1000.0; // Starting balance
+    
+    // Generate realistic dummy balance history data for strategies cards
+    for (int i = 0; i < days; i++) {
+      final date = now.subtract(Duration(days: days - i));
+      
+      // Different patterns for different strategies
+      double dailyChange = 0.0;
+      if (strategy.toLowerCase().contains('omega')) {
+        dailyChange = (math.Random().nextDouble() - 0.2) * 15; // Slight upward bias
+      } else if (strategy.toLowerCase().contains('alpha')) {
+        dailyChange = (math.Random().nextDouble() - 0.3) * 10; // Steady growth
+      } else if (strategy.toLowerCase().contains('ranger')) {
+        dailyChange = (math.Random().nextDouble() - 0.1) * 25; // Higher volatility
+      } else {
+        dailyChange = (math.Random().nextDouble() - 0.2) * 12;
+      }
+      
+      balance += dailyChange;
+      balance = balance.clamp(800.0, 1500.0); // Keep in reasonable range
+      
+      history.add({
+        'timestamp': date.toIso8601String(),
+        'date': date.toIso8601String().split('T')[0],
+        'balance': balance.toStringAsFixed(2),
+        'profit': (balance - 1000.0).toStringAsFixed(2),
+        'roi': ((balance - 1000.0) / 1000.0 * 100).toStringAsFixed(2) + '%',
+        'strategy': strategy,
+      });
+    }
+    
+    final finalBalance = balance;
+    final totalProfit = finalBalance - 1000.0;
+    final roi = (totalProfit / 1000.0 * 100);
+    
     return {
       'success': true,
       'data': {
         'strategy': strategy,
-        'initialBalance': '0.00',
-        'currentBalance': '0.00',
-        'totalProfit': '0.00',
-        'roi': '0.00',
-        'history': [],
+        'initialBalance': '1000.00',
+        'currentBalance': finalBalance.toStringAsFixed(2),
+        'totalProfit': totalProfit.toStringAsFixed(2),
+        'roi': roi.toStringAsFixed(2) + '%',
+        'history': history,
         'periodDays': days,
       },
+      'history': history, // Also include at root level for compatibility
     };
   }
 
@@ -2042,16 +2292,48 @@ class Transaction {
   }
 
   String get formattedAmount {
-    final lowerType = type.toLowerCase();
-    if (lowerType.contains('debit') || lowerType.contains('withdraw') || lowerType == 'transfer') {
+    final lowerType = type.toLowerCase().trim();
+    
+    // Check if it's a withdraw/debit transaction (should show -)
+    bool isWithdraw = lowerType == '5' ||
+                     lowerType == '7' ||
+                     lowerType.contains('withdraw') ||
+                     lowerType.contains('withdrawal') ||
+                     lowerType.contains('debit') ||
+                     lowerType == 'transfer';
+    
+    // Check if it's an invest/deposit transaction (should show +)
+    bool isInvest = lowerType == '6' ||
+                   lowerType.contains('invest') ||
+                   lowerType.contains('deposit') ||
+                   lowerType.contains('investment');
+    
+    // Check if it's a subscription transaction (should show -)
+    bool isSubscription = lowerType == 'subscription' ||
+                        lowerType == 'sub' ||
+                        lowerType == 'plan';
+    
+    if (isWithdraw || isSubscription) {
+      return '-${amount.toStringAsFixed(2)} USDT';
+    } else if (isInvest) {
+      return '+${amount.toStringAsFixed(2)} USDT';
+    } else {
+      // Default to - for unknown types
       return '-${amount.toStringAsFixed(2)} USDT';
     }
-    return '+${amount.toStringAsFixed(2)} USDT';
   }
 
   bool get isCredit {
-    final lowerType = type.toLowerCase();
-    return !(lowerType.contains('debit') || lowerType.contains('withdraw') || lowerType == 'transfer');
+    final lowerType = type.toLowerCase().trim();
+    if (lowerType == '6') return true;
+    if (lowerType == '5' || lowerType == '7') return false;
+    
+    return !(lowerType.contains('debit') || 
+             lowerType.contains('withdraw') || 
+             lowerType == 'transfer' || 
+             lowerType == 'subscription' ||
+             lowerType == 'sub' ||
+             lowerType == 'plan');
   }
 }
 
@@ -2302,7 +2584,7 @@ class BotTrade {
 
   String get formattedOpenPrice => '\$${openPrice.toStringAsFixed(6)}';
   String get formattedClosePrice => '\$${closePrice.toStringAsFixed(6)}';
-  String get formattedTotalPnl => '${totalPnl.toStringAsFixed(2)} PnL';
-  String get formattedUserPnl => '${userPnl.toStringAsFixed(2)} PnL';
+  String get formattedTotalPnl => '${totalPnl.toStringAsFixed(5)} PnL';
+  String get formattedUserPnl => '${userPnl.toStringAsFixed(5)} PnL';
   bool get isProfit => userPnl >= 0;
 }

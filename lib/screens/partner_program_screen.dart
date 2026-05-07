@@ -24,6 +24,7 @@ class _AffiliateProgramScreenState extends State<AffiliateProgramScreen> {
     setState(() => _isLoading = true);
     try {
       final result = await UserService.getLevelWiseSummary();
+      debugPrint('🔍 Level-wise API result: $result');
       if (mounted) {
         setState(() {
           _levelWiseData = result['success'] == true ? result : null;
@@ -31,6 +32,7 @@ class _AffiliateProgramScreenState extends State<AffiliateProgramScreen> {
         });
       }
     } catch (e) {
+      debugPrint('❌ Error loading level-wise data: $e');
       if (mounted) {
         setState(() => _isLoading = false);
       }
@@ -44,6 +46,7 @@ class _AffiliateProgramScreenState extends State<AffiliateProgramScreen> {
     });
     try {
       final result = await UserService.getLevelIncomeSummary(level);
+      debugPrint('🔍 Detailed level $level API result: $result');
       if (mounted) {
         setState(() {
           _detailedLevelData = result['success'] == true ? result : null;
@@ -51,6 +54,7 @@ class _AffiliateProgramScreenState extends State<AffiliateProgramScreen> {
         });
       }
     } catch (e) {
+      debugPrint('❌ Error loading detailed level data: $e');
       if (mounted) {
         setState(() => _isLoading = false);
       }
@@ -173,7 +177,7 @@ class _AffiliateProgramScreenState extends State<AffiliateProgramScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            '\$${totalIncome.toStringAsFixed(2)}',
+            '\$${totalIncome.toStringAsFixed(5)}',
             style: const TextStyle(
               color: Colors.white,
               fontSize: 32,
@@ -186,7 +190,7 @@ class _AffiliateProgramScreenState extends State<AffiliateProgramScreen> {
               Expanded(
                 child: _buildSummaryMetric(
                   'Subscription',
-                  '\$${subscriptionIncome.toStringAsFixed(2)}',
+                  '\$${subscriptionIncome.toStringAsFixed(5)}',
                   '$subscriptionUsers users',
                 ),
               ),
@@ -194,7 +198,7 @@ class _AffiliateProgramScreenState extends State<AffiliateProgramScreen> {
               Expanded(
                 child: _buildSummaryMetric(
                   'Bot Profit',
-                  '\$${botIncome.toStringAsFixed(2)}',
+                  '\$${botIncome.toStringAsFixed(5)}',
                   '$botUsers users',
                 ),
               ),
@@ -283,7 +287,7 @@ class _AffiliateProgramScreenState extends State<AffiliateProgramScreen> {
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      '\$${totalIncome.toStringAsFixed(2)}',
+                      '\$${totalIncome.toStringAsFixed(5)}',
                       style: const TextStyle(
                         color: Color(0xFF84BD00),
                         fontSize: 20,
@@ -306,7 +310,7 @@ class _AffiliateProgramScreenState extends State<AffiliateProgramScreen> {
                   child: _buildLevelMetric(
                     'Subscription',
                     subscriptionUserCount.toString(),
-                    '\$${subscriptionIncome.toStringAsFixed(2)}',
+                    '\$${subscriptionIncome.toStringAsFixed(5)}',
                     Colors.blue,
                   ),
                 ),
@@ -323,7 +327,7 @@ class _AffiliateProgramScreenState extends State<AffiliateProgramScreen> {
                 Expanded(
                   child: _buildLevelMetric(
                     'Bot Profit',
-                    '\$${botProfitIncome.toStringAsFixed(2)}',
+                    '\$${botProfitIncome.toStringAsFixed(5)}',
                     '',
                     const Color(0xFF84BD00),
                   ),
@@ -551,7 +555,7 @@ class _AffiliateProgramScreenState extends State<AffiliateProgramScreen> {
                 ),
               ),
               Text(
-                '\$${amount.toStringAsFixed(2)}',
+                '\$${amount.toStringAsFixed(5)}',
                 style: const TextStyle(
                   color: Color(0xFF84BD00),
                   fontSize: 18,

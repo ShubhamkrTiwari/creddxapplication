@@ -165,7 +165,7 @@ class _BotInvestWithdrawScreenState extends State<BotInvestWithdrawScreen>
   }
 
   void _setMaxAmount(double amount) {
-    _amountController.text = amount.toStringAsFixed(2);
+    _amountController.text = amount.toString();
   }
 
   @override
@@ -379,7 +379,7 @@ class _BotInvestWithdrawScreenState extends State<BotInvestWithdrawScreen>
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '${widget.investedAmount.toStringAsFixed(2)} USDT',
+                  '${widget.investedAmount} USDT',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 28,

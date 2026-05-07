@@ -109,9 +109,10 @@ class _DepositScreenState extends State<DepositScreen> {
         title: const Text('Deposit', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
         centerTitle: true,
       ),
-      body: _isLoading 
-        ? const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)))
-        : Padding(
+      body: SafeArea(
+        child: _isLoading 
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)))
+          : Padding(
             padding: const EdgeInsets.all(20.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -157,6 +158,7 @@ class _DepositScreenState extends State<DepositScreen> {
               ],
             ),
           ),
+        ),
     );
   }
 

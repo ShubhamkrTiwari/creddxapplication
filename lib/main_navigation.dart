@@ -142,36 +142,46 @@ class _MainNavigationState extends State<MainNavigation> with WidgetsBindingObse
     bool showMainBottomNav = _selectedIndex != 2;
 
     return Scaffold(
-      body: _screens[_selectedIndex],
+      body: SafeArea(
+        child: _screens[_selectedIndex],
+      ),
       bottomNavigationBar: showMainBottomNav ? _buildBottomNavigationBar() : null,
     );
   }
 
   Widget _buildBottomNavigationBar() {
+    final double bottomPadding = MediaQuery.of(context).viewPadding.bottom;
+    
     return Container(
-      padding: const EdgeInsets.only(top: 2, bottom: 20),
+      padding: EdgeInsets.only(
+        top: 2,
+        bottom: bottomPadding > 36 ? bottomPadding - 36 : 24,
+      ),
       decoration: const BoxDecoration(
         color: Color(0xFF0D0D0D),
         border: Border(top: BorderSide(color: Colors.white10, width: 0.5))
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          _navItem('assets/images/home.png', 'Home', 0),
-          Container(
-            margin: const EdgeInsets.only(top: 9),
-            child: _navItem('assets/images/future.png', 'Futures', 1),
-          ),
-          _navItem('assets/images/bot.png', 'Bot Trade', 2),
-          _navItem('assets/images/spot.png', 'Spot', 3),
-          _navItem('assets/images/wallet.png', 'Wallet', 4),
-        ],
+      child: SafeArea(
+        top: false,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _navItem('assets/images/home.png', 'Home', 0),
+            _navItem('assets/images/future.png', 'Futures', 1),
+            _navItem('assets/images/bot.png', 'Bot Trade', 2),
+            _navItem('assets/images/spot.png', 'Spot', 3),
+            _navItem('assets/images/wallet.png', 'Wallet', 4),
+          ],
+        ),
       ),
     );
   }
 
   Widget _navItem(String iconPath, String label, int index) {
     final bool isActive = _selectedIndex == index;
+    
+    // Add specific offset for Futures (index 1) to push it down
+    final double topOffset = (index == 1) ? 6.0 : 0.0;
     
     return GestureDetector(
       onTap: () => _onItemTapped(index),
@@ -187,7 +197,7 @@ class _MainNavigationState extends State<MainNavigation> with WidgetsBindingObse
               borderRadius: BorderRadius.vertical(bottom: Radius.circular(2))
             )
           ) else const SizedBox(height: 3),
-          const SizedBox(height: 8),
+          SizedBox(height: 8 + topOffset),
           Image.asset(
             iconPath, 
             width: 48, 

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:gif/gif.dart';
 import '../services/user_service.dart';
-import 'package:intl/intl.dart';
 
 class ReferralHubScreen extends StatefulWidget {
   const ReferralHubScreen({super.key});
@@ -38,14 +38,17 @@ class _ReferralHubScreenState extends State<ReferralHubScreen>
 
     try {
       final result = await UserService.getReferralData();
+      debugPrint('🔍 Referral API result: $result');
       
       if (mounted) {
         if (result['success'] == true) {
+          debugPrint('🔍 Referral data: ${result['data']}');
           setState(() {
             _referralData = result['data'] ?? {};
             _isLoading = false;
           });
         } else {
+          debugPrint('❌ Referral API error: ${result['error']}');
           setState(() {
             _errorMessage = result['error'] ?? 'Failed to load referral data';
             _isLoading = false;
@@ -159,7 +162,7 @@ class _ReferralHubScreenState extends State<ReferralHubScreen>
             Expanded(
               child: _buildStatCard(
                 'Total Income',
-                '\$${(_referralData['totalIncome'] ?? 0.0).toStringAsFixed(2)}',
+                '\$${(_referralData['totalIncome'] ?? 0.0).toStringAsFixed(5)}',
                 Icons.account_balance_wallet_outlined,
                 Colors.green,
               ),
@@ -172,7 +175,7 @@ class _ReferralHubScreenState extends State<ReferralHubScreen>
             Expanded(
               child: _buildStatCard(
                 'Trading Income',
-                '\$${(_referralData['tradingIncome'] ?? 0.0).toStringAsFixed(2)}',
+                '\$${(_referralData['tradingIncome'] ?? 0.0).toStringAsFixed(5)}',
                 Icons.trending_up,
                 Colors.purple,
               ),
@@ -181,7 +184,7 @@ class _ReferralHubScreenState extends State<ReferralHubScreen>
             Expanded(
               child: _buildStatCard(
                 'Subscription Income',
-                '\$${(_referralData['subscriptionIncome'] ?? 0.0).toStringAsFixed(2)}',
+                '\$${(_referralData['subscriptionIncome'] ?? 0.0).toStringAsFixed(5)}',
                 Icons.subscriptions,
                 Colors.orange,
               ),
@@ -221,7 +224,7 @@ class _ReferralHubScreenState extends State<ReferralHubScreen>
             value,
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 20,
+              fontSize: 16,
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -232,7 +235,6 @@ class _ReferralHubScreenState extends State<ReferralHubScreen>
 
   Widget _buildReferralCodeSection() {
     final referralCode = _referralData['referralCode']?.toString() ?? 'USER123';
-    final referralLink = _referralData['referralLink']?.toString() ?? '';
     
     return Container(
       padding: const EdgeInsets.all(16),
@@ -274,46 +276,12 @@ class _ReferralHubScreenState extends State<ReferralHubScreen>
                 ),
                 IconButton(
                   onPressed: () {
-                    // TODO: Implement copy to clipboard
+                    Clipboard.setData(ClipboardData(text: referralCode));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Referral code copied to clipboard')),
+                    );
                   },
                   icon: const Icon(Icons.copy, color: Color(0xFF84BD00)),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'Referral Link',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.3),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    referralLink,
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.8),
-                      fontSize: 12,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                IconButton(
-                  onPressed: () {
-                    // TODO: Implement copy link to clipboard
-                  },
-                  icon: Icon(Icons.link, color: Colors.white.withOpacity(0.6)),
                 ),
               ],
             ),
@@ -324,6 +292,10 @@ class _ReferralHubScreenState extends State<ReferralHubScreen>
   }
 
   Widget _buildIncomeSection() {
+    final totalIncome = _referralData['totalIncome'] ?? 0.0;
+    final pendingIncome = _referralData['pendingIncome'] ?? 0.0;
+    final confirmedIncome = totalIncome - pendingIncome;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -348,14 +320,14 @@ class _ReferralHubScreenState extends State<ReferralHubScreen>
               Expanded(
                 child: _buildIncomeItem(
                   'Pending Income',
-                  '\$${(_referralData['pendingIncome'] ?? 0.0).toStringAsFixed(2)}',
+                  '\$${pendingIncome.toStringAsFixed(5)}',
                   Colors.orange,
                 ),
               ),
               Expanded(
                 child: _buildIncomeItem(
                   'Confirmed Income',
-                  '\$${((_referralData['totalIncome'] ?? 0.0) - (_referralData['pendingIncome'] ?? 0.0)).toStringAsFixed(2)}',
+                  '\$${confirmedIncome.toStringAsFixed(5)}',
                   Colors.green,
                 ),
               ),
@@ -450,7 +422,7 @@ class _ReferralHubScreenState extends State<ReferralHubScreen>
           else
             Column(
               children: earnings.map((earning) {
-                return _buildEarningItem(earning);
+                return _buildEarningItem(earning as Map<String, dynamic>);
               }).toList(),
             ),
         ],
@@ -560,7 +532,7 @@ class _ReferralHubScreenState extends State<ReferralHubScreen>
               ),
               const SizedBox(width: 12),
               Text(
-                '+\$${amount.toStringAsFixed(2)}',
+                '+\$${amount.toStringAsFixed(5)}',
                 style: const TextStyle(
                   color: Colors.green,
                   fontSize: 14,

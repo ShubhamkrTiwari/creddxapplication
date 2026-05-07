@@ -10,7 +10,8 @@ import '../widgets/trading_view_chart.dart';
 
 class ChartScreen extends StatefulWidget {
   final String? symbol;
-  const ChartScreen({super.key, this.symbol});
+  final String? coinName;
+  const ChartScreen({super.key, this.symbol, this.coinName});
 
   @override
   State<ChartScreen> createState() => _ChartScreenState();
@@ -200,7 +201,7 @@ class _ChartScreenState extends State<ChartScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
-          _selectedSymbol,
+          widget.coinName ?? _selectedSymbol,
           style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
         ),
         actions: [

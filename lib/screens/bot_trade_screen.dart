@@ -13,8 +13,7 @@ class BotTradeScreen extends StatefulWidget {
   State<BotTradeScreen> createState() => _BotTradeScreenState();
 }
 
-class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+class _BotTradeScreenState extends State<BotTradeScreen> {
   
   // User subscription data
   String? _subscriptionPlan;
@@ -26,7 +25,6 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
     _fetchUserSubscription();
   }
 
@@ -130,7 +128,6 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
 
   @override
   void dispose() {
-    _tabController.dispose();
     super.dispose();
   }
 
@@ -153,29 +150,22 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
         centerTitle: true,
       ),
       body: SafeArea(
-        child: Column(
-          children: [
-            // Header Banner
-            _buildHeaderBanner(),
-            
-            // Tabs
-            _buildTabs(),
-            
-            // Content
-            Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  _buildRecommendedContent(),
-                  const BotHistoryScreen(showHeader: false), // Using the synchronized history screen
-                ],
-              ),
-            ),
-          ],
+        child: SingleChildScrollView(
+          child: Column(
+            children: [
+              // Header Banner
+              _buildHeaderBanner(),
+              
+              // Content
+              _buildRecommendedContent(),
+            ],
+          ),
         ),
       ),
     );
   }
+
+
 
   Widget _buildHeaderBanner() {
     return Container(
@@ -218,38 +208,7 @@ class _BotTradeScreenState extends State<BotTradeScreen> with SingleTickerProvid
     );
   }
 
-  Widget _buildTabs() {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(
-            color: Colors.white.withOpacity(0.1),
-            width: 1,
-          ),
-        ),
-      ),
-      child: TabBar(
-        controller: _tabController,
-        indicatorColor: const Color(0xFF84BD00),
-        indicatorWeight: 2,
-        labelColor: const Color(0xFF84BD00),
-        unselectedLabelColor: const Color(0xFF8E8E93),
-        labelStyle: const TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-        ),
-        unselectedLabelStyle: const TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w500,
-        ),
-        tabs: const [
-          Tab(text: 'Recommended'),
-          Tab(text: 'History'),
-        ],
-      ),
-    );
-  }
+
 
   Widget _buildRecommendedContent() {
     return SingleChildScrollView(

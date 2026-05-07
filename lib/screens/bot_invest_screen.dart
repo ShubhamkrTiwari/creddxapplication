@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
 import '../services/socket_service.dart';
 import '../services/user_service.dart';
+import '../services/unified_wallet_service.dart';
 import 'user_profile_screen.dart';
 import 'dart:async';
 
@@ -49,29 +50,22 @@ class _BotInvestScreenState extends State<BotInvestScreen> {
   }
 
   void _subscribeToBotBalance() {
-    _balanceSubscription = SocketService.balanceStream.listen((data) {
-      if (mounted && (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary')) {
-        final balanceData = data['data'];
-        if (balanceData != null && balanceData is Map) {
-          // Use availableBalance instead of botBalance to show only investable amount
-          final availableBalance = balanceData['availableBalance'] ?? balanceData['available'];
-          if (availableBalance != null) {
-            double newBalance = 0.0;
-            if (availableBalance is num) {
-              newBalance = availableBalance.toDouble();
-            } else if (availableBalance is Map) {
-              newBalance = double.tryParse(availableBalance['USDT']?.toString() ?? '0') ?? 0.0;
-            } else {
-              newBalance = double.tryParse(availableBalance.toString()) ?? 0.0;
-            }
-            setState(() {
-              _liveBotBalance = newBalance;
-            });
-            debugPrint('Invest Screen: Available balance updated: $newBalance');
-          }
-        }
+    _balanceSubscription = UnifiedWalletService.walletBalanceStream.listen((balance) {
+      if (mounted && balance != null) {
+        // Use availableBalance from UnifiedWalletService
+        // Note: UnifiedWalletService botBalance is the total bot balance
+        // We might need to fetch availableBalance specifically or use the one from mainBalance if available
+        setState(() {
+          _liveBotBalance = balance.botBalance;
+        });
+        debugPrint('Invest Screen: Bot balance updated from UnifiedWalletService: ${_liveBotBalance}');
       }
     });
+    
+    // Initial balance from service
+    if (UnifiedWalletService.walletBalance != null) {
+      _liveBotBalance = UnifiedWalletService.walletBalance!.botBalance;
+    }
   }
 
   Future<void> _fetchCurrentInvestment() async {
@@ -216,6 +210,9 @@ class _BotInvestScreenState extends State<BotInvestScreen> {
           _liveBotBalance = _liveBotBalance - amount;
         });
 
+        // Refresh global balance
+        UnifiedWalletService.refreshBotBalance();
+
         _showSnackBar(result['message'] ?? 'Investment successful!');
         Navigator.pop(context, true);
       } else {
@@ -326,7 +323,7 @@ class _BotInvestScreenState extends State<BotInvestScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        '${_liveBotBalance.toStringAsFixed(2)} USDT',
+                        '$_liveBotBalance USDT',
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 28,
@@ -367,7 +364,7 @@ class _BotInvestScreenState extends State<BotInvestScreen> {
                             )
                           else
                             Text(
-                              'Invested: ${_currentInvestment.toStringAsFixed(2)} USDT',
+                              'Invested: $_currentInvestment USDT',
                               style: const TextStyle(
                                 color: Color(0xFF84BD00),
                                 fontSize: 12,

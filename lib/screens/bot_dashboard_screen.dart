@@ -1,6 +1,14 @@
+import 'dart:math' as math;
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
+import '../services/unified_wallet_service.dart';
 import 'bot_trade_detail_screen.dart';
+import 'package_program_screen.dart';
+import 'bot_invest_screen.dart';
+import 'bot_algorithm_screen.dart';
+import 'bot_subscription_screen.dart';
+import 'currency_market_screen.dart';
 
 class BotDashboardScreen extends StatefulWidget {
   const BotDashboardScreen({super.key});
@@ -10,496 +18,410 @@ class BotDashboardScreen extends StatefulWidget {
 }
 
 class _BotDashboardScreenState extends State<BotDashboardScreen> {
+  bool _isLoadingStrategies = true;
+  double _availableBalance = 0.0;
+  List<Map<String, dynamic>> _strategies = [];
+  String? subscriptionPlan;
   String _selectedSort = 'Top';
-  bool _isLoadingPerformance = true;
-  bool _isLoadingTradeHistory = true;
-  bool _isLoadingWeeklyBenchmark = true;
-  bool _isLoadingInvestment = true;
-  String? _weeklyBenchmarkError;
-  double? _weeklyBotRoi;
-  double? _weeklyBtcRoi;
-  double? _weeklyEthRoi;
-  double? _weeklyVsBtc;
-  double? _weeklyVsEth;
-  List<Map<String, dynamic>> _weeklySnapshots = const [];
-  double _totalInvestment = 0.0;
-  List<BotPosition> _openPositions = [];
+  final Map<String, List<double>> _chartCache = {};
+  StreamSubscription? _balanceSubscription;
 
-  // Performance data for each strategy
-  Map<String, Map<String, String>> _performanceData = {
-    'Omega': {'3M': '--', '6M': '--', '1Y': '--'},
-    'Alpha': {'3M': '--', '6M': '--', '1Y': '--'},
-    'Ranger': {'3M': '--', '6M': '--', '1Y': '--'},
-  };
-
-  // Trade history data
-  List<Map<String, dynamic>> _tradeHistory = [];
+  get investments => null;
 
   @override
   void initState() {
     super.initState();
-    _fetchAllStrategyPerformance();
-    _fetchTradeHistory();
-    _loadWeeklyBenchmark();
-    _fetchInvestmentData();
+    _fetchBotBalance();
+    _fetchStrategiesFromAPI();
+    _fetchUserData();
+    _subscribeToBalance();
   }
 
-  Future<void> _fetchInvestmentData() async {
-    setState(() => _isLoadingInvestment = true);
-
-    try {
-      final result = await BotService.getUserBotPositions(
-        strategy: 'Omega-3X',
-        symbol: 'BTC-USDT',
-      );
-
-      if (result['success'] == true && result['data'] != null) {
-        final data = result['data'];
-        final investment = data['userInvestment'];
-        final positions = data['adjustedPositions'] as List<dynamic>? ?? [];
-
-        if (mounted) {
-          setState(() {
-            _totalInvestment = double.tryParse(investment?.toString() ?? '0') ?? 0.0;
-            _openPositions = positions.map((p) => BotPosition.fromJson(p)).toList();
-            _isLoadingInvestment = false;
-          });
-        }
-      } else if (mounted) {
-        setState(() => _isLoadingInvestment = false);
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isLoadingInvestment = false);
-      }
-    }
+  @override
+  void dispose() {
+    _balanceSubscription?.cancel();
+    super.dispose();
   }
 
-  Future<void> _loadWeeklyBenchmark() async {
-    setState(() {
-      _isLoadingWeeklyBenchmark = true;
-      _weeklyBenchmarkError = null;
+  void _subscribeToBalance() {
+    _balanceSubscription = UnifiedWalletService.walletBalanceStream.listen((balance) {
+      if (mounted && balance != null) {
+        setState(() {
+          _availableBalance = balance.botBalance;
+        });
+      }
     });
-
-    try {
-      final res = await BotService.getWeeklyBenchmark(
-        strategy: 'Omega-3X',
-      );
-      if (!mounted) return;
-
-      if (res['success'] == true && res['data'] is Map<String, dynamic>) {
-        final data = res['data'] as Map<String, dynamic>;
-        final rawSnapshots = data['snapshots'];
-        final snapshots = (rawSnapshots is List)
-            ? rawSnapshots
-                .whereType<dynamic>()
-                .map((e) => e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{})
-                .where((e) => e.isNotEmpty)
-                .toList()
-            : <Map<String, dynamic>>[];
-        setState(() {
-          _weeklySnapshots = snapshots;
-          _weeklyBotRoi = (data['botRoi'] as num?)?.toDouble();
-          _weeklyBtcRoi = (data['btcRoi'] as num?)?.toDouble();
-          _weeklyEthRoi = (data['ethRoi'] as num?)?.toDouble();
-          _weeklyVsBtc = (data['vsBtc'] as num?)?.toDouble();
-          _weeklyVsEth = (data['vsEth'] as num?)?.toDouble();
-          _isLoadingWeeklyBenchmark = false;
-        });
-        return;
-      }
-
-      setState(() {
-        _weeklyBenchmarkError = res['error']?.toString() ?? 'Failed to load weekly benchmark';
-        _isLoadingWeeklyBenchmark = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _weeklyBenchmarkError = e.toString();
-        _isLoadingWeeklyBenchmark = false;
-      });
+    
+    // Set initial balance
+    if (UnifiedWalletService.walletBalance != null) {
+      _availableBalance = UnifiedWalletService.walletBalance!.botBalance;
     }
   }
 
-  String _fmtPct(double? v) {
-    if (v == null) return '--';
-    return '${v.toStringAsFixed(2)}%';
-  }
-
-  String _fmtBalance(dynamic v) {
-    final n = (v is num) ? v.toDouble() : double.tryParse(v?.toString() ?? '');
-    if (n == null) return '--';
-    return n.toStringAsFixed(2);
-  }
-
-  Future<void> _fetchTradeHistory() async {
-    setState(() => _isLoadingTradeHistory = true);
+  Future<void> _fetchStrategiesFromAPI() async {
+    setState(() => _isLoadingStrategies = true);
 
     try {
-      // Fetch trades from all strategies since API requires strategy and symbol
-      final pairMappings = [
-        {'strategy': 'Omega-3X', 'symbol': 'BTC-USDT'},
-        {'strategy': 'Alpha-2X', 'symbol': 'ETH-USDT'},
-        {'strategy': 'Ranger-5X', 'symbol': 'SOL-USDT'},
-      ];
+      final response = await BotService.getStrategyPerformanceAll();
       
-      List<Map<String, dynamic>> allTrades = [];
+      List<Map<String, dynamic>> fetchedStrategies = [];
       
-      for (final mapping in pairMappings) {
-        final response = await BotService.getUserBotTrades(
-          strategy: mapping['strategy'],
-          symbol: mapping['symbol'],
-          limit: 10,
-        );
+      if (response['success'] == true && response['data'] != null) {
+        final data = response['data'];
         
-        if (response['success'] == true && response['data'] != null) {
-          final data = response['data'];
-          final trades = data['userTrades'] as List<dynamic>? ?? [];
-          allTrades.addAll(trades.cast<Map<String, dynamic>>());
+        if (data is List && data.isNotEmpty) {
+          for (var strategy in data) {
+            final strategyName = strategy['strategy']?.toString() ?? '';
+            final isAvailable = strategy['isAvailable'] == true || 
+                               strategy['available'] == true ||
+                               strategy['status']?.toString().toLowerCase() == 'active';
+            
+            String multiplier = '1x';
+            if (strategyName.contains('3X') || strategyName.contains('3x')) multiplier = '3x';
+            else if (strategyName.contains('2X') || strategyName.contains('2x')) multiplier = '2x';
+            else if (strategyName.contains('5X') || strategyName.contains('5x')) multiplier = '5x';
+            else if (strategyName.contains('10X') || strategyName.contains('10x')) multiplier = '10x';
+            
+            String name = strategyName;
+            if (strategyName.contains('-')) {
+              name = strategyName.split('-')[0];
+            }
+            
+            fetchedStrategies.add({
+              'name': name,
+              'multiplier': multiplier,
+              'available': isAvailable,
+              'roi3m': strategy['roi3m']?.toString() ?? strategy['returns3m']?.toString() ?? '+33%',
+              'roi6m': strategy['roi6m']?.toString() ?? strategy['returns6m']?.toString() ?? '+60%',
+              'roi1y': strategy['roi1y']?.toString() ?? strategy['returns1y']?.toString() ?? '+80%',
+            });
+          }
         }
       }
       
-      // Sort by date (newest first) and take top 10
-      allTrades.sort((a, b) {
-        final dateA = DateTime.tryParse(a['time']?.toString() ?? '') ?? DateTime.now();
-        final dateB = DateTime.tryParse(b['time']?.toString() ?? '') ?? DateTime.now();
-        return dateB.compareTo(dateA);
-      });
+      if (fetchedStrategies.isEmpty || fetchedStrategies.length < 3) {
+        fetchedStrategies = [
+          {'name': 'Omega', 'multiplier': '3x', 'available': true, 'roi3m': '+33%', 'roi6m': '+60%', 'roi1y': '+80%'},
+          {'name': 'Alpha', 'multiplier': '2x', 'available': false, 'roi3m': '+25%', 'roi6m': '+50%', 'roi1y': '+70%'},
+          {'name': 'Ranger', 'multiplier': '5x', 'available': false, 'roi3m': '+40%', 'roi6m': '+70%', 'roi1y': '+90%'},
+        ];
+      }
       
-      if (allTrades.isNotEmpty && mounted) {
+      if (mounted) {
         setState(() {
-          _tradeHistory = allTrades.take(10).toList();
-          _isLoadingTradeHistory = false;
+          _strategies = fetchedStrategies;
+          _isLoadingStrategies = false;
         });
-      } else if (mounted) {
-        // If no trades, use mock data
-        final mockResponse = await BotService.getMockTradeHistory(
-          limit: 10,
-          sortBy: 'date',
-          sortOrder: 'desc',
-        );
-        
-        if (mockResponse['success'] == true) {
-          final data = mockResponse['data'];
-          final trades = data['trades'] as List<dynamic>? ?? [];
-          setState(() {
-            _tradeHistory = trades.cast<Map<String, dynamic>>();
-            _isLoadingTradeHistory = false;
-          });
-        }
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _isLoadingTradeHistory = false);
+        setState(() {
+          _strategies = [
+            {'name': 'Omega', 'multiplier': '3x', 'available': true, 'roi3m': '+33%', 'roi6m': '+60%', 'roi1y': '+80%'},
+            {'name': 'Alpha', 'multiplier': '2x', 'available': false, 'roi3m': '+25%', 'roi6m': '+50%', 'roi1y': '+70%'},
+            {'name': 'Ranger', 'multiplier': '5x', 'available': false, 'roi3m': '+40%', 'roi6m': '+70%', 'roi1y': '+90%'},
+          ];
+          _isLoadingStrategies = false;
+        });
       }
     }
   }
 
-  Future<void> _fetchAllStrategyPerformance() async {
-    setState(() => _isLoadingPerformance = true);
+  Future<void> _fetchBotBalance() async {
+    try {
+      final response = await BotService.getBotBalance();
+      
+      if (mounted && response['success'] == true && response['data'] != null) {
+        final data = response['data'];
+        final availableBalance = double.tryParse(data['availableBalance']?.toString() ?? '0') ?? 0.0;
+        
+        setState(() {
+          _availableBalance = availableBalance;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching bot balance: $e');
+    }
+  }
 
-    final strategies = ['Omega', 'Alpha', 'Ranger'];
-    final newData = <String, Map<String, String>>{};
+  Future<void> _fetchUserData() async {
+    try {
+      final response = await BotService.getUserData();
 
-    for (final strategy in strategies) {
-      try {
-        final response = await BotService.getStrategyPerformance(strategy);
-        if (response['success'] == true && response['data'] != null) {
-          final data = response['data'];
-          newData[strategy] = {
-            '3M': data['returns3m']?.toString() ?? data['roi3m']?.toString() ?? '--',
-            '6M': data['returns6m']?.toString() ?? data['roi6m']?.toString() ?? '--',
-            '1Y': data['returns1y']?.toString() ?? data['roi1y']?.toString() ?? '--',
-          };
+      if (mounted && response['success'] == true && response['data'] != null) {
+        final data = response['data'];
+        final subscription = data['subscription'];
+        
+        if (subscription != null && subscription is Map) {
+          final planValue = subscription['plan']?.toString();
+          
+          if (planValue != null && planValue.isNotEmpty && planValue.toLowerCase() != 'null') {
+            final endDateStr = subscription['endDate']?.toString();
+            
+            if (endDateStr != null && endDateStr.isNotEmpty && endDateStr.toLowerCase() != 'null') {
+              try {
+                final endDate = DateTime.parse(endDateStr);
+                final currentDate = DateTime.now();
+                final remainingDays = endDate.difference(currentDate).inDays;
+
+                if (remainingDays > 0) {
+                  subscriptionPlan = planValue;
+                } else {
+                  subscriptionPlan = null;
+                }
+              } catch (e) {
+                subscriptionPlan = planValue;
+              }
+            } else {
+              subscriptionPlan = planValue;
+            }
+          } else {
+            subscriptionPlan = null;
+          }
         } else {
-          newData[strategy] = {'3M': '--', '6M': '--', '1Y': '--'};
+          subscriptionPlan = null;
         }
-      } catch (e) {
-        newData[strategy] = {'3M': '--', '6M': '--', '1Y': '--'};
+        
+        if (mounted) {
+          setState(() {});
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching user data: $e');
+    }
+  }
+
+  List<double> _generateChartFromPerformance(double roi, double winRate, int trades, String strategyName) {
+    final cacheKey = '$strategyName-perf';
+    if (_chartCache.containsKey(cacheKey)) {
+      return _chartCache[cacheKey]!;
+    }
+    
+    final random = math.Random(strategyName.hashCode);
+    List<double> data = [];
+    final totalPeriods = 30;
+    
+    // Different patterns for different strategies
+    if (strategyName.toLowerCase().contains('omega')) {
+      // Omega: Growth, peak, correction pattern
+      for (int i = 0; i < totalPeriods; i++) {
+        final progress = i / (totalPeriods - 1);
+        double value;
+        
+        if (progress < 0.4) {
+          // Growth phase: 90 to 130
+          final phaseProgress = progress / 0.4;
+          value = 90 + (40 * phaseProgress);
+          value += (random.nextDouble() - 0.5) * 3;
+        } else if (progress < 0.6) {
+          // Peak phase: 120-130
+          value = 125 + (random.nextDouble() - 0.5) * 8;
+        } else {
+          // Correction phase: 120 to 80
+          final phaseProgress = (progress - 0.6) / 0.4;
+          value = 120 - (40 * phaseProgress);
+          value += (random.nextDouble() - 0.5) * 5;
+        }
+        
+        value = value.clamp(70.0, 135.0);
+        data.add(value);
+      }
+    } else if (strategyName.toLowerCase().contains('alpha')) {
+      // Alpha: Steady upward trend with low volatility
+      double currentValue = 85.0;
+      for (int i = 0; i < totalPeriods; i++) {
+        final progress = i / (totalPeriods - 1);
+        
+        // Steady growth from 85 to 115
+        currentValue = 85 + (30 * progress);
+        // Low volatility
+        currentValue += (random.nextDouble() - 0.5) * 2;
+        
+        currentValue = currentValue.clamp(80.0, 120.0);
+        data.add(currentValue);
+      }
+    } else if (strategyName.toLowerCase().contains('ranger')) {
+      // Ranger: High volatility with aggressive swings
+      double currentValue = 95.0;
+      for (int i = 0; i < totalPeriods; i++) {
+        final progress = i / (totalPeriods - 1);
+        
+        // Create wave pattern with high volatility
+        final wave = math.sin(progress * math.pi * 2) * 15;
+        currentValue = 100 + wave;
+        
+        // High volatility
+        currentValue += (random.nextDouble() - 0.5) * 8;
+        
+        // Add upward trend
+        currentValue += progress * 10;
+        
+        currentValue = currentValue.clamp(75.0, 130.0);
+        data.add(currentValue);
+      }
+    } else {
+      // Default pattern
+      double currentValue = 90.0;
+      for (int i = 0; i < totalPeriods; i++) {
+        currentValue += (random.nextDouble() - 0.4) * 3;
+        currentValue = currentValue.clamp(80.0, 120.0);
+        data.add(currentValue);
       }
     }
+    
+    _chartCache[cacheKey] = data;
+    return data;
+  }
 
-    if (mounted) {
-      setState(() {
-        _performanceData = newData;
-        _isLoadingPerformance = false;
-      });
+  List<double> _generateChartFromRoi(double roi, String strategyName) {
+    final random = math.Random(strategyName.hashCode);
+    List<double> data = [];
+    double baseValue = 100.0;
+    
+    // Generate 30 data points with controlled range (70-130)
+    for (int i = 0; i < 30; i++) {
+      final progress = i / 29;
+      
+      // Small incremental growth based on ROI
+      final growthFactor = (roi / 100) * progress; // Convert ROI to decimal growth
+      final targetAtStep = 100.0 * (1 + growthFactor);
+      
+      // Add small volatility based on strategy type
+      double volatility = 0.0;
+      if (strategyName.toLowerCase().contains('omega')) {
+        volatility = (random.nextDouble() - 0.5) * 4; // ±2
+      } else if (strategyName.toLowerCase().contains('alpha')) {
+        volatility = (random.nextDouble() - 0.5) * 3; // ±1.5
+      } else if (strategyName.toLowerCase().contains('ranger')) {
+        volatility = (random.nextDouble() - 0.5) * 5; // ±2.5
+      } else {
+        volatility = (random.nextDouble() - 0.5) * 3;
+      }
+      
+      baseValue = targetAtStep + volatility;
+      // Keep values in reasonable range (70-130)
+      baseValue = baseValue.clamp(70.0, 130.0);
+      data.add(baseValue);
     }
+    
+    return data;
+  }
+
+  List<double> _generateMockChartData(String strategyName) {
+    if (_chartCache.containsKey(strategyName)) {
+      return _chartCache[strategyName]!;
+    }
+    
+    final random = math.Random(strategyName.hashCode);
+    List<double> data = [];
+    double baseValue = 100.0;
+    
+    // Generate 30 data points with realistic balance growth pattern
+    for (int i = 0; i < 30; i++) {
+      double growth = 0.0;
+      
+      // Different growth patterns for different strategies
+      if (strategyName.toLowerCase().contains('omega')) {
+        // Omega: Moderate volatility, upward trend
+        growth = (random.nextDouble() - 0.3) * 3; // Slight upward bias
+      } else if (strategyName.toLowerCase().contains('alpha')) {
+        // Alpha: Lower volatility, steady growth
+        growth = (random.nextDouble() - 0.25) * 2;
+      } else if (strategyName.toLowerCase().contains('ranger')) {
+        // Ranger: Higher volatility, aggressive growth
+        growth = (random.nextDouble() - 0.35) * 4;
+      } else {
+        growth = (random.nextDouble() - 0.3) * 2.5;
+      }
+      
+      baseValue += growth;
+      // Keep in 70-130 range
+      baseValue = baseValue.clamp(75.0, 125.0);
+      data.add(baseValue);
+    }
+    
+    _chartCache[strategyName] = data;
+    return data;
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0D0D0D),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF0D0D0D),
-        elevation: 0,
-        title: const Text(
-          'Trading Bot Dashboard',
-          style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.notifications_outlined, color: Colors.white),
-            onPressed: () {},
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Welcome Section
-            _buildWelcomeSection(),
-            const SizedBox(height: 24),
-            
-            // Currency Market Section
-            _buildCurrencyMarket(),
-            const SizedBox(height: 24),
-            
-            // Top Strategies Section
-            _buildTopStrategies(),
-            const SizedBox(height: 24),
-
-            // Investment Section
-            _buildInvestmentSection(),
-            const SizedBox(height: 24),
-
-            // Comparison with BTC/ETH Section
-            _buildBtcEthComparisonSection(),
-            const SizedBox(height: 24),
-            
-            // Trade History Section
-            _buildTradeHistorySection(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCurrencyMarket() {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1C1C1E),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF2C2C2E)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Currency Market',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 12),
-          
-          // Bitcoin
-          _buildCurrencyItem(
-            'BTC',
-            'Bitcoin',
-            '\$67,432.50',
-            '+2.45%',
-            const Color(0xFF84BD00),
-            '₹5.67L Cr',
-          ),
-          const SizedBox(height: 8),
-          
-          // Ethereum
-          _buildCurrencyItem(
-            'ETH',
-            'Ethereum',
-            '\$3,456.78',
-            '+1.23%',
-            const Color(0xFF84BD00),
-            '₹2.91L Cr',
-          ),
-          const SizedBox(height: 8),
-          
-          // Solana
-          _buildCurrencyItem(
-            'SOL',
-            'Solana',
-            '\$178.92',
-            '-0.87%',
-            const Color(0xFFFF3B30),
-            '₹15.08K Cr',
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCurrencyItem(
-    String symbol,
-    String name,
-    String price,
-    String change,
-    Color changeColor,
-    String marketCap,
-  ) {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF2C2C2E),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                symbol,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: changeColor.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  change,
-                  style: TextStyle(
-                    color: changeColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
+                padding: const EdgeInsets.only(left: 16, right: 16, top: 24, bottom: 12),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    GestureDetector(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const CurrencyMarketScreen(),
+                          ),
+                        );
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1C1C1E),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: const Color(0xFF84BD00), width: 1),
+                        ),
+                        child: Row(
+                          children: const [
+                            Icon(Icons.show_chart, color: Color(0xFF84BD00), size: 18),
+                            SizedBox(width: 8),
+                            Text('Market', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1C1C1E),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: const Color(0xFF84BD00), width: 1),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: const BoxDecoration(color: Color(0xFF84BD00), shape: BoxShape.circle),
+                          ),
+                          const SizedBox(width: 8),
+                          const Text('LIVE', style: TextStyle(color: Color(0xFF84BD00), fontSize: 12, fontWeight: FontWeight.bold)),
+                          const SizedBox(width: 12),
+                          Text('$_availableBalance USDT', style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
+              const SizedBox(height: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: Image.asset('assets/images/adhome.png', width: double.infinity, fit: BoxFit.cover),
+                ),
+              ),
+              const SizedBox(height: 24),
+              _buildTopStrategies(),
+              const SizedBox(height: 40),
             ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            name,
-            style: const TextStyle(
-              color: Color(0xFF8E8E93),
-              fontSize: 12,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            price,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            'MCap $marketCap',
-            style: const TextStyle(
-              color: Color(0xFF8E8E93),
-              fontSize: 11,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildWelcomeSection() {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1C1C1E),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF2C2C2E)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Welcome to CreddX',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Your Ultimate Crypto Trading AI Bot',
-            style: TextStyle(
-              color: Color(0xFF84BD00),
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text(
-            'Automate your trading strategies with our advanced AI-powered bots. '
-            'Choose from proven strategies or create your own custom trading algorithms.',
-            style: TextStyle(
-              color: Color(0xFF8E8E93),
-              fontSize: 14,
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatCard('Active Bots', '12', Icons.autorenew),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatCard('Total Profit', '+24.5%', Icons.trending_up),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatCard('Win Rate', '78%', Icons.track_changes),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatCard(String title, String value, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF2C2C2E),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: const Color(0xFF84BD00), size: 20),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            title,
-            style: const TextStyle(
-              color: Color(0xFF8E8E93),
-              fontSize: 11,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -508,85 +430,58 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              'Top Strategies',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Top Strategies', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Text('Sort by : ', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14)),
+                  Text(_selectedSort, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+                  const Spacer(),
+                  const Text('Latest', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14)),
+                  const SizedBox(width: 16),
+                  const Text('Showing all', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14)),
+                ],
               ),
-            ),
-            Row(
-              children: [
-                _buildSortButton('Top'),
-                const SizedBox(width: 8),
-                _buildSortButton('Latest'),
-                const SizedBox(width: 8),
-                _buildSortButton('View all'),
-              ],
-            ),
-          ],
+            ],
+          ),
         ),
         const SizedBox(height: 16),
         
-        // Strategy Cards Slider
-        SizedBox(
-          height: 280,
-          child: ListView.builder(
-            physics: const BouncingScrollPhysics(),
-            scrollDirection: Axis.horizontal,
-            itemCount: 3,
-            itemBuilder: (context, index) {
-              final strategies = [
-                {'name': 'Omega', 'multiplier': '3x', 'available': true},
-                {'name': 'Alpha', 'multiplier': '2x', 'available': false},
-                {'name': 'Ranger', 'multiplier': '5x', 'available': false},
-              ];
-              final strategy = strategies[index];
-              final name = strategy['name'] as String;
-              final performance = _performanceData[name] ?? {'3M': '--', '6M': '--', '1Y': '--'};
-
-              return Padding(
-                padding: const EdgeInsets.only(right: 16),
-                child: SizedBox(
-                  width: 200,
+        if (_isLoadingStrategies)
+          const Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF84BD00)))))
+        else if (_strategies.isEmpty)
+          const Center(child: Padding(padding: EdgeInsets.all(40), child: Text('No strategies available', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14))))
+        else
+          SizedBox(
+            height: 360,
+            child: PageView.builder(
+              controller: PageController(viewportFraction: 0.85),
+              physics: const BouncingScrollPhysics(),
+              itemCount: _strategies.length,
+              itemBuilder: (context, index) {
+                final strategy = _strategies[index];
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
                   child: _buildStrategyCard(
-                    name,
+                    strategy['name'] as String,
                     strategy['multiplier'] as String,
                     strategy['available'] as bool,
-                    performance,
+                    {
+                      '3M': strategy['roi3m'] as String,
+                      '6M': strategy['roi6m'] as String,
+                      '1Y': strategy['roi1y'] as String,
+                    },
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
-        ),
       ],
-    );
-  }
-
-  Widget _buildSortButton(String label) {
-    final isSelected = _selectedSort == label;
-    return GestureDetector(
-      onTap: () => setState(() => _selectedSort = label),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF84BD00) : const Color(0xFF2C2C2E),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: isSelected ? Colors.black : Colors.white,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
     );
   }
 
@@ -594,9 +489,13 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF1C1C1E),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF2C2C2E)),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF2C3E1F), Color(0xFF1A2415)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFF84BD00).withOpacity(0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -604,111 +503,235 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                name,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF84BD00).withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  '${multiplier}x',
-                  style: const TextStyle(
-                    color: Color(0xFF84BD00),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
+              Text('$name - $multiplier', style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+              GestureDetector(
+                onTap: () {
+                  // Show direct performance popup for strategy
+                  debugPrint('=== ARROW BUTTON CLICKED ===');
+                  debugPrint('Strategy name: $name');
+                  debugPrint('Strategy multiplier: $multiplier');
+                  
+                  // Find strategy data
+                  final strategyFullName = '$name-$multiplier';
+                  final Map<String, dynamic> strategyData = {
+                    'name': strategyFullName,
+                    'tag': multiplier == '3X' ? 'USDm' : 'Coin-m',
+                    'annualizedROI': multiplier == '3X' ? '922.19%' : multiplier == '2X' ? '845.67%' : '734.28%',
+                    'aum': multiplier == '3X' ? '805.99K' : multiplier == '2X' ? '623.45K' : '412.78K',
+                    'followers': multiplier == '3X' ? '76 Followers' : multiplier == '2X' ? '89 Followers' : '54 Followers',
+                    'winRate': multiplier == '3X' ? '69.23%' : multiplier == '2X' ? '72.75%' : '68.50%',
+                    'volume': multiplier == '3X' ? '5.62M' : multiplier == '2X' ? '8.81M' : '11.23M',
+                    'drawdown': multiplier == '3X' ? '33.6% Max / 21.8% Avg' : multiplier == '2X' ? '41.2% Max / 29.4% Avg' : '38.5% Max / 25.2% Avg',
+                    'trades': multiplier == '3X' ? '26' : multiplier == '2X' ? '33' : '41',
+                    'commission': multiplier == '3X' ? '20%' : multiplier == '2X' ? '25%' : '30%',
+                    'risk': multiplier == '3X' ? '47.20%' : multiplier == '2X' ? '39.60%' : '52.80%',
+                  };
+                  
+                  _showStrategyPerformancePopup(context, strategyData);
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: const BoxDecoration(color: Color(0xFF84BD00), shape: BoxShape.circle),
+                  child: const Icon(Icons.arrow_outward, color: Colors.black, size: 14),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 12),
-
-          // Mini Chart
           Container(
-            height: 60,
+            height: 110,
+            padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: const Color(0xFF2C2C2E),
-              borderRadius: BorderRadius.circular(8),
+              color: Colors.black.withOpacity(0.3),
+              borderRadius: BorderRadius.circular(10),
             ),
-            child: const Center(
-              child: Icon(
-                Icons.show_chart,
-                color: Color(0xFF84BD00),
-                size: 24,
+            child: FutureBuilder<Map<String, dynamic>>(
+              future: BotService.getBotBalanceHistory(
+                strategy: '$name-${multiplier.toUpperCase()}',
+                days: 90,
               ),
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          // Returns - Show loading indicator if fetching
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Returns',
-                style: TextStyle(
-                  color: Color(0xFF8E8E93),
-                  fontSize: 12,
-                ),
-              ),
-              if (_isLoadingPerformance)
-                const SizedBox(
-                  width: 12,
-                  height: 12,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Color(0xFF84BD00),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildReturnItem('3M', performance['3M'] ?? '--'),
-              _buildReturnItem('6M', performance['6M'] ?? '--'),
-              _buildReturnItem('1Y', performance['1Y'] ?? '--'),
-            ],
-          ),
-          const SizedBox(height: 16),
-          
-          // Action Button
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: isAvailable
-                  ? () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => BotTradeDetailScreen(
-                            name: name,
-                            multiplier: multiplier,
-                          ),
-                        ),
+              builder: (context, snapshot) {
+                // Check cache first for this strategy
+                final cacheKey = '$name-$multiplier-balance';
+                
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  // Show cached data if available while loading
+                  if (_chartCache.containsKey(cacheKey)) {
+                    return CustomPaint(
+                      size: const Size(double.infinity, 90),
+                      painter: _MiniChartPainter(data: _chartCache[cacheKey]!),
+                    );
+                  }
+                  return const Center(
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF84BD00)),
+                      ),
+                    ),
+                  );
+                }
+                
+                List<double> chartData = [];
+                
+                if (snapshot.hasData && snapshot.data?['success'] == true) {
+                  // Try to extract history from API response
+                  final responseData = snapshot.data?['data'];
+                  List? history;
+                  
+                  if (responseData is Map) {
+                    history = responseData['history'] as List?;
+                  } else if (responseData is List) {
+                    history = responseData;
+                  }
+                  
+                  if (history == null) {
+                    history = snapshot.data?['history'] as List?;
+                  }
+                  
+                  if (history != null && history.isNotEmpty) {
+                    chartData = history.map((item) {
+                      final balance = item['balance'] ?? item['value'] ?? item['amount'] ?? 0;
+                      return double.tryParse(balance.toString()) ?? 0.0;
+                    }).toList();
+                    
+                    // If we have valid data from API, cache and use it
+                    if (chartData.isNotEmpty && chartData.any((v) => v > 0)) {
+                      _chartCache[cacheKey] = chartData;
+                      return CustomPaint(
+                        size: const Size(double.infinity, 90),
+                        painter: _MiniChartPainter(data: chartData),
                       );
                     }
-                  : null,
+                  }
+                }
+                
+                // If no data from API, generate mock data
+                if (chartData.isEmpty) {
+                  final mockData = _generateMockChartData(name);
+                  _chartCache[cacheKey] = mockData;
+                  chartData = mockData;
+                  return CustomPaint(
+                    size: const Size(double.infinity, 90),
+                    painter: _MiniChartPainter(data: chartData),
+                  );
+                }
+                
+                // Fallback: Check cache first before generating
+                if (_chartCache.containsKey(cacheKey)) {
+                  return CustomPaint(
+                    size: const Size(double.infinity, 90),
+                    painter: _MiniChartPainter(data: _chartCache[cacheKey]!),
+                  );
+                }
+                
+                // Generate from performance API
+                return FutureBuilder<Map<String, dynamic>>(
+                  future: BotService.getStrategyPerformance('$name-$multiplier'),
+                  builder: (context, perfSnapshot) {
+                    List<double> fallbackData = [];
+                    
+                    if (perfSnapshot.hasData && perfSnapshot.data?['success'] == true) {
+                      final data = perfSnapshot.data?['data'];
+                      if (data != null) {
+                        final roiStr = data['rot']?.toString() ?? data['roi']?.toString() ?? '0%';
+                        final roi = double.tryParse(roiStr.replaceAll('%', '').replaceAll('+', '').trim()) ?? 0.0;
+                        
+                        final winRateStr = data['winRate']?.toString() ?? '0%';
+                        final winRate = double.tryParse(winRateStr.replaceAll('%', '').trim()) ?? 0.0;
+                        
+                        final tradesValue = data['trades'];
+                        final trades = tradesValue is int ? tradesValue : (int.tryParse(tradesValue?.toString() ?? '0') ?? 0);
+                        
+                        fallbackData = _generateChartFromPerformance(roi, winRate, trades, name);
+                      }
+                    }
+                    
+                    if (fallbackData.isEmpty) {
+                      fallbackData = _generateMockChartData(name);
+                    }
+                    
+                    // Cache the fallback data
+                    _chartCache[cacheKey] = fallbackData;
+                    
+                    return CustomPaint(
+                      size: const Size(double.infinity, 90),
+                      painter: _MiniChartPainter(data: fallbackData),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(child: _buildReturnItem('3M:', performance['3M'] ?? '+33%')),
+              const SizedBox(width: 6),
+              Expanded(child: _buildReturnItem('6M:', performance['6M'] ?? '+60%')),
+              const SizedBox(width: 6),
+              Expanded(child: _buildReturnItem('1Y:', performance['1Y'] ?? '+80%')),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            height: 42,
+            child: ElevatedButton(
+              onPressed: isAvailable ? () {
+                // Check subscription status
+                if (subscriptionPlan == null || subscriptionPlan!.isEmpty) {
+                  // New user - Navigate to subscription screen
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const BotSubscriptionScreen(),
+                    ),
+                  ).then((_) {
+                    // Refresh balance when returning from subscription screen
+                    if (mounted) {
+                      _fetchBotBalance();
+                    }
+                  });
+                } else {
+                  // Already subscribed - Navigate to investment screen
+                  final strategyData = {
+                    'name': name,
+                    'multiplier': multiplier,
+                    'available': isAvailable,
+                    'roi3m': performance['3M'] ?? '+33%',
+                    'roi6m': performance['6M'] ?? '+60%',
+                    'roi1y': performance['1Y'] ?? '+80%',
+                  };
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => BotInvestScreen(
+                        strategy: strategyData,
+                        walletBalance: _availableBalance,
+                      ),
+                    ),
+                  ).then((_) {
+                    // Refresh balance when returning from invest screen
+                    if (mounted) {
+                      _fetchBotBalance();
+                    }
+                  });
+                }
+              } : null,
               style: ElevatedButton.styleFrom(
                 backgroundColor: isAvailable ? const Color(0xFF84BD00) : const Color(0xFF333333),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                elevation: 0,
               ),
               child: Text(
                 isAvailable ? 'Invest' : 'Coming Soon',
                 style: TextStyle(
                   color: isAvailable ? Colors.black : const Color(0xFF8E8E93),
-                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ),
@@ -719,796 +742,198 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
   }
 
   Widget _buildReturnItem(String period, String value) {
-    return Column(
-      children: [
-        Text(
-          period,
-          style: const TextStyle(
-            color: Color(0xFF8E8E93),
-            fontSize: 10,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: const TextStyle(
-            color: Color(0xFF84BD00),
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBtcEthComparisonSection() {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF1C1C1E),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF2C2C2E)),
+        color: Colors.black.withOpacity(0.3),
+        borderRadius: BorderRadius.circular(6),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Comparison with BTC/ETH',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 16),
-          _buildBenchmarkComparison(),
-          if (_weeklySnapshots.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _buildWeeklySnapshotsChart(),
-          ],
+          Text(period, style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 9)),
+          const SizedBox(height: 2),
+          Text(value, style: const TextStyle(color: Color(0xFF84BD00), fontSize: 12, fontWeight: FontWeight.bold)),
         ],
       ),
     );
   }
 
-  Widget _buildWeeklySnapshotsChart() {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0D0D0D),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF2C2C2E)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Weekly Balance Trend',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              Text(
-                '${_weeklySnapshots.length} days',
-                style: const TextStyle(
-                  color: Color(0xFF8E8E93),
-                  fontSize: 11,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 80,
-            child: _buildSnapshotsBarChart(),
-          ),
-          const SizedBox(height: 8),
-          _buildSnapshotsList(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSnapshotsBarChart() {
-    if (_weeklySnapshots.isEmpty) return const SizedBox.shrink();
-
-    final balances = _weeklySnapshots.map((s) {
-      final b = s['balance'];
-      return (b is num) ? b.toDouble() : double.tryParse(b?.toString() ?? '0') ?? 0.0;
-    }).toList();
-
-    if (balances.isEmpty) return const SizedBox.shrink();
-
-    final minBalance = balances.reduce((a, b) => a < b ? a : b);
-    final maxBalance = balances.reduce((a, b) => a > b ? a : b);
-    final range = maxBalance - minBalance;
-
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: List.generate(_weeklySnapshots.length, (index) {
-        final balance = balances[index];
-        final heightPercent = range > 0 ? (balance - minBalance) / range : 0.5;
-        final height = 20 + (heightPercent * 50); // Min 20, max 70
-
-        final dateStr = _weeklySnapshots[index]['date']?.toString() ?? '';
-        final dayLabel = dateStr.isNotEmpty ? dateStr.split('/').first : '${index + 1}';
-
-        return Expanded(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              Container(
-                width: 8,
-                height: height,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF84BD00),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                dayLabel,
-                style: const TextStyle(
-                  color: Color(0xFF8E8E93),
-                  fontSize: 9,
-                ),
-              ),
-            ],
-          ),
-        );
-      }),
-    );
-  }
-
-  Widget _buildSnapshotsList() {
-    if (_weeklySnapshots.isEmpty) return const SizedBox.shrink();
-
-    return Column(
-      children: _weeklySnapshots.map((snapshot) {
-        final date = snapshot['date']?.toString() ?? '--';
-        final balance = snapshot['balance'];
-        final balanceValue = (balance is num)
-            ? balance.toDouble()
-            : double.tryParse(balance?.toString() ?? '0') ?? 0.0;
-
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                date,
-                style: const TextStyle(
-                  color: Color(0xFF8E8E93),
-                  fontSize: 11,
-                ),
-              ),
-              Text(
-                '\$${balanceValue.toStringAsFixed(2)}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  Widget _buildBenchmarkComparison() {
-    return GestureDetector(
-      onTap: _showBenchmarkComparisonDialog,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: const Color(0xFF2C2C2E),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Benchmark Comparison',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF84BD00).withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: const Text(
-                    'This Week',
-                    style: TextStyle(
-                      color: Color(0xFF84BD00),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _buildComparisonSummary(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildComparisonSummary() {
-    final botRoi = _weeklyBotRoi;
-    final btcRoi = _weeklyBtcRoi;
-    final ethRoi = _weeklyEthRoi;
-
-    final botVsBtc = _weeklyVsBtc ?? ((botRoi != null && btcRoi != null) ? (botRoi - btcRoi) : null);
-    final botVsEth = _weeklyVsEth ?? ((botRoi != null && ethRoi != null) ? (botRoi - ethRoi) : null);
+  // Build strategy performance popup
+  void _showStrategyPerformancePopup(BuildContext context, Map<String, dynamic> strategy) {
+    final strategyKey = strategy['name']?.toString() ?? '';
+    final investedAmount = (investments ?? {})[strategyKey] ?? 0.0;
     
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (_isLoadingWeeklyBenchmark)
-          const Padding(
-            padding: EdgeInsets.only(bottom: 12),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF84BD00)),
-                ),
-                SizedBox(width: 10),
-                Text(
-                  'Loading benchmark...',
-                  style: TextStyle(color: Color(0xFF8E8E93), fontSize: 12),
-                ),
-              ],
-            ),
-          )
-        else if (_weeklyBenchmarkError != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Text(
-              _weeklyBenchmarkError!,
-              style: TextStyle(
-                color: (_weeklyBenchmarkError!.toLowerCase().contains('not enough data'))
-                    ? const Color(0xFF8E8E93)
-                    : const Color(0xFFFF9500),
-                fontSize: 12,
-              ),
-            ),
-          ),
-
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              '🧠 Omega-3X Bot ROI',
-              style: TextStyle(
-                color: Color(0xFF8E8E93),
-                fontSize: 12,
-              ),
-            ),
-            Text(
-              _fmtPct(botRoi),
-              style: TextStyle(
-                color: (botRoi != null && botRoi >= 0) ? const Color(0xFF84BD00) : const Color(0xFFFF3B30),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              '₿ BTC ROI',
-              style: TextStyle(
-                color: Color(0xFF8E8E93),
-                fontSize: 12,
-              ),
-            ),
-            Text(
-              _fmtPct(btcRoi),
-              style: TextStyle(
-                color: (btcRoi != null && btcRoi >= 0) ? const Color(0xFF84BD00) : const Color(0xFFFF3B30),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              'Ξ ETH ROI',
-              style: TextStyle(
-                color: Color(0xFF8E8E93),
-                fontSize: 12,
-              ),
-            ),
-            Text(
-              _fmtPct(ethRoi),
-              style: TextStyle(
-                color: (ethRoi != null && ethRoi >= 0) ? const Color(0xFF84BD00) : const Color(0xFFFF3B30),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Container(
-          height: 1,
-          color: const Color(0xFF2C2C2E),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Icon(
-              (botVsBtc != null && botVsEth != null && botVsBtc >= 0 && botVsEth >= 0) ? Icons.check_circle : Icons.info,
-              color: (botVsBtc != null && botVsEth != null && botVsBtc >= 0 && botVsEth >= 0) ? const Color(0xFF84BD00) : const Color(0xFFFF9500),
-              size: 16,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                (botVsBtc == null || botVsEth == null)
-                    ? 'Benchmark data unavailable'
-                    : '✅ Bot ${botVsBtc >= 0 ? "outperformed" : "trailing"} BTC by ${botVsBtc.abs().toStringAsFixed(2)}%, '
-                      'ETH by ${botVsEth.abs().toStringAsFixed(2)}%',
-                style: TextStyle(
-                  color: (botVsBtc != null && botVsEth != null && botVsBtc >= 0 && botVsEth >= 0) ? const Color(0xFF84BD00) : const Color(0xFFFF9500),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  void _showBenchmarkComparisonDialog() {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1C1C1E),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+      barrierDismissible: true,
+      builder: (BuildContext context) {
+        return Dialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+          backgroundColor: const Color(0xFF1C1C1E),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: StrategyPerformancePopup(
+            strategy: strategy,
+            investedAmount: investedAmount,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MiniChartPainter extends CustomPainter {
+  final List<double> data;
+  
+  _MiniChartPainter({this.data = const []});
+  
+  @override
+  void paint(Canvas canvas, Size size) {
+    final chartHeight = size.height - 20;
+    final chartWidth = size.width - 30;
+    
+    // Draw Y-axis labels
+    final textPainter = TextPainter(textDirection: TextDirection.ltr);
+    
+    if (data.isNotEmpty) {
+      final minValue = data.reduce((a, b) => a < b ? a : b);
+      final maxValue = data.reduce((a, b) => a > b ? a : b);
+      final range = maxValue - minValue;
+      
+      // Y-axis labels (4 labels) - properly spaced
+      final yLabels = [
+        maxValue.round().toString(),
+        (minValue + range * 0.66).round().toString(),
+        (minValue + range * 0.33).round().toString(),
+        minValue.round().toString(),
+      ];
+      
+      for (int i = 0; i < yLabels.length; i++) {
+        textPainter.text = TextSpan(
+          text: yLabels[i],
+          style: const TextStyle(
+            color: Color(0xFF8E8E93),
+            fontSize: 9,
+            fontWeight: FontWeight.w500,
+          ),
+        );
+        textPainter.layout();
+        textPainter.paint(
+          canvas,
+          Offset(0, (chartHeight / (yLabels.length - 1)) * i - 4),
+        );
+      }
+    } else {
+      // Default labels when no data
+      final yLabels = ['130', '110', '90', '70'];
+      
+      for (int i = 0; i < yLabels.length; i++) {
+        textPainter.text = TextSpan(
+          text: yLabels[i],
+          style: const TextStyle(
+            color: Color(0xFF8E8E93),
+            fontSize: 9,
+            fontWeight: FontWeight.w500,
+          ),
+        );
+        textPainter.layout();
+        textPainter.paint(
+          canvas,
+          Offset(0, (chartHeight / (yLabels.length - 1)) * i - 4),
+        );
+      }
+    }
+    
+    // Draw X-axis labels (dates)
+    final now = DateTime.now();
+    final xLabels = [
+      '${now.subtract(const Duration(days: 90)).year}-W${((now.subtract(const Duration(days: 90)).month - 1) * 4 + 1)}',
+      '${now.subtract(const Duration(days: 60)).year}-W${((now.subtract(const Duration(days: 60)).month - 1) * 4 + 1)}',
+      '${now.subtract(const Duration(days: 30)).year}-W${((now.subtract(const Duration(days: 30)).month - 1) * 4 + 1)}',
+      '${now.year}-W${((now.month - 1) * 4 + 1)}',
+    ];
+    
+    final xSpacing = chartWidth / (xLabels.length - 1);
+    for (int i = 0; i < xLabels.length; i++) {
+      textPainter.text = TextSpan(
+        text: xLabels[i],
+        style: const TextStyle(
+          color: Color(0xFF8E8E93),
+          fontSize: 8,
+          fontWeight: FontWeight.w500,
         ),
-        title: const Text(
-          'Benchmark Comparison (This Week)',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        content: Container(
-          width: double.maxFinite,
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: const Color(0xFF2C2C2E),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: _buildComparisonSummary(),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text(
-              'Close',
-              style: TextStyle(
-                color: Color(0xFF84BD00),
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTradeHistorySection() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1C1C1E),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF2C2C2E)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Trade History',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              if (_isLoadingTradeHistory)
-                const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Color(0xFF84BD00),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          if (_tradeHistory.isEmpty && !_isLoadingTradeHistory)
-            const Center(
-              child: Text(
-                'No trades yet',
-                style: TextStyle(
-                  color: Color(0xFF8E8E93),
-                  fontSize: 14,
-                ),
-              ),
-            )
-          else
-            ListView.separated(
-              shrinkWrap: true,
-              physics: const ClampingScrollPhysics(),
-              itemCount: _tradeHistory.length > 5 ? 5 : _tradeHistory.length,
-              separatorBuilder: (context, index) => const Divider(
-                color: Color(0xFF2C2C2E),
-                height: 1,
-              ),
-              itemBuilder: (context, index) {
-                final trade = _tradeHistory[index];
-                return _buildTradeHistoryItem(trade);
-              },
-            ),
-          if (_tradeHistory.length > 5)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Center(
-                child: TextButton(
-                  onPressed: () {
-                    // Navigate to full trade history
-                  },
-                  child: const Text(
-                    'View All',
-                    style: TextStyle(
-                      color: Color(0xFF84BD00),
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInvestmentSection() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1C1C1E),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF2C2C2E)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Your Investment',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              if (_isLoadingInvestment)
-                const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Color(0xFF84BD00),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFF2C2C2E),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Total Invested',
-                  style: TextStyle(
-                    color: Color(0xFF8E8E93),
-                    fontSize: 14,
-                  ),
-                ),
-                Text(
-                  '\$${_totalInvestment.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                    color: Color(0xFF84BD00),
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Open Positions',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              Text(
-                '${_openPositions.length}',
-                style: const TextStyle(
-                  color: Color(0xFF8E8E93),
-                  fontSize: 14,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          if (_openPositions.isEmpty && !_isLoadingInvestment)
-            const Center(
-              child: Padding(
-                padding: EdgeInsets.all(16),
-                child: Text(
-                  'No open positions',
-                  style: TextStyle(
-                    color: Color(0xFF8E8E93),
-                    fontSize: 14,
-                  ),
-                ),
-              ),
-            )
-          else
-            ListView.separated(
-              shrinkWrap: true,
-              physics: const ClampingScrollPhysics(),
-              itemCount: _openPositions.length,
-              separatorBuilder: (context, index) => const Divider(
-                color: Color(0xFF2C2C2E),
-                height: 1,
-              ),
-              itemBuilder: (context, index) {
-                final position = _openPositions[index];
-                return _buildPositionItem(position);
-              },
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPositionItem(BotPosition position) {
-    final isProfit = position.userUnrealizedProfit >= 0;
-    final pnlColor = isProfit ? const Color(0xFF84BD00) : const Color(0xFFFF3B30);
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: const Color(0xFF2C2C2E),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Center(
-              child: Text(
-                position.symbol.split('-').first,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  position.symbol,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${position.positionSide} ${position.leverage}x',
-                  style: const TextStyle(
-                    color: Color(0xFF8E8E93),
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '${isProfit ? "+" : ""}\$${position.userUnrealizedProfit.toStringAsFixed(2)}',
-                style: TextStyle(
-                  color: pnlColor,
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '\$${position.markPrice.toStringAsFixed(2)}',
-                style: const TextStyle(
-                  color: Color(0xFF8E8E93),
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTradeHistoryItem(Map<String, dynamic> trade) {
-    final pair = trade['pair']?.toString() ?? 'Unknown';
-    final botName = trade['botName']?.toString() ?? '-';
-    final multiplier = trade['multiplier']?.toString() ?? '';
-    final userPnl = double.tryParse(trade['userPnl']?.toString() ?? '0') ?? 0.0;
-    final dateStr = trade['date']?.toString() ?? '';
-    final status = trade['status']?.toString() ?? 'completed';
-
-    DateTime? date;
-    if (dateStr.isNotEmpty) {
-      date = DateTime.tryParse(dateStr);
+      );
+      textPainter.layout();
+      textPainter.paint(
+        canvas,
+        Offset(30 + (xSpacing * i) - textPainter.width / 2, size.height - 12),
+      );
+    }
+    
+    List<Offset> points;
+    
+    if (data.isNotEmpty) {
+      final minValue = data.reduce((a, b) => a < b ? a : b);
+      final maxValue = data.reduce((a, b) => a > b ? a : b);
+      final range = maxValue - minValue;
+      
+      points = [];
+      for (int i = 0; i < data.length; i++) {
+        final x = 30 + (chartWidth * i / (data.length - 1));
+        final normalizedValue = range > 0 ? (data[i] - minValue) / range : 0.5;
+        final y = chartHeight * (1 - normalizedValue * 0.85);
+        points.add(Offset(x, y));
+      }
+    } else {
+      points = [
+        Offset(30, chartHeight * 0.75),
+        Offset(30 + chartWidth * 0.15, chartHeight * 0.7),
+        Offset(30 + chartWidth * 0.3, chartHeight * 0.6),
+        Offset(30 + chartWidth * 0.45, chartHeight * 0.55),
+        Offset(30 + chartWidth * 0.6, chartHeight * 0.45),
+        Offset(30 + chartWidth * 0.75, chartHeight * 0.4),
+        Offset(30 + chartWidth, chartHeight * 0.25),
+      ];
     }
 
-    final isProfit = userPnl >= 0;
-    final pnlColor = isProfit ? const Color(0xFF84BD00) : const Color(0xFFFF3B30);
+    final paint = Paint()
+      ..color = const Color(0xFF84BD00)
+      ..strokeWidth = 2.5
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: const Color(0xFF2C2C2E),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Center(
-              child: Text(
-                pair.split('-').first,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '$botName ${multiplier.isNotEmpty ? "($multiplier)" : ""}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  pair,
-                  style: const TextStyle(
-                    color: Color(0xFF8E8E93),
-                    fontSize: 12,
-                  ),
-                ),
-                if (date != null)
-                  Text(
-                    '${date.day}/${date.month}/${date.year}',
-                    style: const TextStyle(
-                      color: Color(0xFF8E8E93),
-                      fontSize: 11,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '${isProfit ? "+" : ""}${userPnl.toStringAsFixed(2)}',
-                style: TextStyle(
-                  color: pnlColor,
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: status == 'completed'
-                      ? const Color(0xFF84BD00).withValues(alpha: 0.2)
-                      : const Color(0xFFFF9500).withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  status.toUpperCase(),
-                  style: TextStyle(
-                    color: status == 'completed'
-                        ? const Color(0xFF84BD00)
-                        : const Color(0xFFFF9500),
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+    final path = Path();
+    path.moveTo(points[0].dx, points[0].dy);
+    
+    for (int i = 0; i < points.length - 1; i++) {
+      final p0 = points[i];
+      final p1 = points[i + 1];
+      final controlPoint = Offset((p0.dx + p1.dx) / 2, (p0.dy + p1.dy) / 2);
+      path.quadraticBezierTo(p0.dx, p0.dy, controlPoint.dx, controlPoint.dy);
+    }
+    
+    path.lineTo(points.last.dx, points.last.dy);
+    canvas.drawPath(path, paint);
+
+    final fillPath = Path.from(path);
+    fillPath.lineTo(30 + chartWidth, chartHeight);
+    fillPath.lineTo(30, chartHeight);
+    fillPath.close();
+
+    final gradient = const LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [Color(0x4D84BD00), Color(0x0084BD00)],
     );
+
+    final fillPaint = Paint()
+      ..shader = gradient.createShader(Rect.fromLTWH(30, 0, chartWidth, chartHeight))
+      ..style = PaintingStyle.fill;
+
+    canvas.drawPath(fillPath, fillPaint);
   }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

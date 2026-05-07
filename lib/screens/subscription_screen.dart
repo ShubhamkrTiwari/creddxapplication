@@ -322,9 +322,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
-                        'Basic Package',
-                        style: TextStyle(
+                      Text(
+                        _isSubscribed && _planName != null ? _planName! : 'Basic Package',
+                        style: const TextStyle(
                           color: Colors.white,
                           fontSize: 24,
                           fontWeight: FontWeight.bold,
@@ -333,12 +333,12 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF84BD00),
+                          color: _isSubscribed ? const Color(0xFF84BD00) : const Color(0xFF84BD00),
                           borderRadius: BorderRadius.circular(20),
                         ),
-                        child: const Text(
-                          'POPULAR',
-                          style: TextStyle(
+                        child: Text(
+                          _isSubscribed ? 'ACTIVE' : 'POPULAR',
+                          style: const TextStyle(
                             color: Colors.black,
                             fontSize: 12,
                             fontWeight: FontWeight.bold,

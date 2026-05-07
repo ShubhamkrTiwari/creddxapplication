@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
 import '../services/user_service.dart';
 import 'user_profile_screen.dart';
+import 'subscription_screen.dart';
 
 class BotSubscriptionScreen extends StatefulWidget {
   const BotSubscriptionScreen({super.key});
@@ -396,7 +397,12 @@ class _BotSubscriptionScreenState extends State<BotSubscriptionScreen> {
                 return;
               }
               // Navigate to subscription plans
-              Navigator.pushNamed(context, '/subscription-plans');
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const SubscriptionScreen(),
+                ),
+              ).then((_) => _loadSubscriptionDetails());
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF84BD00),
@@ -503,7 +509,12 @@ class _BotSubscriptionScreenState extends State<BotSubscriptionScreen> {
                 return;
               }
               // Navigate to subscription plans
-              Navigator.pushNamed(context, '/subscription-plans');
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const SubscriptionScreen(),
+                ),
+              ).then((_) => _loadSubscriptionDetails());
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF84BD00),

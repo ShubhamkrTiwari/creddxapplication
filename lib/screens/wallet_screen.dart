@@ -333,12 +333,13 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
           const SizedBox(width: 12),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: BitcoinLoadingIndicator(size: 40))
-          : RefreshIndicator(
-              onRefresh: _onRefresh,
-              color: const Color(0xFF84BD00),
-              child: SingleChildScrollView(
+      body: SafeArea(
+        child: _isLoading
+            ? const Center(child: BitcoinLoadingIndicator(size: 40))
+            : RefreshIndicator(
+                onRefresh: _onRefresh,
+                color: const Color(0xFF84BD00),
+                child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -357,6 +358,7 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
                 ),
               ),
             ),
+          ),
     );
   }
 
