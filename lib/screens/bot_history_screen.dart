@@ -231,11 +231,12 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
     }
 
     try {
-      final result = await BotService.getUserTransactions();
+      // Load bot investment history for deposit/withdraw transactions
+      final result = await BotService.getBotInvestmentHistory();
 
       if (mounted) {
         if (result['success'] == true) {
-          final List<dynamic> transactionsList = result['transactions'] ?? [];
+          final List<dynamic> transactionsList = result['data']?['investments'] ?? [];
           
           List<Transaction> parsedTransactions = [];
           

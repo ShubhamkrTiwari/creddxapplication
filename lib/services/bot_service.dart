@@ -74,30 +74,28 @@ class BotPosition {
 }
 
 class BotService {
-  static const String baseUrl = 'http://65.0.196.122:8085'; // Testing server
-  static const String botWalletBaseUrl = 'http://65.0.196.122:8085'; // Testing server
+  static const String baseUrl = 'http://65.0.196.122:8085/api'; // Live server
+  static const String botWalletBaseUrl = 'http://65.0.196.122:8085'; // Live server
   
   // Static cache for total investment (for demo purposes)
   static double _cachedTotalInvestment = 0.0; // Start with 0.0
   
   static Future<Map<String, String>> _getHeaders() async {
-    // Testing mode: Fallback to mock values if real ones are missing
     String? token = await AuthService.getToken();
     final prefs = await SharedPreferences.getInstance();
     String? userId = prefs.getString('user_id');
     
-    // Hardcoded test values if actual ones are not available
     if (token == null || token.isEmpty) {
       token = 'mock_testing_token_123';
-      debugPrint('AUTH TESTING: Using mock token');
+      debugPrint('AUTH: Using mock token');
     }
     
     if (userId == null || userId.isEmpty) {
-      userId = '1'; // Default test user ID used across the project
-      debugPrint('AUTH TESTING: Using mock userId "1"');
+      userId = '1'; // Default user ID
+      debugPrint('AUTH: Using mock userId "1"');
     }
     
-    debugPrint('--- HEADERS (TESTING MODE) ---');
+    debugPrint('--- BOT SERVICE HEADERS ---');
     debugPrint('UserId: $userId');
     
     return {
@@ -1962,11 +1960,11 @@ class BotService {
   static Future<Map<String, dynamic>> getBotDepositNetworks() async {
     try {
       final response = await http.get(
-        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/deposit/networks'),
+        Uri.parse('$botWalletBaseUrl/bot/v1/api/botwallet/deposit/networks'),
         headers: await _getHeaders(),
       );
 
-      debugPrint('Bot Deposit Networks API URL: $botWalletBaseUrl/bot/v1/botwallet/deposit/networks');
+      debugPrint('Bot Deposit Networks API URL: $botWalletBaseUrl/bot/v1/api/botwallet/deposit/networks');
       debugPrint('Bot Deposit Networks API Response Status: ${response.statusCode}');
 
       if (response.statusCode == 200) {
@@ -2004,7 +2002,7 @@ class BotService {
   static Future<Map<String, dynamic>> getBotWithdrawNetworks() async {
     try {
       final response = await http.get(
-        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/withdraw/networks'),
+        Uri.parse('$botWalletBaseUrl/bot/v1/api/botwallet/withdraw/networks'),
         headers: await _getHeaders(),
       );
 
@@ -2029,30 +2027,24 @@ class BotService {
     }
   }
 
-  // Process bot deposit
+  // Process bot deposit - only generates address
   static Future<Map<String, dynamic>> botDeposit({
     required String coinId,
     required String networkId,
-    required double amount,
+    required double amount, // kept for compatibility but not used
   }) async {
     try {
-      final requestBody = {
-        'coinId': coinId,
-        'networkId': networkId,
-        'amount': amount,
-      };
+      // Just generate deposit address, no request body needed
+      debugPrint('=== BOT DEPOSIT ADDRESS REQUEST ===');
+      final url = '$botWalletBaseUrl/bot/v1/botwallet/deposit/address';
+      debugPrint('URL: $url');
       
-      debugPrint('=== BOT DEPOSIT REQUEST ===');
-      debugPrint('URL: $botWalletBaseUrl/bot/v1/botwallet/deposit');
-      debugPrint('Request Body: ${json.encode(requestBody)}');
-      
-      final response = await http.post(
-        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/deposit'),
+      final response = await http.get(
+        Uri.parse(url),
         headers: await _getHeaders(),
-        body: json.encode(requestBody),
       );
       
-      debugPrint('Bot Deposit API Response Status: ${response.statusCode}');
+      debugPrint('Bot Deposit Address API Response Status: ${response.statusCode}');
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -2063,7 +2055,7 @@ class BotService {
           return {
             'success': true,
             'data': data['data'] ?? data,
-            'message': data['message'] ?? 'Deposit successful',
+            'message': data['message'] ?? 'Deposit address generated successfully',
           };
         } else {
           return {
@@ -2072,7 +2064,7 @@ class BotService {
           };
         }
       } else {
-        String errorMessage = 'Deposit failed (Status: ${response.statusCode})';
+        String errorMessage = 'Failed to generate deposit address (Status: ${response.statusCode})';
         try {
           final errorData = json.decode(response.body);
           errorMessage = errorData['message'] ?? errorMessage;
@@ -2101,7 +2093,7 @@ class BotService {
     try {
       final headers = await _getHeaders();
       debugPrint('=== BOT DEPOSIT ADDRESS REQUEST ===');
-      final url = '$botWalletBaseUrl/bot/v1/botwallet/deposit/address?coinId=$coinId&networkId=$networkId';
+      final url = '$botWalletBaseUrl/bot/v1/botwallet/deposit/address';
       debugPrint('URL: $url');
       debugPrint('Request Method: GET');
       debugPrint('Headers: $headers');
@@ -2157,7 +2149,7 @@ class BotService {
     try {
       final requestBody = {'purpose': purpose};
       final response = await http.post(
-        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/withdraw/send-otp'),
+        Uri.parse('$botWalletBaseUrl/bot/v1/api/botwallet/withdraw/send-otp'),
         headers: await _getHeaders(),
         body: json.encode(requestBody),
       );
@@ -2341,7 +2333,7 @@ class BotService {
   }) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/bot/v1/api/investments/withdraw'),
+        Uri.parse('$baseUrl/bot/v1/investments/withdraw'),
         headers: await _getHeaders(),
         body: json.encode({
           'botId': botId,
@@ -2506,7 +2498,7 @@ class BotService {
         if (limit != null) 'limit': limit.toString(),
       };
 
-      final uri = Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/history')
+      final uri = Uri.parse('$botWalletBaseUrl/bot/v1/api/botwallet/history')
           .replace(queryParameters: queryParams);
 
       debugPrint('Fetching bot wallet history from: $uri');

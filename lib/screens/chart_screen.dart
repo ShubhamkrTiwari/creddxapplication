@@ -495,14 +495,14 @@ class _ChartScreenState extends State<ChartScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF0DAC15),
                 foregroundColor: Colors.black,
-                padding: const EdgeInsets.symmetric(vertical: 16),
+                padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 elevation: 0,
               ), 
-              child: const Text("BUY", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))
+              child: const Text("BUY", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14))
             )
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 28),
           Expanded(
             child: ElevatedButton(
               onPressed: () {
@@ -514,11 +514,11 @@ class _ChartScreenState extends State<ChartScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFE41616),
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
+                padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 elevation: 0,
               ), 
-              child: const Text("SELL", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))
+              child: const Text("SELL", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14))
             )
           ),
         ],

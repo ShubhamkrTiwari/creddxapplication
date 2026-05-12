@@ -8,7 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'notification_service.dart';
 
 class KYCService {
-  static const String _baseUrl = 'https://api11.hathmetech.com/api';
+  static const String _baseUrl = 'http://65.0.196.122:8085/api';
   
   // Get KYC status for current user
   static Future<Map<String, dynamic>> getKYCStatus() async {
@@ -25,7 +25,7 @@ class KYCService {
       }
 
       final response = await http.post(
-        Uri.parse('https://api11.hathmetech.com/api/user/v1/kyc/status'),
+        Uri.parse('$_baseUrl/user/v1/kyc/status'),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',

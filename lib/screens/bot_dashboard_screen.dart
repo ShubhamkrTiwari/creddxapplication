@@ -11,6 +11,9 @@ import 'bot_subscription_screen.dart';
 import 'currency_market_screen.dart';
 import 'bot_deposit_screen.dart';
 import 'bot_withdraw_general_screen.dart';
+import 'bot_inr_deposit_screen.dart';
+import 'bot_inr_withdraw_screen.dart';
+import 'bot_user_transfer_screen.dart';
 
 class BotDashboardScreen extends StatefulWidget {
   const BotDashboardScreen({super.key});
@@ -400,69 +403,86 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
                             height: 8,
                             decoration: const BoxDecoration(color: Color(0xFF84BD00), shape: BoxShape.circle),
                           ),
-                          const SizedBox(width: 8),
-                          const Text('LIVE', style: TextStyle(color: Color(0xFF84BD00), fontSize: 12, fontWeight: FontWeight.bold)),
+                          const SizedBox(width: 2),
+                          const Text('LIVE', style: TextStyle(color: Color(0xFF84BD00), fontSize: 8, fontWeight: FontWeight.bold)),
                           const SizedBox(width: 12),
-                          Text('$_availableBalance USDT', style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+                          Text('$_availableBalance USDT', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600)),
                         ],
                       ),
                     ),
                   ],
                 ),
               ),
-              // Deposit and Withdraw buttons
+              // Action buttons: Deposit, Transfer, and Withdraw
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    ElevatedButton(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const BotDepositScreen(),
-                          ),
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF84BD00),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
-                      ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.add_circle_outline, color: Colors.black, size: 16),
-                          SizedBox(width: 6),
-                          Text('Deposit', style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.w600)),
-                        ],
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: _showDepositOptions,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF84BD00),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: const [
+                            Icon(Icons.add_circle_outline, color: Colors.black, size: 14),
+                            SizedBox(width: 4),
+                            Text('Deposit', style: TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.w600)),
+                          ],
+                        ),
                       ),
                     ),
-                    ElevatedButton(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const BotWithdrawGeneralScreen(),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => const BotUserTransferScreen()),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF1C1C1E),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(25),
+                            side: const BorderSide(color: Color(0xFF84BD00), width: 1),
                           ),
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1C1C1E),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(25),
-                          side: const BorderSide(color: Color(0xFF84BD00), width: 1),
+                          padding: const EdgeInsets.symmetric(vertical: 8),
                         ),
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: const [
+                            Icon(Icons.swap_horiz, color: Color(0xFF84BD00), size: 14),
+                            SizedBox(width: 4),
+                            Text('Transfer', style: TextStyle(color: Color(0xFF84BD00), fontSize: 11, fontWeight: FontWeight.w600)),
+                          ],
+                        ),
                       ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.remove_circle_outline, color: Color(0xFF84BD00), size: 16),
-                          SizedBox(width: 4),
-                          Text('Withdraw', style: TextStyle(color: Color(0xFF84BD00), fontSize: 12, fontWeight: FontWeight.w600)),
-                        ],
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: _showWithdrawOptions,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF1C1C1E),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(25),
+                            side: const BorderSide(color: Color(0xFF84BD00), width: 1),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: const [
+                            Icon(Icons.remove_circle_outline, color: Color(0xFF84BD00), size: 14),
+                            SizedBox(width: 4),
+                            Text('Withdraw', style: TextStyle(color: Color(0xFF84BD00), fontSize: 11, fontWeight: FontWeight.w600)),
+                          ],
+                        ),
                       ),
                     ),
                   ],
@@ -839,6 +859,178 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
           ),
         );
       },
+    );
+  }
+
+  void _showDepositOptions() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => _buildSelectionSheet(
+        title: 'Deposit',
+        options: [
+          {
+            'title': 'Crypto Deposit',
+            'subtitle': 'Deposit USDT via Network',
+            'icon': Icons.currency_bitcoin,
+            'onTap': () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const BotDepositScreen()),
+              );
+            },
+          },
+          {
+            'title': 'INR Deposit',
+            'subtitle': 'Deposit via Bank/UPI',
+            'icon': Icons.account_balance,
+            'onTap': () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const BotInrDepositScreen()),
+              );
+            },
+          },
+        ],
+      ),
+    );
+  }
+
+  void _showWithdrawOptions() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => _buildSelectionSheet(
+        title: 'Withdraw',
+        options: [
+          {
+            'title': 'Crypto Withdraw',
+            'subtitle': 'Withdraw USDT to Wallet',
+            'icon': Icons.wallet,
+            'onTap': () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const BotWithdrawGeneralScreen()),
+              );
+            },
+          },
+          {
+            'title': 'INR Withdraw',
+            'subtitle': 'Withdraw to Bank Account',
+            'icon': Icons.account_balance_wallet,
+            'onTap': () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const BotInrWithdrawScreen()),
+              );
+            },
+          },
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSelectionSheet({required String title, required List<Map<String, dynamic>> options}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      decoration: const BoxDecoration(
+        color: Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[600],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Select $title Method',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              IconButton(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close, color: Colors.white),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          ...options.map((option) => Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: InkWell(
+              onTap: option['onTap'] as VoidCallback,
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2C2C2E),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFF84BD00).withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF84BD00).withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(option['icon'] as IconData, color: const Color(0xFF84BD00)),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            option['title'] as String,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            option['subtitle'] as String,
+                            style: const TextStyle(
+                              color: Color(0xFF8E8E93),
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Icon(Icons.arrow_forward_ios, color: Color(0xFF8E8E93), size: 16),
+                  ],
+                ),
+              ),
+            ),
+          )).toList(),
+          const SizedBox(height: 20),
+        ],
+      ),
     );
   }
 }

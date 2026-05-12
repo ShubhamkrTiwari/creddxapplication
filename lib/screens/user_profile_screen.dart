@@ -80,11 +80,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   // Conversion rates
   double _inrToUsdtRate = 52.0; // Dynamic conversion rate from API
   double _usdtToInrRate = 1.0 / 52.0; // Reverse conversion rate
-  static const String _inrToUsdtApiUrl = 'https://api11.hathmetech.com/api/wallet/v1/inr/convert/inr-to-usdt';
-  static const String _usdtToInrApiUrl = 'https://api11.hathmetech.com/api/wallet/v1/inr/convert/usdt-to-inr';
+  static const String _inrToUsdtApiUrl = 'http://65.0.196.122:8085/api/wallet/v1/inr/convert/inr-to-usdt';
+  static const String _usdtToInrApiUrl = 'http://65.0.196.122:8085/api/wallet/v1/inr/convert/usdt-to-inr';
   
   static const String _wsBaseUrl = 'wss://api4.creddx.com/ws';
-  static const String _httpBaseUrl = 'https://api11.hathmetech.com';
+  static const String _httpBaseUrl = 'http://65.0.196.122:8085';
 
   @override
   void initState() {

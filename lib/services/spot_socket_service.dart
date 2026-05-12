@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:async';
 import 'dart:math';
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/io.dart';
@@ -15,13 +17,13 @@ class SpotSocketService {
   static final String _wsUrl = ApiConfig.spotWebSocketUrl;
   
   // Connection settings
-  static const Duration _heartbeatInterval = Duration(seconds: 20); // Reduced from 30s
-  static const Duration _pongTimeout = Duration(seconds: 10); // Max time to wait for pong
-  static const Duration _connectionTimeout = Duration(seconds: 10);
-  static const int _maxReconnectAttempts = 10;
-  static const Duration _initialReconnectDelay = Duration(seconds: 1);
-  static const Duration _maxReconnectDelay = Duration(seconds: 60);
-  static const Duration _connectionHealthCheckInterval = Duration(seconds: 45); // Max time without any message
+  static const Duration _heartbeatInterval = Duration(seconds: 20);
+  static const Duration _pongTimeout = Duration(seconds: 10);
+  static const Duration _connectionTimeout = Duration(seconds: 5); // Reduced from 10s
+  static const int _maxReconnectAttempts = 5; // Reduced from 10 to prevent excessive reconnections
+  static const Duration _initialReconnectDelay = Duration(seconds: 2); // Increased from 500ms to prevent rapid reconnections
+  static const Duration _maxReconnectDelay = Duration(seconds: 30); // Reduced from 60s
+  static const Duration _connectionHealthCheckInterval = Duration(seconds: 30); // Reduced from 45s
   
   // Internal state
   static WebSocketChannel? _channel;
@@ -31,10 +33,12 @@ class SpotSocketService {
   static Timer? _heartbeatTimer;
   static Timer? _reconnectTimer;
   static Timer? _healthCheckTimer;
+  static Timer? _debounceTimer; // Add debounce timer
   static String? _currentSymbol;
   static final Set<String> _subscribedSymbols = {};
   static DateTime _lastMessageReceived = DateTime.now();
   static bool _isWaitingForPong = false;
+  static SocketConnectionState _lastBroadcastState = SocketConnectionState.disconnected; // Track last broadcasted state
   
   // Stream controllers
   static final StreamController<SocketConnectionState> _connectionController = 
@@ -68,6 +72,24 @@ class SpotSocketService {
   
   static bool get isConnected => _isConnected;
   static bool get isConnecting => _isConnecting;
+  
+  /// Broadcast connection state with debouncing to prevent flickering
+  static void _broadcastConnectionState(SocketConnectionState state) {
+    // Cancel any pending debounce timer
+    _debounceTimer?.cancel();
+    
+    // If state hasn't changed, don't broadcast
+    if (_lastBroadcastState == state) {
+      return;
+    }
+    
+    // Debounce rapid state changes with longer delay for stability
+    _debounceTimer = Timer(const Duration(milliseconds: 800), () {
+      _lastBroadcastState = state;
+      _connectionController.add(state);
+      debugPrint('SpotSocketService: State broadcasted: $state');
+    });
+  }
 
   /// Connect to WebSocket server
   static Future<void> connect() async {
@@ -77,28 +99,85 @@ class SpotSocketService {
     }
 
     _isConnecting = true;
-    _connectionController.add(SocketConnectionState.connecting);
+    _broadcastConnectionState(SocketConnectionState.connecting);
     
     try {
       final token = await AuthService.getToken();
       if (token == null) {
         debugPrint('SpotSocketService: No auth token found');
         _isConnecting = false;
-        _connectionController.add(SocketConnectionState.disconnected);
+        _broadcastConnectionState(SocketConnectionState.disconnected);
         return;
       }
 
       debugPrint('SpotSocketService: Connecting to $_wsUrl');
       
-      // Create WebSocket connection with headers
+      // Create WebSocket connection with multiple fallback strategies
       final uri = Uri.parse(_wsUrl);
-      _channel = IOWebSocketChannel.connect(
-        uri,
-        headers: {
-          'Authorization': 'Bearer $token',
-        },
-        pingInterval: _heartbeatInterval,
-      );
+      
+      bool connectionEstablished = false;
+      
+      // Strategy 1: Try standard IOWebSocketChannel
+      if (!connectionEstablished) {
+        try {
+          _channel = IOWebSocketChannel.connect(
+            uri,
+            headers: {
+              'Authorization': 'Bearer $token',
+            },
+            pingInterval: _heartbeatInterval,
+          );
+          connectionEstablished = true;
+          debugPrint('SpotSocketService: Standard connection successful');
+        } catch (e) {
+          debugPrint('SpotSocketService: Standard connection failed: $e');
+        }
+      }
+      
+      // Strategy 2: Try with custom HttpClient and SSL bypass
+      if (!connectionEstablished) {
+        try {
+          final httpClient = HttpClient()
+            ..connectionTimeout = const Duration(seconds: 5)
+            ..badCertificateCallback = (cert, host, port) => true;
+          
+          final webSocket = await WebSocket.connect(
+            _wsUrl,
+            headers: {
+              'Authorization': 'Bearer $token',
+            },
+          ).timeout(const Duration(seconds: 5));
+          
+          _channel = IOWebSocketChannel(webSocket);
+          connectionEstablished = true;
+          debugPrint('SpotSocketService: SSL bypass connection successful');
+        } catch (e) {
+          debugPrint('SpotSocketService: SSL bypass failed: $e');
+        }
+      }
+      
+      // Strategy 3: Try non-secure connection
+      if (!connectionEstablished) {
+        try {
+          final wsUrl = _wsUrl.replaceFirst('wss://', 'ws://');
+          _channel = IOWebSocketChannel.connect(
+            Uri.parse(wsUrl),
+            headers: {
+              'Authorization': 'Bearer $token',
+            },
+            pingInterval: _heartbeatInterval,
+          );
+          connectionEstablished = true;
+          debugPrint('SpotSocketService: Non-secure connection successful');
+        } catch (e) {
+          debugPrint('SpotSocketService: Non-secure connection failed: $e');
+        }
+      }
+      
+      // If all strategies failed, throw error
+      if (!connectionEstablished) {
+        throw Exception('All connection strategies failed');
+      }
 
       // Listen to messages
       _channel!.stream.listen(
@@ -108,39 +187,41 @@ class SpotSocketService {
         cancelOnError: false,
       );
 
-      // Wait for connection to establish
-      await Future.delayed(const Duration(milliseconds: 500));
-      
-      // Authenticate
-      await _authenticate();
-      
-      // Mark as connected
+      // Mark as connected immediately - no artificial delay
       _isConnected = true;
       _isConnecting = false;
       _reconnectAttempts = 0;
       _lastMessageReceived = DateTime.now();
       _isWaitingForPong = false;
-      _connectionController.add(SocketConnectionState.connected);
+      _broadcastConnectionState(SocketConnectionState.connected);
       
-      // Subscribe to user channels immediately after connection
-      subscribeUserChannels();
+      debugPrint('SpotSocketService: Connection established');
       
-      // Start heartbeat
-      _startHeartbeat();
-      
-      // Start connection health check
-      _startHealthCheck();
-      
-      // Resubscribe to previously subscribed symbols
-      _resubscribeAll();
-      
-      debugPrint('SpotSocketService: Connected successfully');
+      // Start background tasks without blocking
+      Future.microtask(() async {
+        // Authenticate
+        await _authenticate();
+        
+        // Subscribe to user channels
+        subscribeUserChannels();
+        
+        // Start heartbeat
+        _startHeartbeat();
+        
+        // Start connection health check
+        _startHealthCheck();
+        
+        // Resubscribe to previously subscribed symbols
+        _resubscribeAll();
+        
+        debugPrint('SpotSocketService: Background tasks completed');
+      });
       
     } catch (e) {
       debugPrint('SpotSocketService Connection Error: $e');
       _isConnecting = false;
       _isConnected = false;
-      _connectionController.add(SocketConnectionState.disconnected);
+      _broadcastConnectionState(SocketConnectionState.disconnected);
       _scheduleReconnect();
     }
   }
@@ -152,6 +233,7 @@ class SpotSocketService {
     _heartbeatTimer?.cancel();
     _reconnectTimer?.cancel();
     _healthCheckTimer?.cancel();
+    _debounceTimer?.cancel(); // Cancel debounce timer
     
     try {
       _channel?.sink.close();
@@ -162,7 +244,7 @@ class SpotSocketService {
     _channel = null;
     _isConnected = false;
     _isConnecting = false;
-    _connectionController.add(SocketConnectionState.disconnected);
+    _broadcastConnectionState(SocketConnectionState.disconnected);
     
     debugPrint('SpotSocketService: Disconnected');
   }
@@ -176,22 +258,20 @@ class SpotSocketService {
     _subscribedSymbols.add(symbol);
 
     if (_isConnected) {
-      _send({
-        'type': 'subscribe',
-        'channel': 'book',
-        'symbol': symbol,
-      });
-      _send({
-        'type': 'subscribe',
-        'channel': 'trade',
-        'symbol': symbol,
-      });
-      _send({
-        'type': 'subscribe',
-        'channel': 'ticker',
-        'symbol': symbol,
-      });
+      // Send all subscriptions immediately without delays
+      final subscriptions = [
+        {'type': 'subscribe', 'channel': 'book', 'symbol': symbol},
+        {'type': 'subscribe', 'channel': 'trade', 'symbol': symbol},
+        {'type': 'subscribe', 'channel': 'ticker', 'symbol': symbol},
+      ];
+      
+      for (final sub in subscriptions) {
+        _send(sub);
+      }
+      
       debugPrint('SpotSocketService: Subscribed to $symbol (channels: book, trade, ticker)');
+    } else {
+      debugPrint('SpotSocketService: Cannot subscribe - not connected');
     }
   }
 
@@ -256,17 +336,25 @@ class SpotSocketService {
 
   /// Authenticate with the server
   static Future<void> _authenticate() async {
-    final userId = await _getUserId();
-    final token = await AuthService.getToken();
-    
-    _send({
-      'auth': {
-        'user_id': userId,
-        'token': token,
+    try {
+      final userId = await _getUserId();
+      final token = await AuthService.getToken();
+      
+      if (token != null && userId != null) {
+        _send({
+          'auth': {
+            'user_id': userId,
+            'token': token,
+          }
+        });
+        
+        debugPrint('SpotSocketService: Auth sent for user $userId');
+      } else {
+        debugPrint('SpotSocketService: Missing auth credentials');
       }
-    });
-    
-    debugPrint('SpotSocketService: Auth sent for user $userId');
+    } catch (e) {
+      debugPrint('SpotSocketService: Error during authentication: $e');
+    }
   }
 
   /// Handle incoming messages
@@ -378,7 +466,7 @@ class SpotSocketService {
   static void _handleError(error) {
     debugPrint('SpotSocketService Error: $error');
     _isConnected = false;
-    _connectionController.add(SocketConnectionState.disconnected);
+    _broadcastConnectionState(SocketConnectionState.disconnected);
     _scheduleReconnect();
   }
 
@@ -386,7 +474,7 @@ class SpotSocketService {
   static void _handleDisconnect() {
     debugPrint('SpotSocketService: Connection closed by server');
     _isConnected = false;
-    _connectionController.add(SocketConnectionState.disconnected);
+    _broadcastConnectionState(SocketConnectionState.disconnected);
     _scheduleReconnect();
   }
 

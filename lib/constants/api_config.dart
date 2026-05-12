@@ -1,6 +1,6 @@
 class ApiConfig {
   // Socket URL
-  static const String socketUrl = 'https://api11.hathmetech.com';
+  static const String socketUrl = 'http://65.0.196.122:8085';
    // static const String socketPath = '/wallet-socket.io'; //
   static const String socketPath = "/wallet-socket.io/socket.io";
   // WebSocket URL for Spot trading

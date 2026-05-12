@@ -98,6 +98,23 @@ class UserService {
     return documentVerified && needsSelfieRetry;
   }
 
+  /// Check if the user's profile is complete with essential information
+  /// Returns true if name, email, and phone are provided
+  bool isProfileComplete() {
+    // Check essential profile fields
+    final hasName = _userName != null && _userName!.trim().isNotEmpty;
+    final hasEmail = _userEmail != null && _userEmail!.trim().isNotEmpty;
+    final hasPhone = _userPhone != null && _userPhone!.trim().isNotEmpty;
+    
+    debugPrint('🔍 Profile completeness check:');
+    debugPrint('  Name: $hasName (${_userName ?? 'null'})');
+    debugPrint('  Email: $hasEmail (${_userEmail ?? 'null'})');
+    debugPrint('  Phone: $hasPhone (${_userPhone ?? 'null'})');
+    debugPrint('  Profile Complete: ${hasName && hasEmail && hasPhone}');
+    
+    return hasName && hasEmail && hasPhone;
+  }
+
   // Helper to safely get string from prefs (handles cases where it might be int)
   String? _getSafeString(SharedPreferences prefs, String key) {
     try {
@@ -468,7 +485,7 @@ class UserService {
       if (token != null) {
         final response = await http
             .get(
-              Uri.parse('https://api11.hathmetech.com/api/user/v1/auth/me'),
+              Uri.parse('http://65.0.196.122:8085/api/user/v1/auth/me'),
               headers: {
                 'Content-Type': 'application/json',
                 'Authorization': 'Bearer $token',
@@ -765,7 +782,7 @@ class UserService {
         final response = await http
             .get(
               Uri.parse(
-                'https://api11.hathmetech.com/api/user/v1/auth/loginactivity/$_userId',
+                'http://65.0.196.122:8085/api/user/v1/auth/loginactivity/$_userId',
               ),
               headers: {
                 'Content-Type': 'application/json',
@@ -1362,7 +1379,7 @@ class UserService {
       var request = http.MultipartRequest(
         'POST',
         Uri.parse(
-          'https://api11.hathmetech.com/api/user/v1/kyc/kyc-selfie-verify',
+          'http://65.0.196.122:8085/api/user/v1/kyc/kyc-selfie-verify',
         ),
       );
 
@@ -1540,13 +1557,13 @@ class UserService {
         final requestBody = json.encode(payload);
         print('DigiLocker Initiate Request Body: $requestBody');
         print(
-          'DigiLocker Initiate URL: https://api11.hathmetech.com/api/user/v1/kyc/digilocker/initiate',
+          'DigiLocker Initiate URL: http://65.0.196.122:8085/api/user/v1/kyc/digilocker/initiate',
         );
 
         final response = await http
             .post(
               Uri.parse(
-                'https://api11.hathmetech.com/api/user/v1/kyc/digilocker/initiate',
+                'http://65.0.196.122:8085/api/user/v1/kyc/digilocker/initiate',
               ),
               headers: {
                 'Content-Type': 'application/json',
@@ -1739,7 +1756,7 @@ class UserService {
       final response = await http
           .post(
             Uri.parse(
-              'https://api11.hathmetech.com/api/user/v1/kyc/status',
+              'http://65.0.196.122:8085/api/user/v1/kyc/status',
             ),
             headers: {
               'Content-Type': 'application/json',
@@ -1844,7 +1861,7 @@ class UserService {
       // If testing locally, ensure the server is accessible.
       final response = await http
           .post(
-            Uri.parse('https://api11.hathmetech.com/api/user/v1/kyc/status'),
+            Uri.parse('http://65.0.196.122:8085/api/user/v1/kyc/status'),
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
@@ -1948,7 +1965,7 @@ class UserService {
 
       final response = await http
           .get(
-            Uri.parse('https://api11.hathmetech.com/api/user/v1/kyc/check-kyc'),
+            Uri.parse('http://65.0.196.122:8085/api/user/v1/kyc/check-kyc'),
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
@@ -2054,7 +2071,7 @@ class UserService {
       final response = await http
           .post(
             Uri.parse(
-              'https://api11.hathmetech.com/api/user/v1/auth/create-profile',
+              'http://65.0.196.122:8085/user/v1/auth/create-profile',
             ),
             headers: {
               'Content-Type': 'application/json',
@@ -2211,7 +2228,7 @@ class UserService {
       final response = await http
           .get(
             Uri.parse(
-              'https://api11.hathmetech.com/api/user/v1/config/countries',
+              'http://65.0.196.122:8085/user/v1/config/countries',
             ),
             headers: {
               'Content-Type': 'application/json',
@@ -2284,7 +2301,7 @@ class UserService {
       }
 
       final url =
-          'https://api11.hathmetech.com/api/user/v1/config/states?countryId=$countryId';
+          'http://65.0.196.122:8085/user/v1/config/states?countryId=$countryId';
       debugPrint('Fetching states from: $url');
 
       final response = await http
@@ -2367,7 +2384,7 @@ class UserService {
       final response = await http
           .get(
             Uri.parse(
-              'https://api11.hathmetech.com/api/user/v1/config/cities?stateId=$stateId',
+              'http://65.0.196.122:8085/user/v1/config/cities?stateId=$stateId',
             ),
             headers: {
               'Content-Type': 'application/json',
@@ -2559,13 +2576,13 @@ class UserService {
       }
 
       debugPrint(
-        'Fetching referred friends from: https://api11.hathmetech.com/api/user/v1/auth/referred-friends',
+        'Fetching referred friends from: http://65.0.196.122:8085/api/user/v1/auth/referred-friends',
       );
 
       final response = await http
           .get(
             Uri.parse(
-              'https://api11.hathmetech.com/api/user/v1/auth/referred-friends',
+              'http://65.0.196.122:8085/api/user/v1/auth/referred-friends',
             ),
             headers: {
               'Content-Type': 'application/json',
@@ -2629,13 +2646,13 @@ class UserService {
 
       debugPrint('Sending invitation email with verification: $requestBody');
       debugPrint(
-        'API URL: https://api11.hathmetech.com/api/user/v1/auth/send-invitation',
+        'API URL: http://65.0.196.122:8085/api/user/v1/auth/send-invitation',
       );
 
       final response = await http
           .post(
             Uri.parse(
-              'https://api11.hathmetech.com/api/user/v1/auth/send-invitation',
+              'http://65.0.196.122:8085/api/user/v1/auth/send-invitation',
             ),
             headers: {
               'Content-Type': 'application/json',
@@ -2700,13 +2717,13 @@ class UserService {
 
       debugPrint('Sending referral verification email: $requestBody');
       debugPrint(
-        'API URL: https://api11.hathmetech.com/api/user/v1/auth/send-verification-email',
+        'API URL: http://65.0.196.122:8085/api/user/v1/auth/send-verification-email',
       );
 
       final response = await http
           .post(
             Uri.parse(
-              'https://api11.hathmetech.com/api/user/v1/auth/send-verification-email',
+              'http://65.0.196.122:8085/api/user/v1/auth/send-verification-email',
             ),
             headers: {
               'Content-Type': 'application/json',
@@ -2778,13 +2795,13 @@ class UserService {
 
       debugPrint('Verifying and claiming referral: $requestBody');
       debugPrint(
-        'API URL: https://api11.hathmetech.com/api/user/v1/auth/verify-claim-referral',
+        'API URL: http://65.0.196.122:8085/api/user/v1/auth/verify-claim-referral',
       );
 
       final response = await http
           .post(
             Uri.parse(
-              'https://api11.hathmetech.com/api/user/v1/auth/verify-claim-referral',
+              'http://65.0.196.122:8085/api/user/v1/auth/verify-claim-referral',
             ),
             headers: {
               'Content-Type': 'application/json',
@@ -2873,22 +2890,7 @@ class UserService {
   bool isKYCRejected() => _kycStatus == 'Rejected';
   bool isKYCNotStarted() => _kycStatus == 'Not Started';
 
-  /// Returns true if the user has completed their basic profile information
-  /// (Name, Phone, Country, State, City)
-  bool isProfileComplete() {
-    final name = userName?.trim() ?? '';
-    final phone = userPhone?.trim() ?? '';
-    final country = userCountry?.trim() ?? '';
-    final state = userState?.trim() ?? '';
-    final city = userCity?.trim() ?? '';
     
-    return name.isNotEmpty && 
-           phone.isNotEmpty && 
-           country.isNotEmpty && 
-           state.isNotEmpty && 
-           city.isNotEmpty;
-  }
-  
   /// Returns true when KYC status is Pending but document not verified
   /// This happens when user opened Digilocker but didn't submit documents
   bool canRestartKYC() => _kycStatus == 'Pending' && _documentImageVerified != true;
@@ -2921,11 +2923,11 @@ class UserService {
       }
 
       debugPrint(
-        'Fetching user assets from: https://api11.hathmetech.com/api/user/v1/user',
+        'Fetching user assets from: http://65.0.196.122:8085/api/user/v1/user',
       );
       final response = await http
           .get(
-            Uri.parse('https://api11.hathmetech.com/api/user/v1/user'),
+            Uri.parse('http://65.0.196.122:8085/api/user/v1/user'),
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
@@ -3051,7 +3053,7 @@ class UserService {
 
       final response = await http.get(
         Uri.parse(
-          'https://api11.hathmetech.com/api/referral/v1/referral/stats',
+          'http://65.0.196.122:8085/api/referral/v1/referral/stats',
         ),
         headers: {
           'Content-Type': 'application/json',
@@ -3121,7 +3123,7 @@ class UserService {
       };
 
       final uri = Uri.parse(
-        'https://api11.hathmetech.com/api/referral/v1/referral/earnings',
+        'http://65.0.196.122:8085/api/referral/v1/referral/earnings',
       ).replace(queryParameters: queryParams);
 
       final response = await http.get(
@@ -3275,7 +3277,7 @@ class UserService {
 
       final response = await http.get(
         Uri.parse(
-          'https://api11.hathmetech.com/api/bot/v1/api/user/income/level-wise-summary',
+          'http://65.0.196.122:8085/api/bot/v1/api/user/income/level-wise-summary',
         ),
         headers: {
           'Content-Type': 'application/json',
@@ -3319,7 +3321,7 @@ class UserService {
 
       final response = await http.get(
         Uri.parse(
-          'https://api11.hathmetech.com/api/bot/v1/api/user/income/level-summary/$level',
+          'http://65.0.196.122:8085/api/bot/v1/api/user/income/level-summary/$level',
         ),
         headers: {
           'Content-Type': 'application/json',

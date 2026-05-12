@@ -55,6 +55,9 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
   // Slider expansion states
   bool _isOpenOrdersExpanded = true;
   bool _isClosedOrdersExpanded = true;
+  
+  // Order type selection (0 for open orders, 1 for closed orders)
+  int _selectedOrderType = 0;
   Map<String, dynamic>? _balance;
   bool _isLoadingBalance = true;
   String? _balanceError;
@@ -1688,9 +1691,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
                   _buildTradingSection(),
                   const SizedBox(height: 20),
                   const SizedBox(height: 20),
-                  _buildOpenOrdersSection(),
-                  const SizedBox(height: 20),
-                  _buildClosedOrdersSection(),
+                  _buildOrdersSection(),
                   const SizedBox(height: 100),
                 ],
               ),
@@ -3053,7 +3054,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
                   'Place Spot Order',
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 16,
+                    fontSize: 14,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -3580,6 +3581,135 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
           ),
         );
       }).toList(),
+    );
+  }
+
+  Widget _buildOrdersSection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1A1A),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header with slider
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  // Slider toggle
+                  Container(
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2A2A2A),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _selectedOrderType = 0;
+                              });
+                            },
+                            child: Container(
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: _selectedOrderType == 0 
+                                    ? const Color(0xFF84BD00)
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(18),
+                              ),
+                              child: Center(
+                                child: Text(
+                                  'Open Orders',
+                                  style: TextStyle(
+                                    color: _selectedOrderType == 0 
+                                        ? Colors.white
+                                        : Colors.white.withValues(alpha: 0.6),
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _selectedOrderType = 1;
+                              });
+                            },
+                            child: Container(
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: _selectedOrderType == 1 
+                                    ? const Color(0xFF84BD00)
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(18),
+                              ),
+                              child: Center(
+                                child: Text(
+                                  'Closed Orders',
+                                  style: TextStyle(
+                                    color: _selectedOrderType == 1 
+                                        ? Colors.white
+                                        : Colors.white.withValues(alpha: 0.6),
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Additional header info based on selection
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        _selectedOrderType == 0 ? 'Active Orders' : 'Order History',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.6),
+                          fontSize: 12,
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {},
+                        child: const Text(
+                          'All',
+                          style: TextStyle(color: Color(0xFF84BD00), fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            // Content based on selection
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              constraints: BoxConstraints(
+                minHeight: _selectedOrderType == 0 ? 300 : 250,
+                maxHeight: _selectedOrderType == 0 ? 400 : 350,
+              ),
+              child: _selectedOrderType == 0 
+                  ? _buildOpenOrdersTable()
+                  : _buildClosedOrdersTable(),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

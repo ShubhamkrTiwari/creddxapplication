@@ -43,7 +43,7 @@ class CreddXApp extends StatelessWidget {
         ),
       ),
       builder: (context, child) => MaintenanceWrapper(
-        apiBaseUrl: 'https://api11.hathmetech.com/api',
+        apiBaseUrl: 'http://65.0.196.122:8085/api',
         checkInterval: const Duration(minutes: 1), // Check every minute
         child: UpgradeAlert(
           upgrader: Upgrader(

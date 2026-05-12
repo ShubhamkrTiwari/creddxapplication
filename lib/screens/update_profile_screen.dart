@@ -278,6 +278,7 @@ class _UpdateProfileScreenState extends State<UpdateProfileScreen> {
           }
         } else {
           debugPrint('Failed to load countries: ${result['error']}');
+          _countries = []; // Keep empty when API fails
         }
       });
     }
@@ -325,7 +326,7 @@ class _UpdateProfileScreenState extends State<UpdateProfileScreen> {
           }
         } else {
           debugPrint('Failed to load states: ${result['error']}');
-          _states = []; // Ensure empty list on failure
+          _states = []; // Keep empty when API fails
         }
       });
     }
@@ -354,6 +355,9 @@ class _UpdateProfileScreenState extends State<UpdateProfileScreen> {
               _selectedCityName = city['name']?.toString();
             }
           }
+        } else {
+          debugPrint('Failed to load cities: ${result['error']}');
+          _cities = []; // Keep empty when API fails
         }
       });
     }
