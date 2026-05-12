@@ -2872,6 +2872,22 @@ class UserService {
   bool isKYCVerified() => _kycStatus == 'Completed';
   bool isKYCRejected() => _kycStatus == 'Rejected';
   bool isKYCNotStarted() => _kycStatus == 'Not Started';
+
+  /// Returns true if the user has completed their basic profile information
+  /// (Name, Phone, Country, State, City)
+  bool isProfileComplete() {
+    final name = userName?.trim() ?? '';
+    final phone = userPhone?.trim() ?? '';
+    final country = userCountry?.trim() ?? '';
+    final state = userState?.trim() ?? '';
+    final city = userCity?.trim() ?? '';
+    
+    return name.isNotEmpty && 
+           phone.isNotEmpty && 
+           country.isNotEmpty && 
+           state.isNotEmpty && 
+           city.isNotEmpty;
+  }
   
   /// Returns true when KYC status is Pending but document not verified
   /// This happens when user opened Digilocker but didn't submit documents

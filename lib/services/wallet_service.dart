@@ -10,7 +10,7 @@ import 'notification_service.dart';
 import 'network_error_handler.dart';
 
 class WalletService {
-  static const String baseUrl = 'https://api11.hathmetech.com/api';
+  static const String baseUrl = 'http://65.0.196.122:8085'; // Testing server
 
   static Future<Map<String, String>> _getHeaders() async {
     final token = await AuthService.getToken();

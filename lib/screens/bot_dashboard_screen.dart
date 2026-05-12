@@ -9,6 +9,8 @@ import 'bot_invest_screen.dart';
 import 'bot_algorithm_screen.dart';
 import 'bot_subscription_screen.dart';
 import 'currency_market_screen.dart';
+import 'bot_deposit_screen.dart';
+import 'bot_withdraw_general_screen.dart';
 
 class BotDashboardScreen extends StatefulWidget {
   const BotDashboardScreen({super.key});
@@ -355,7 +357,7 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                padding: const EdgeInsets.only(left: 16, right: 16, top: 24, bottom: 12),
+                padding: const EdgeInsets.only(left: 16, right: 16, top: 16, bottom: 8),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -402,6 +404,64 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
                           const Text('LIVE', style: TextStyle(color: Color(0xFF84BD00), fontSize: 12, fontWeight: FontWeight.bold)),
                           const SizedBox(width: 12),
                           Text('$_availableBalance USDT', style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Deposit and Withdraw buttons
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    ElevatedButton(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const BotDepositScreen(),
+                          ),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF84BD00),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.add_circle_outline, color: Colors.black, size: 16),
+                          SizedBox(width: 6),
+                          Text('Deposit', style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                    ElevatedButton(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const BotWithdrawGeneralScreen(),
+                          ),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1C1C1E),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(25),
+                          side: const BorderSide(color: Color(0xFF84BD00), width: 1),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.remove_circle_outline, color: Color(0xFF84BD00), size: 16),
+                          SizedBox(width: 4),
+                          Text('Withdraw', style: TextStyle(color: Color(0xFF84BD00), fontSize: 12, fontWeight: FontWeight.w600)),
                         ],
                       ),
                     ),

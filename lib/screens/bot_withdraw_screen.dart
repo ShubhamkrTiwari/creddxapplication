@@ -30,10 +30,27 @@ class _BotWithdrawScreenState extends State<BotWithdrawScreen> {
   @override
   void initState() {
     super.initState();
+    
+    // Initialize UnifiedWalletService first
+    _initializeWalletService();
+    
     _fetchCurrentInvestment();
     _fetchMaxWithdrawAmount();
     _fetchBotBalance();
     _subscribeToBotBalance();
+  }
+
+  Future<void> _initializeWalletService() async {
+    try {
+      await UnifiedWalletService.initialize();
+      // Initialize balance immediately from UnifiedWalletService
+      if (UnifiedWalletService.walletBalance != null) {
+        _liveBotBalance = UnifiedWalletService.walletBalance!.botBalance;
+        debugPrint('Withdraw Screen: Initial balance from UnifiedWalletService: $_liveBotBalance');
+      }
+    } catch (e) {
+      debugPrint('Error initializing wallet service: $e');
+    }
   }
 
   @override
@@ -45,21 +62,17 @@ class _BotWithdrawScreenState extends State<BotWithdrawScreen> {
 
   Future<void> _fetchBotBalance() async {
     try {
-      final result = await BotService.getBotBalance();
-      if (mounted && result['success'] == true && result['data'] != null) {
-        final data = result['data'];
-        double balance = 0.0;
-        if (data['balance'] != null) {
-          balance = double.tryParse(data['balance'].toString()) ?? 0.0;
-        } else if (data['totalBalance'] != null) {
-          balance = double.tryParse(data['totalBalance'].toString()) ?? 0.0;
-        } else if (data['availableBalance'] != null) {
-          balance = double.tryParse(data['availableBalance'].toString()) ?? 0.0;
-        }
-        setState(() {
-          _liveBotBalance = balance;
-        });
-      }
+      // Use UnifiedWalletService like bot dashboard
+      await UnifiedWalletService.refreshBotBalance();
+      
+      // Add small delay to ensure balance is updated
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      final balance = UnifiedWalletService.walletBalance?.botBalance ?? 0.0;
+      debugPrint('Withdraw Screen: Fetched balance: $balance');
+      setState(() {
+        _liveBotBalance = balance;
+      });
     } catch (e) {
       debugPrint('Error fetching bot balance: $e');
     }
@@ -259,6 +272,47 @@ class _BotWithdrawScreenState extends State<BotWithdrawScreen> {
                         '$_maxWithdrawAmount USDT',
                         style: const TextStyle(
                           color: Colors.white,
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Available Balance Card
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1C1C1E),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: const Color(0xFF84BD00).withOpacity(0.3),
+                  width: 1,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Available Balance',
+                    style: TextStyle(
+                      color: Color(0xFF8E8E93),
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '${_liveBotBalance.toStringAsFixed(2)} USDT',
+                        style: const TextStyle(
+                          color: Color(0xFF84BD00),
                           fontSize: 28,
                           fontWeight: FontWeight.bold,
                         ),

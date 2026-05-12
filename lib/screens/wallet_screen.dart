@@ -675,6 +675,10 @@ class _WalletScreenState extends State<WalletScreen> with TickerProviderStateMix
                   break;
                 case 'bot':
                   total = available = _extractDouble(botVal);
+                  // If bot balance from API is 0.0, try to get it from unified service
+                  if (total == 0.0) {
+                    total = available = unified.UnifiedWalletService.botUSDTBalance;
+                  }
                   break;
               }
             } else if (_walletBalance != null) {

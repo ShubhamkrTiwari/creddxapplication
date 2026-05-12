@@ -141,7 +141,7 @@ class CoinBalance {
 
 /// Unified Wallet Service - Manages all wallet balances across different services
 class UnifiedWalletService {
-  static String get _baseUrl => 'https://api11.hathmetech.com/api';
+  static String get _baseUrl => 'http://65.0.196.122:8085'; // Testing server
 
   // State
   static WalletBalance? _walletBalance;
@@ -473,6 +473,8 @@ class UnifiedWalletService {
         final balance = data['balance'] ?? data['availableBalance'] ?? data['totalBalance'] ?? 0.0;
         newBotBalance = balance is num ? balance.toDouble() : 0.0;
         debugPrint('UnifiedWalletService: Bot balance fetched: $newBotBalance');
+      } else {
+        debugPrint('UnifiedWalletService: Bot balance API failed: ${botResult['error']}');
       }
     } catch (e) {
       debugPrint('UnifiedWalletService: Error fetching bot balance: $e');
@@ -997,51 +999,50 @@ class UnifiedWalletService {
       final headers = await _getHeaders();
       debugPrint('Bot Wallet: Headers = $headers');
       
+      // Validate token before making API call
+      final token = headers['Authorization'];
+      if (token == null || token.toString().isEmpty || token.toString() == 'Bearer null') {
+        debugPrint('Bot Wallet: Invalid token - user needs to login properly');
+        return {'success': false, 'error': 'Please login to view bot balance'};
+      }
+      
+      // Use wallet summary API instead of bot balance endpoint (which doesn't exist on testing server)
       final response = await http.get(
-        Uri.parse('$_baseUrl/bot/v1/api/botwallet/balance'),
+        Uri.parse('http://65.0.196.122:8085/wallet/v1/wallet/all-wallet-balance'),
         headers: headers,
       );
       
-      debugPrint('Bot Wallet API: ${response.statusCode}');
+      debugPrint('Bot Wallet API (using wallet summary): ${response.statusCode}');
       debugPrint('Bot Wallet Response: ${response.body}');
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         
-        // Handle different response structures
-        if (data['success'] == true || data['balance'] != null || data['inr'] != null) {
-          final balanceData = data['data'] ?? data;
-          
-          // Extract USDT balance
+        // Handle wallet summary response format
+        if (data['success'] == true) {
+          // Extract bot balance from wallet summary response
           double usdtBalance = 0.0;
-          if (balanceData['balance'] != null) {
-            usdtBalance = balanceData['balance'] is num ? balanceData['balance'].toDouble() : 0.0;
-          } else if (balanceData['availableBalance'] != null) {
-            usdtBalance = balanceData['availableBalance'] is num ? balanceData['availableBalance'].toDouble() : 0.0;
-          } else if (balanceData['usdt'] != null) {
-            final usdt = balanceData['usdt'];
-            if (usdt is num) usdtBalance = usdt.toDouble();
-            else if (usdt is Map) usdtBalance = usdt['free'] ?? usdt['available'] ?? usdt['balance'] ?? 0.0;
+          double inrBalance = 0.0;
+          
+          // Get bot balance from the response
+          if (data['botBalance'] != null) {
+            usdtBalance = data['botBalance'] is num ? data['botBalance'].toDouble() : 0.0;
+            debugPrint('Bot Wallet: Found botBalance in wallet summary: $usdtBalance');
           }
           
-          // Extract INR balance
-          double inrBalance = 0.0;
-          if (balanceData['inr'] != null) {
-            final inr = balanceData['inr'];
-            if (inr is num) inrBalance = inr.toDouble();
-            else if (inr is Map) inrBalance = inr['free'] ?? inr['available'] ?? inr['balance'] ?? inr['total'] ?? 0.0;
-          } else if (balanceData['INR'] != null) {
-            final inr = balanceData['INR'];
-            if (inr is num) inrBalance = inr.toDouble();
-            else if (inr is Map) inrBalance = inr['free'] ?? inr['available'] ?? inr['balance'] ?? inr['total'] ?? 0.0;
+          // Get INR balance if available
+          if (data['botINR'] != null) {
+            inrBalance = data['botINR'] is num ? data['botINR'].toDouble() : 0.0;
+          } else if (data['mainBalance'] != null && data['mainBalance']['INR'] != null) {
+            inrBalance = data['mainBalance']['INR'] is num ? data['mainBalance']['INR'].toDouble() : 0.0;
           }
           
           return {
             'success': true,
             'data': {
               'balance': usdtBalance,
-              'availableBalance': balanceData['availableBalance'] ?? usdtBalance,
-              'totalBalance': balanceData['totalBalance'] ?? usdtBalance,
+              'availableBalance': usdtBalance,
+              'totalBalance': usdtBalance,
               'inrBalance': inrBalance,
             }
           };
@@ -1050,9 +1051,6 @@ class UnifiedWalletService {
       } else if (response.statusCode == 401) {
         debugPrint('Bot Wallet: Authentication failed - token may be expired');
         return {'success': false, 'error': 'Authentication failed - please login again'};
-      } else if (response.statusCode == 404) {
-        debugPrint('Bot Wallet: Endpoint not found');
-        return {'success': false, 'error': 'Bot wallet endpoint not found'};
       } else {
         debugPrint('Bot Wallet: Server error ${response.statusCode}');
         return {'success': false, 'error': 'Server error: ${response.statusCode}'};
