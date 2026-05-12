@@ -4,6 +4,7 @@ import 'payment_proof_screen.dart';
 
 class PayBankTransferScreen extends StatefulWidget {
   final String amount;
+  final String? accountId;
   final String? accountHolderName;
   final String? accountNumber;
   final String? bankName;
@@ -12,6 +13,7 @@ class PayBankTransferScreen extends StatefulWidget {
   const PayBankTransferScreen({
     super.key, 
     required this.amount,
+    this.accountId,
     this.accountHolderName,
     this.accountNumber,
     this.bankName,
@@ -51,21 +53,6 @@ class _PayBankTransferScreenState extends State<PayBankTransferScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Timer
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Text(
-                  'Order will be cancelled in ',
-                  style: TextStyle(color: Colors.white, fontSize: 14),
-                ),
-                const Text(
-                  '14:59',
-                  style: TextStyle(color: Colors.red, fontSize: 14, fontWeight: FontWeight.w600),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
             // Bank Details Card
             Container(
               width: double.infinity,
@@ -118,7 +105,7 @@ class _PayBankTransferScreenState extends State<PayBankTransferScreen> {
                   Row(
                     children: [
                       Text(
-                        '${widget.amount} USDT',
+                        '${widget.amount} INR',
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 16,
@@ -164,6 +151,7 @@ class _PayBankTransferScreenState extends State<PayBankTransferScreen> {
                     builder: (context) => PaymentProofScreen(
                       amount: widget.amount,
                       paymentMethod: 'Bank Transfer',
+                      account: widget.accountId,
                     ),
                   ),
                 );

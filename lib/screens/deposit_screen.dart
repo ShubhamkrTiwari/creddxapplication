@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'deposit_address_screen.dart';
+import 'crypto_deposit_history_screen.dart';
 import '../services/wallet_service.dart';
-import '../widgets/bitcoin_loading_indicator.dart';
 
 class DepositScreen extends StatefulWidget {
   const DepositScreen({super.key});
@@ -22,52 +22,54 @@ class _DepositScreenState extends State<DepositScreen> {
     super.initState();
     _fetchData();
   }
+
   
   Future<void> _fetchData() async {
     setState(() => _isLoading = true);
     try {
-      print('=== Fetching deposit data ===');
-      // Fetch coins with their networks from API
+      // Fetch coins with their networks from single API
       final List<Map<String, dynamic>> coinsData = await WalletService.getAllCoins();
-      print('Coins data count: ${coinsData.length}');
       
       if (mounted) {
         setState(() {
-          // Parse all coins first
-          final allCoins = coinsData.map((data) => Coin.fromJson(data)).toList();
-          print('All coins parsed: ${allCoins.length}');
+          _coins = coinsData.map((data) => Coin.fromJson(data)).toList();
           
           // Filter only USDT coins
-          _coins = allCoins.where((coin) => coin.symbol.toUpperCase() == 'USDT').toList();
-          print('Filtered USDT coins: ${_coins.length}');
+          _coins = _coins.where((coin) => coin.symbol.toUpperCase() == 'USDT').toList();
           
-          // Get networks from the first USDT coin (which has networks embedded)
+          if (_coins.isEmpty) {
+            // Create fallback data with USDT only
+            _coins = [
+              Coin(id: '3', name: 'Tether', symbol: 'USDT', icon: 'usdt', networks: [
+                Network(id: '3', name: 'Ethereum', type: 'ERC20', isActive: true),
+                Network(id: '4', name: 'Binance Smart Chain', type: 'BEP20', isActive: true),
+                Network(id: '5', name: 'Tron', type: 'TRC20', isActive: true),
+              ]),
+            ];
+          }
+          
           if (_coins.isNotEmpty) {
-            final usdtCoin = _coins.first;
-            _selectedCoinId = usdtCoin.id;
-            
-            // Extract networks from the coin's networks field
-            _networks = usdtCoin.networks.where((n) => n.isActive).toList();
-            print('Networks from USDT coin: ${_networks.length}');
-            for (var net in _networks) {
-              print('Network: ${net.name} (${net.id})');
-            }
-            
-            if (_networks.isNotEmpty) {
-              _selectedNetworkId = _networks.first.id;
-            }
+            _selectedCoinId = _coins.first.id;
+            _updateNetworksForCoin(_coins.first);
           }
           
           _isLoading = false;
         });
       }
-    } catch (e, stackTrace) {
+    } catch (e) {
       print('Error fetching data: $e');
-      print('Stack trace: $stackTrace');
       if (mounted) {
         setState(() {
-          _coins = [];
-          _networks = [];
+          // Fallback data on error with USDT only
+          _coins = [
+            Coin(id: '3', name: 'Tether', symbol: 'USDT', icon: 'usdt', networks: [
+              Network(id: '3', name: 'Ethereum', type: 'ERC20', isActive: true),
+              Network(id: '4', name: 'Binance Smart Chain', type: 'BEP20', isActive: true),
+              Network(id: '5', name: 'Tron', type: 'TRC20', isActive: true),
+            ]),
+          ];
+          _selectedCoinId = '3';
+          _updateNetworksForCoin(_coins.first);
           _isLoading = false;
         });
       }
@@ -76,13 +78,16 @@ class _DepositScreenState extends State<DepositScreen> {
 
   
   void _updateNetworksForCoin(Coin coin) {
-    // Networks are now fetched separately from sub-admin API
-    // This method can be used for any coin-specific network filtering if needed
-    if (_networks.isNotEmpty) {
-      setState(() {
+    setState(() {
+      // Use only active networks from the selected coin
+      _networks = coin.networks.where((network) => network.isActive).toList();
+      
+      if (_networks.isNotEmpty) {
         _selectedNetworkId = _networks.first.id;
-      });
-    }
+      } else {
+        _selectedNetworkId = null;
+      }
+    });
   }
 
   @override
@@ -104,80 +109,56 @@ class _DepositScreenState extends State<DepositScreen> {
         title: const Text('Deposit', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
         centerTitle: true,
       ),
-      body: _isLoading 
-        ? const Center(child: BitcoinLoadingIndicator(size: 40))
-        : _coins.isEmpty 
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.error_outline, color: Colors.red, size: 48),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'No coins available',
-                    style: TextStyle(color: Colors.white, fontSize: 16),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Unable to fetch coins from server',
-                    style: TextStyle(color: Colors.grey, fontSize: 14),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: _fetchData,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF84BD00),
-                    ),
-                    child: const Text('Retry', style: TextStyle(color: Colors.white)),
-                  ),
-                ],
-              ),
-            )
+      body: SafeArea(
+        child: _isLoading 
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)))
           : Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Select Coin', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14)),
-                  const SizedBox(height: 12),
-                  _buildDropdown(
-                    value: coinValue,
-                    hint: 'Select Coin',
-                    items: _coins.map((coin) => DropdownMenuItem(
-                      value: coin.id,
-                      child: _buildCoinRow(coin),
-                    )).toList(),
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(() {
-                          _selectedCoinId = value;
-                        });
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 24),
-                  const Text('Select Network', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14)),
-                  const SizedBox(height: 12),
-                  _buildDropdown(
-                    value: networkValue,
-                    hint: 'Select Network',
-                    items: _networks.map((network) => DropdownMenuItem(
-                      value: network.id,
-                      child: _buildNetworkRow(network),
-                    )).toList(),
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(() => _selectedNetworkId = value);
-                      }
-                    },
-                  ),
-                  const Spacer(),
-                  _buildDepositButton(currentCoin, networkValue),
-                ],
-              ),
+            padding: const EdgeInsets.all(20.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Select Coin', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14)),
+                const SizedBox(height: 12),
+                _buildDropdown(
+                  value: coinValue,
+                  hint: 'Select Coin',
+                  items: _coins.map((coin) => DropdownMenuItem(
+                    value: coin.id,
+                    child: _buildCoinRow(coin),
+                  )).toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setState(() {
+                        _selectedCoinId = value;
+                        _updateNetworksForCoin(_coins.firstWhere((c) => c.id == value));
+                      });
+                    }
+                  },
+                ),
+                const SizedBox(height: 24),
+                const Text('Select Network', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14)),
+                const SizedBox(height: 12),
+                _buildDropdown(
+                  value: networkValue,
+                  hint: 'Select Network',
+                  items: _networks.map((network) => DropdownMenuItem(
+                    value: network.id,
+                    child: _buildNetworkRow(network),
+                  )).toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setState(() => _selectedNetworkId = value);
+                    }
+                  },
+                ),
+                const Spacer(),
+                _buildDepositButton(currentCoin, networkValue),
+                const SizedBox(height: 12),
+                _buildHistoryButton(),
+              ],
             ),
+          ),
+        ),
     );
   }
 
@@ -207,11 +188,13 @@ class _DepositScreenState extends State<DepositScreen> {
   Widget _buildCoinRow(Coin coin) {
     return Row(
       children: [
-        CircleAvatar(
-          radius: 14,
-          backgroundColor: const Color(0xFF84BD00).withOpacity(0.2),
-          child: Text(coin.symbol.length > 2 ? coin.symbol.substring(0, 2).toUpperCase() : coin.symbol, style: const TextStyle(fontSize: 10, color: Color(0xFF84BD00), fontWeight: FontWeight.bold)),
-        ),
+        coin.symbol.toUpperCase() == 'USDT'
+            ? Image.asset('assets/images/usdt.png', width: 28, height: 28, fit: BoxFit.contain)
+            : CircleAvatar(
+                radius: 14,
+                backgroundColor: const Color(0xFF84BD00).withOpacity(0.2),
+                child: Text(coin.symbol.length > 2 ? coin.symbol.substring(0, 2).toUpperCase() : coin.symbol, style: const TextStyle(fontSize: 10, color: Color(0xFF84BD00), fontWeight: FontWeight.bold)),
+              ),
         const SizedBox(width: 12),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -226,9 +209,20 @@ class _DepositScreenState extends State<DepositScreen> {
   }
 
   Widget _buildNetworkRow(Network network) {
+    String? logoPath;
+    if (network.type.toUpperCase().contains('ERC') || network.name.toLowerCase().contains('ethereum')) {
+      logoPath = 'assets/images/eth.png';
+    } else if (network.type.toUpperCase().contains('BEP') || network.name.toLowerCase().contains('binance') || network.name.toLowerCase().contains('bsc')) {
+      logoPath = 'assets/images/bnb.png';
+    } else if (network.type.toUpperCase().contains('POLYGON') || network.name.toLowerCase().contains('polygon') || network.name.toLowerCase().contains('matic')) {
+      logoPath = 'assets/images/matic.png';
+    }
+
     return Row(
       children: [
-        const Icon(Icons.hub_outlined, color: Color(0xFF84BD00), size: 18),
+        logoPath != null
+            ? Image.asset(logoPath, width: 20, height: 20, fit: BoxFit.contain)
+            : const Icon(Icons.hub_outlined, color: Color(0xFF84BD00), size: 20),
         const SizedBox(width: 12),
         Text(network.name, style: const TextStyle(color: Colors.white, fontSize: 14)),
       ],
@@ -242,12 +236,7 @@ class _DepositScreenState extends State<DepositScreen> {
       child: ElevatedButton(
         onPressed: (coin != null && networkId != null) ? () {
           final network = _networks.firstWhere((n) => n.id == networkId);
-          Navigator.of(context).push(MaterialPageRoute(builder: (context) => DepositAddressScreen(
-            coin: coin.symbol, 
-            coinId: coin.id,
-            network: network.name,
-            networkId: network.id,
-          )));
+          Navigator.of(context).push(MaterialPageRoute(builder: (context) => DepositAddressScreen(coin: coin.symbol, network: network.name, coinId: coin.id, networkId: network.id,)));
         } : null,
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF84BD00),
@@ -255,6 +244,26 @@ class _DepositScreenState extends State<DepositScreen> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
         child: const Text('Deposit', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16)),
+      ),
+    );
+  }
+
+  Widget _buildHistoryButton() {
+    return SizedBox(
+      width: double.infinity,
+      height: 52,
+      child: OutlinedButton(
+        onPressed: () {
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (context) => const CryptoDepositHistoryScreen(),
+          ));
+        },
+        style: OutlinedButton.styleFrom(
+          backgroundColor: Colors.transparent,
+          side: const BorderSide(color: Color(0xFF84BD00)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        child: const Text('View History', style: TextStyle(color: Color(0xFF84BD00), fontWeight: FontWeight.bold, fontSize: 16)),
       ),
     );
   }

@@ -85,7 +85,7 @@ class _UpiDetailsScreenState extends State<UpiDetailsScreen> {
     try {
       final token = await AuthService.getToken();
       final response = await http.get(
-        Uri.parse('${WalletService.baseUrl}/wallet/v1/wallet/deposit/bank-details'),
+        Uri.parse('${WalletService.baseUrl}/wallet/v1/wallet/deposit/upi-details'),
         headers: {
           if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
         },
@@ -95,8 +95,7 @@ class _UpiDetailsScreenState extends State<UpiDetailsScreen> {
         setState(() {
           final data = responseData is Map ? (responseData['data'] ?? responseData) : responseData;
           if (data is List) {
-            // Filter only UPI items (upiId != null)
-            _upiList = data.where((item) => item['upiId'] != null && item['upiId'].toString().isNotEmpty).toList();
+            _upiList = data;
             _selectedUpi = _upiList.isNotEmpty ? _upiList.first : null;
           }
           _isLoading = false;
@@ -154,69 +153,88 @@ class _UpiDetailsScreenState extends State<UpiDetailsScreen> {
                       child: Column(
                         children: [
                           // QR Code
-                          Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              Container(
-                                width: 200,
-                                height: 200,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: QrImageView(
-                                  data: 'upi://pay?pa=${_selectedUpi!['upiId']}&pn=${_selectedUpi!['accountHolderName'] ?? 'CreddX'}&mc=0000&tid=123456&tr=ORDER${DateTime.now().millisecondsSinceEpoch}&tn=Deposit&am=${widget.amount}&cu=INR',
-                                  version: QrVersions.auto,
-                                  size: 180,
-                                  padding: const EdgeInsets.all(10),
-                                ),
-                              ),
-                              // Logo in center
-                              Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(8),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.1),
-                                      blurRadius: 4,
-                                    ),
-                                  ],
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(6),
-                                  child: Image.asset(
-                                    'assets/images/logogoogle.png',
-                                    fit: BoxFit.contain,
-                                  ),
-                                ),
-                              ),
-                            ],
+                          QrImageView(
+                            data: 'upi://pay?pa=${_selectedUpi!['upiId']}&pn=${_selectedUpi!['accountHolderName'] ?? 'CreddX'}&mc=0000&tid=123456&tr=ORDER${DateTime.now().millisecondsSinceEpoch}&tn=Deposit&am=${widget.amount}&cu=INR',
+                            version: QrVersions.auto,
+                            size: 200.0,
+                            errorCorrectionLevel: QrErrorCorrectLevel.H,
+                            embeddedImage: const AssetImage('assets/images/logogoogle.png'),
+                            embeddedImageStyle: const QrEmbeddedImageStyle(
+                              size: Size(40, 40),
+                            ),
+                            backgroundColor: Colors.white,
+                            padding: const EdgeInsets.all(10),
                           ),
                           const SizedBox(height: 16),
-                          // UPI ID with copy button
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                          // UPI ID and Amount with copy buttons
+                          Column(
                             children: [
-                              Text(
-                                _selectedUpi!['upiId'] ?? 'N/A',
-                                style: const TextStyle(color: Colors.white, fontSize: 16),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Text(
+                                    'UPI ID: ',
+                                    style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14),
+                                  ),
+                                  Text(
+                                    _selectedUpi!['upiId'] ?? 'N/A',
+                                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  GestureDetector(
+                                    onTap: () async {
+                                      await Clipboard.setData(ClipboardData(text: _selectedUpi!['upiId'] ?? ''));
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('UPI ID copied!'),
+                                            backgroundColor: Color(0xFF84BD00),
+                                            duration: Duration(seconds: 2),
+                                          ),
+                                        );
+                                      }
+                                    },
+                                    child: const Icon(
+                                      Icons.copy,
+                                      color: Color(0xFF84BD00),
+                                      size: 18,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(width: 8),
-                              GestureDetector(
-                                onTap: () {
-                                  Clipboard.setData(ClipboardData(text: _selectedUpi!['upiId'] ?? ''));
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('UPI ID copied to clipboard')),
-                                  );
-                                },
-                                child: const Icon(
-                                  Icons.copy,
-                                  color: Color(0xFF8E8E93),
-                                  size: 18,
-                                ),
+                              const SizedBox(height: 12),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Text(
+                                    'Amount: ',
+                                    style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14),
+                                  ),
+                                  Text(
+                                    '₹${widget.amount}',
+                                    style: const TextStyle(color: Color(0xFF84BD00), fontSize: 18, fontWeight: FontWeight.bold),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  GestureDetector(
+                                    onTap: () async {
+                                      await Clipboard.setData(ClipboardData(text: widget.amount));
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('Amount copied!'),
+                                            backgroundColor: Color(0xFF84BD00),
+                                            duration: Duration(seconds: 2),
+                                          ),
+                                        );
+                                      }
+                                    },
+                                    child: const Icon(
+                                      Icons.copy,
+                                      color: Color(0xFF84BD00),
+                                      size: 18,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
@@ -418,7 +436,7 @@ class _UpiDetailsScreenState extends State<UpiDetailsScreen> {
                                       builder: (context) => PaymentProofScreen(
                                         amount: widget.amount,
                                         paymentMethod: 'UPI Payment',
-                                        account: _selectedUpi?['upiId'],
+                                        account: _selectedUpi?['_id']?.toString(),
                                         senderAccountName: _selectedUpi?['accountHolderName'],
                                       ),
                                     ),
@@ -472,7 +490,7 @@ class _UpiDetailsScreenState extends State<UpiDetailsScreen> {
                       builder: (context) => PaymentProofScreen(
                         amount: widget.amount,
                         paymentMethod: 'UPI Payment',
-                        account: _selectedUpi?['upiId'],
+                        account: _selectedUpi?['_id']?.toString(),
                         senderAccountName: _selectedUpi?['accountHolderName'],
                       ),
                     ),

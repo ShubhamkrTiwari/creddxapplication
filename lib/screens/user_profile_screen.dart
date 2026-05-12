@@ -1,11 +1,17 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:upgrader/upgrader.dart';
 import '../services/socket_service.dart';
 import '../services/spot_service.dart';
 import '../services/wallet_service.dart';
@@ -14,13 +20,15 @@ import 'invite_friends_screen.dart';
 import 'login_screen.dart';
 import 'update_profile_screen.dart';
 import 'referral_hub_screen.dart';
+import 'updates_screen.dart';
 import 'feedback_screen.dart';
 import 'kyc_digilocker_instruction_screen.dart';
-import 'kyc_professional_info_screen.dart';
+import 'kyc_selfie_screen.dart';
 import 'withdraw_screen.dart';
 import 'deposit_screen.dart';
 import 'inr_deposit_screen.dart';
 import 'inr_withdraw_upi_screen.dart';
+import 'partner_program_screen.dart'; // Affiliate Program
 import '../services/user_service.dart';
 import '../services/p2p_service.dart';
 import '../services/auth_service.dart';
@@ -43,8 +51,17 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   
   // WebSocket subscription for wallet balance
   StreamSubscription<Map<String, dynamic>>? _balanceSubscription;
+  StreamSubscription<dynamic>? _unifiedWalletSubscription;
   Map<String, dynamic> _walletBalances = {};
   bool _isLoadingWallet = true;
+  bool _isLoading = false;
+  Timer? _kycStatusUpdateTimer;
+  
+  // Referral code state
+  String? _referralCode;
+  bool _isLoadingReferralCode = false;
+  bool _isUpdateAvailable = false;
+  String _currentVersion = "";
 
   // Wallet balance data from getWalletBalance API
   Map<String, dynamic> _apiWalletBalances = {};
@@ -57,6 +74,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   // Asset prices - will be updated dynamically
   Map<String, double> _assetPrices = {'ETH': 2450.00, 'USDT': 1.00, 'USDC': 1.00, 'BTC': 45000.00};
   Map<String, dynamic> _allWalletData = {};
+  List<String> _allSystemCoins = [];
   bool _isLoadingAssetPrices = true;
   
   // Conversion rates
@@ -71,13 +89,33 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   @override
   void initState() {
     super.initState();
-    _loadUserData();
+    
+    // Load user data and check KYC status immediately when screen loads
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadUserData();
+      // App update check removed
+    });
+    
     _loadTrustedDevices();
     _subscribeToBalance();
     _loadAllWalletData();
     _loadAssetPrices();
     _loadConversionRate();
     _fetchWalletBalances();
+    _checkVersionUpdate();
+    
+    // Initialize UnifiedWalletService and refresh balances to get INR
+    _initUnifiedWallet();
+    
+    // Add timeout to prevent infinite loading
+    Timer(const Duration(seconds: 10), () {
+      if (mounted && _isLoadingWallet) {
+        setState(() {
+          _isLoadingWallet = false;
+        });
+        debugPrint('Loading timeout reached - forcing loading state to false');
+      }
+    });
     
     // Refresh portfolio calculation periodically to ensure updated conversion rates
     Timer.periodic(const Duration(seconds: 30), (timer) {
@@ -86,6 +124,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       }
     });
     
+    // Periodic update checks removed
+    
     // Refresh conversion rate every 5 minutes
     Timer.periodic(const Duration(minutes: 5), (timer) {
       if (mounted) {
@@ -93,13 +133,21 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       }
     });
   }
-  
-  @override
-  void dispose() {
-    _balanceSubscription?.cancel();
-    super.dispose();
-  }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Force refresh user data when screen regains focus (includes KYC status checking)
+    // This ensures status is always up-to-date from /auth/me
+    debugPrint('Profile screen: didChangeDependencies - forcing KYC status refresh');
+    _userService.fetchProfileDataFromAPI().then((_) {
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+  
+  
   // Fetch wallet balances from getWalletBalance API
   Future<void> _fetchWalletBalances() async {
     try {
@@ -133,12 +181,27 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           debugPrint('Bot: $_botUSDT');
           debugPrint('Holding: $_holdingUSDT');
         });
+
+        // Aggressive grand total fetch as fallback
+        final grandTotal = await WalletService.getTotalUSDTBalance();
+        if (mounted && grandTotal > 0 && (_mainUSDT + _spotUSDT + _p2pUSDT + _botUSDT + _holdingUSDT) == 0) {
+          setState(() {
+            _mainUSDT = grandTotal; // Assign to main as fallback so it shows in total
+          });
+          debugPrint('Aggressive grand total fallback applied: $grandTotal');
+        }
       } else {
         debugPrint('API call failed or no data: $result');
+        setState(() {
+          _isLoadingWallet = false;
+        });
       }
     } catch (e, stackTrace) {
       debugPrint('Error fetching wallet balances: $e');
       debugPrint('Stack trace: $stackTrace');
+      setState(() {
+        _isLoadingWallet = false;
+      });
     }
   }
 
@@ -146,48 +209,146 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   double _extractUSDTFromWalletData(dynamic walletData) {
     if (walletData == null) return 0.0;
 
-    // Handle balances list format
-    if (walletData['balances'] is List) {
-      final balances = walletData['balances'] as List;
-      for (var balance in balances) {
-        if (balance['coin']?.toString().toUpperCase() == 'USDT') {
-          return double.tryParse(balance['total']?.toString() ?? balance['available']?.toString() ?? '0') ?? 0.0;
+    // 1. If it's a number, return it
+    if (walletData is num) return walletData.toDouble();
+    if (walletData is String) return double.tryParse(walletData) ?? 0.0;
+
+    if (walletData is Map) {
+      // 2. Check for USDT key (Map or Num)
+      final usdt = walletData['USDT'] ?? walletData['usdt'];
+      if (usdt != null) {
+        if (usdt is num) return usdt.toDouble();
+        if (usdt is String) return double.tryParse(usdt) ?? 0.0;
+        if (usdt is Map) {
+          final val = usdt['total'] ?? usdt['balance'] ?? usdt['available'] ?? usdt['free'] ?? usdt['amount'] ?? '0';
+          return double.tryParse(val.toString()) ?? 0.0;
         }
       }
-    }
 
-    // Handle balances map format
-    if (walletData['balances'] is Map) {
-      final usdtData = walletData['balances']['USDT'] ?? walletData['balances']['usdt'];
-      if (usdtData is Map) {
-        return double.tryParse(usdtData['total']?.toString() ?? usdtData['available']?.toString() ?? '0') ?? 0.0;
-      } else if (usdtData is num) {
-        return usdtData.toDouble();
+      // 3. Handle balances list format
+      if (walletData['balances'] is List) {
+        final balances = walletData['balances'] as List;
+        for (var b in balances) {
+          if (b is Map && (b['coin']?.toString().toUpperCase() == 'USDT' || b['asset']?.toString().toUpperCase() == 'USDT')) {
+            final val = b['total'] ?? b['balance'] ?? b['available'] ?? b['free'] ?? b['amount'] ?? '0';
+            return double.tryParse(val.toString()) ?? 0.0;
+          }
+        }
       }
-    }
 
-    // Direct USDT fields
-    if (walletData['USDT'] != null) {
-      final usdt = walletData['USDT'];
-      if (usdt is num) return usdt.toDouble();
-      if (usdt is Map) {
-        return double.tryParse(usdt['total']?.toString() ?? usdt['available']?.toString() ?? '0') ?? 0.0;
+      // 4. Handle balances map format
+      if (walletData['balances'] is Map) {
+        final balances = walletData['balances'] as Map;
+        final usdtData = balances['USDT'] ?? balances['usdt'];
+        if (usdtData != null) {
+          if (usdtData is num) return usdtData.toDouble();
+          if (usdtData is Map) {
+            final val = usdtData['total'] ?? usdtData['balance'] ?? usdtData['available'] ?? usdtData['free'] ?? usdtData['amount'] ?? '0';
+            return double.tryParse(val.toString()) ?? 0.0;
+          }
+        }
+      }
+
+      // 5. Direct common fields (if the Map itself represents the USDT balance)
+      final val = walletData['total'] ?? walletData['balance'] ?? walletData['available'] ?? walletData['free'] ?? walletData['amount'];
+      if (val != null) {
+        return double.tryParse(val.toString()) ?? 0.0;
       }
     }
 
     return 0.0;
   }
 
-  void _subscribeToBalance() {
-    _balanceSubscription = SocketService.balanceStream.listen((data) {
-      if (data['type'] == 'balance_update') {
-        debugPrint('UserProfileScreen: Balance update received via SocketService');
-        debugPrint('Raw data: $data');
+  // Initialize UnifiedWalletService and refresh wallet summary
+  Future<void> _initUnifiedWallet() async {
+    try {
+      // Initialize the unified wallet service
+      await unified.UnifiedWalletService.initialize();
+      
+      // Refresh wallet summary to get INR balance
+      final result = await unified.UnifiedWalletService.refreshWalletSummary();
+      debugPrint('_initUnifiedWallet: refreshWalletSummary result: $result');
+      
+      // Also refresh bot balance which may have INR
+      await unified.UnifiedWalletService.refreshBotBalance();
+      
+      // Get current INR balance and update UI
+      final inrBalance = unified.UnifiedWalletService.mainINRBalance;
+      debugPrint('_initUnifiedWallet: Current INR balance: $inrBalance');
+      
+      if (mounted && inrBalance > 0) {
+        setState(() {
+          _walletBalances['inr'] = inrBalance;
+          _walletBalances['INR'] = inrBalance;
+          _isLoadingWallet = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('_initUnifiedWallet error: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingWallet = false);
+      }
+    }
+  }
 
+  void _subscribeToBalance() {
+    // Subscribe to UnifiedWalletService for all balance updates
+    _unifiedWalletSubscription = unified.UnifiedWalletService.walletBalanceStream.listen((walletBalance) {
+      if (mounted) {
+        setState(() {
+          _isLoadingWallet = walletBalance == null;
+          // Trigger rebuild to refresh _getCoinBalance results
+        });
+      }
+    });
+
+    _balanceSubscription = SocketService.balanceStream.listen((data) {
+      final eventType = data['type'];
+      debugPrint('UserProfileScreen: Socket event received: type=$eventType');
+      debugPrint('Raw data: $data');
+
+      // Handle both balance_update and wallet_summary events
+      if (eventType == 'balance_update' || eventType == 'wallet_summary') {
         // Extract payload from wrapped data
         final payload = data['data'] ?? data;
 
-        // Handle assets array format
+        // Handle wallet_summary format (has mainBalance, p2pBalance etc)
+        if (eventType == 'wallet_summary' && payload is Map) {
+          // Extract INR from mainBalance
+          final mainBalance = payload['mainBalance'] ?? payload['main'];
+          if (mainBalance is Map) {
+            final inrVal = mainBalance['INR'] ?? mainBalance['inr'] ?? mainBalance['Inr'];
+            if (inrVal != null) {
+              final inrAmount = double.tryParse(inrVal.toString()) ?? 0.0;
+              debugPrint('UserProfileScreen: INR from wallet_summary mainBalance: $inrAmount');
+              if (mounted) {
+                setState(() {
+                  _walletBalances['inr'] = inrAmount;
+                  _walletBalances['INR'] = inrAmount;
+                  _walletBalances['mainBalance'] = mainBalance;
+                  _isLoadingWallet = false;
+                });
+              }
+            }
+          }
+
+          // Also check for INR at top level
+          final topInr = payload['INR'] ?? payload['inr'] ?? payload['inr_available'] ?? payload['inrBalance'];
+          if (topInr != null) {
+            final inrAmount = double.tryParse(topInr.toString()) ?? 0.0;
+            debugPrint('UserProfileScreen: INR from wallet_summary top level: $inrAmount');
+            if (mounted && inrAmount > 0) {
+              setState(() {
+                _walletBalances['inr'] = inrAmount;
+                _walletBalances['INR'] = inrAmount;
+                _isLoadingWallet = false;
+              });
+            }
+          }
+        }
+
+        // Handle assets array format (from balance_update)
         if (payload['assets'] != null) {
           final assets = payload['assets'] as List<dynamic>?;
           if (assets != null && assets.isNotEmpty) {
@@ -385,6 +546,74 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     return balance * price;
   }
   
+  // Get all coins that have a non-zero balance across all wallets
+  List<String> _getAllCoinsWithBalances() {
+    final Set<String> coinSet = {'INR', 'USDT'}; // Always include these
+    
+    // Add all coins from system API if available
+    if (_allSystemCoins.isNotEmpty) {
+      coinSet.addAll(_allSystemCoins);
+    }
+    
+    // Check all possible sources in _walletBalances
+    final data = _walletBalances;
+    
+    // Helper to check nested wallet structure
+    void checkWallet(dynamic wallet) {
+      if (wallet is Map) {
+        final balances = wallet['balances'];
+        if (balances is List) {
+          for (var b in balances) {
+            if (b is Map) {
+              final coin = b['coin']?.toString().toUpperCase() ?? b['asset']?.toString().toUpperCase();
+              final amount = double.tryParse(b['total']?.toString() ?? b['available']?.toString() ?? '0') ?? 0.0;
+              if (coin != null && amount > 0) coinSet.add(coin);
+            }
+          }
+        }
+      }
+    }
+    
+    // Check categorized wallets
+    checkWallet(data['main']);
+    checkWallet(data['spot']);
+    checkWallet(data['p2p']);
+    checkWallet(data['bot']);
+    
+    // Check flat mapping from UserService or other sources
+    data.forEach((key, value) {
+      if (value is num && value > 0) {
+        // Simple keys like 'btc': 0.5
+        final coin = key.toUpperCase();
+        if (coin.length <= 5) coinSet.add(coin);
+      }
+    });
+
+    // Check spot_raw specifically
+    final spotRaw = data['spot_raw'];
+    if (spotRaw is List) {
+      for (var asset in spotRaw) {
+        if (asset is Map) {
+          final coin = asset['asset']?.toString().toUpperCase() ?? asset['coin']?.toString().toUpperCase();
+          final amount = double.tryParse(asset['available']?.toString() ?? asset['total']?.toString() ?? '0') ?? 0.0;
+          if (coin != null && amount > 0) coinSet.add(coin);
+        }
+      }
+    }
+
+    final result = coinSet.toList();
+    // Sort: INR first, then USDT, then others alphabetical
+    result.sort((a, b) {
+      if (a == 'INR') return -1;
+      if (b == 'INR') return 1;
+      if (a == 'USDT') return -1;
+      if (b == 'USDT') return 1;
+      return a.compareTo(b);
+    });
+    
+    return result;
+  }
+
   // Get all unique coins from wallet data dynamically
   List<String> _getAllCoinsFromWalletData() {
     final Set<String> coins = {};
@@ -502,6 +731,56 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     ]);
   }
 
+  // Dedicated method to refresh spot holdings from API
+  Future<void> _refreshSpotData() async {
+    debugPrint('_refreshSpotData: Refreshing spot data from API...');
+    setState(() {
+      _isLoadingWallet = true;
+    });
+
+    try {
+      // Fetch fresh spot balance from SpotService
+      final spotResult = await SpotService.getBalance(forceRefresh: true);
+      debugPrint('_refreshSpotData: SpotService result: $spotResult');
+
+      if (spotResult['success'] == true && spotResult['data'] != null) {
+        final data = spotResult['data'];
+        if (data is Map) {
+          setState(() {
+            // Update spot_raw with fresh data (including all coins)
+            final rawAssets = data['raw_assets'] as List?;
+            if (rawAssets != null) {
+              _allWalletData['spot_raw'] = rawAssets.where((a) {
+                final assetName = (a['asset']?.toString().toUpperCase() ?? a['coin']?.toString().toUpperCase());
+                return assetName?.isNotEmpty ?? false;
+              }).toList();
+            }
+            
+            // Also update assets map
+            final assetsMap = data['assets'] as Map?;
+            if (assetsMap != null) {
+              _allWalletData['assets'] = assetsMap;
+            }
+            
+            _walletBalances = _allWalletData;
+            _isLoadingWallet = false;
+          });
+          debugPrint('_refreshSpotData: Updated spot data successfully');
+        }
+      } else {
+        debugPrint('_refreshSpotData: Failed to fetch spot data: ${spotResult['error']}');
+        setState(() {
+          _isLoadingWallet = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('_refreshSpotData: Error refreshing spot data: $e');
+      setState(() {
+        _isLoadingWallet = false;
+      });
+    }
+  }
+
   // Load comprehensive wallet data from API
   // NOTE: INR balance is NOT fetched from API - only from sockets via _subscribeToBalance()
   Future<void> _loadAllWalletData() async {
@@ -549,22 +828,37 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         debugPrint('Loaded wallet data from WalletService (INR excluded): $data');
       }
 
-      // 3. Fetch spot balance from SpotService - excluding INR
+      // 3. Fetch spot balance from SpotService - including all coins
       final spotResult = await SpotService.getBalance();
       if (spotResult['success'] == true && spotResult['data'] != null) {
         final data = spotResult['data'];
         if (data is Map) {
-          // Store spot assets separately, filtering INR
-          final assets = data['assets'] as List?;
-          if (assets != null) {
-            aggregatedData['spot_assets'] = assets.where((a) => 
-              (a['asset']?.toString().toUpperCase() ?? a['coin']?.toString().toUpperCase()) != 'INR'
+          // Store spot assets separately, including all coins
+          // Support both Map and List formats for robustness
+          final assetsData = data['assets'];
+          if (assetsData is List) {
+            aggregatedData['spot_assets'] = assetsData.where((a) => 
+              (a['asset']?.toString().toUpperCase() ?? a['coin']?.toString().toUpperCase())?.isNotEmpty ?? false
             ).toList();
+          } else if (assetsData is Map) {
+            final List<Map<String, dynamic>> convertedList = [];
+            assetsData.forEach((key, value) {
+              if (value is Map) {
+                convertedList.add({
+                  'asset': key,
+                  'available': value['available'],
+                  'locked': value['locked'],
+                  'free': value['free'],
+                });
+              }
+            });
+            aggregatedData['spot_assets'] = convertedList;
           }
+          
           final rawAssets = data['raw_assets'] as List?;
           if (rawAssets != null) {
             aggregatedData['spot_raw'] = rawAssets.where((a) =>
-              (a['asset']?.toString().toUpperCase() ?? a['coin']?.toString().toUpperCase()) != 'INR'
+              (a['asset']?.toString().toUpperCase() ?? a['coin']?.toString().toUpperCase())?.isNotEmpty ?? false
             ).toList();
           }
           
@@ -584,9 +878,20 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         aggregatedData['INR'] = existingInr;
       }
 
+      // 4. Fetch all supported coins from system
+      final allCoinsData = await WalletService.getAllCoins();
+      final List<String> apiCoins = [];
+      if (allCoinsData.isNotEmpty) {
+        for (var coin in allCoinsData) {
+          final symbol = (coin['coinSymbol'] ?? coin['symbol'] ?? '').toString().toUpperCase();
+          if (symbol.isNotEmpty) apiCoins.add(symbol);
+        }
+      }
+
       setState(() {
         _allWalletData = aggregatedData;
         _walletBalances = aggregatedData;
+        _allSystemCoins = apiCoins;
         _isLoadingWallet = false;
       });
     } catch (e) {
@@ -623,17 +928,171 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
   }
 
+  Future<void> _checkVersionUpdate() async {
+    try {
+      final PackageInfo packageInfo = await PackageInfo.fromPlatform();
+      setState(() {
+        _currentVersion = packageInfo.version;
+      });
+
+      // We use the same Upgrader instance to check for updates
+      final upgrader = Upgrader();
+      await upgrader.initialize();
+      
+      if (upgrader.isUpdateAvailable()) {
+        setState(() {
+          _isUpdateAvailable = true;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error checking version update: $e');
+    }
+  }
+
   Future<void> _loadUserData() async {
+    // Load user data from /auth/me endpoint (includes KYC status)
     await _userService.initUserData();
-    await _userService.fetchKYCStatusFromAPI(); // Refresh KYC status
+    
     if (mounted) {
       setState(() {});
     }
+    
+    // Fetch referral code with UI update callback
+    await _userService.fetchReferralCode(onReferralCodeLoaded: () {
+      if (mounted) {
+        setState(() {
+          _referralCode = _userService.referralCode;
+        });
+      }
+    });
+    
+    // Start real-time status checking after initial load
+    _startRealTimeStatusCheck();
     
     // Refresh again after API data is fetched (IP address comes from login activity API)
     await Future.delayed(const Duration(seconds: 2));
     if (mounted) {
       setState(() {});
+    }
+  }
+
+  // Refresh KYC status when user clicks refresh button
+  Future<void> _refreshKYCStatus() async {
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+      });
+    }
+
+    try {
+      // Show loading indicator
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+              SizedBox(width: 16),
+              Text('Refreshing KYC status...'),
+            ],
+          ),
+          backgroundColor: const Color(0xFF84BD00),
+          duration: Duration(seconds: 2),
+        ),
+      );
+
+      // Store the current status before refresh
+      String previousStatus = _userService.kycStatus;
+      
+      // Fetch fresh KYC status from /auth/me endpoint only
+      await _userService.fetchProfileDataFromAPI();
+      
+      String currentStatus = _userService.kycStatus;
+      print('✅ Refresh KYC - Previous: "$previousStatus", Current: "$currentStatus"');
+      
+      // If status hasn't changed and it's still the same, it might be due to rate limit
+      // Check if we should show a rate limit message
+      if (previousStatus == currentStatus && currentStatus == 'Pending') {
+        // Try to check via KYC status endpoint to see if we get rate limit error
+        final kycCheckResult = await _userService.checkKYCStatusPost();
+        if (kycCheckResult['error'] != null && 
+            (kycCheckResult['error'].toString().toLowerCase().contains('limit') ||
+             kycCheckResult['error'].toString().toLowerCase().contains('429'))) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('API limit reached. Your KYC status will be updated automatically once processed.'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 4),
+            ),
+          );
+          return;
+        }
+      }
+      
+      // Show appropriate message based on status
+      if (currentStatus == 'Completed') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('KYC status refreshed: Completed'),
+            backgroundColor: Color(0xFF84BD00),
+          ),
+        );
+      } else if (currentStatus == 'Rejected') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('KYC status refreshed: Rejected'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      } else if (currentStatus == 'Pending') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('KYC status refreshed: Pending verification'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('KYC status refreshed: Not Started'),
+            backgroundColor: Colors.grey,
+          ),
+        );
+      }
+    } catch (e) {
+      print('Error refreshing KYC status: $e');
+      // Check if error is related to rate limiting
+      if (e.toString().toLowerCase().contains('limit') || 
+          e.toString().toLowerCase().contains('429')) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('API limit reached. Please try again later.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error refreshing KYC status: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        // Update UI to reflect new status
+        setState(() {});
+      }
     }
   }
 
@@ -656,11 +1115,56 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
   }
 
+  // Show real-time status update notification
+  void _showRealTimeStatusUpdate(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: const Color(0xFF84BD00),
+          duration: const Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'OK',
+            textColor: Colors.white,
+            onPressed: () {
+              ScaffoldMessenger.of(context).hideCurrentSnackBar();
+            },
+          ),
+        ),
+      );
+    }
+  }
+
+  // Start real-time KYC status checking
+  void _startRealTimeStatusCheck() {
+    _stopRealTimeKYCUpdates(); // Clear any existing timer
+    
+    // Check KYC status every 10 seconds from /auth/me endpoint
+    _kycStatusUpdateTimer = Timer.periodic(const Duration(seconds: 10), (timer) async {
+      try {
+        await _userService.fetchProfileDataFromAPI();
+        
+        if (mounted) {
+          setState(() {});
+        }
+      } catch (e) {
+        print('Error in real-time status check: $e');
+      }
+    });
+  }
+
+  // Stop real-time KYC status checking
+  void _stopRealTimeKYCUpdates() {
+    _kycStatusUpdateTimer?.cancel();
+    _kycStatusUpdateTimer = null;
+  }
+
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // Refresh user data when screen regains focus
-    _loadUserData();
+  void dispose() {
+    _stopRealTimeKYCUpdates();
+    _balanceSubscription?.cancel();
+    _unifiedWalletSubscription?.cancel();
+    super.dispose();
   }
 
   @override
@@ -677,15 +1181,19 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         title: const Text('Profile', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
         centerTitle: true,
       ),
-      body: SingleChildScrollView(
+      body: SafeArea(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(24.0),
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -710,8 +1218,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                         ],
                       ),
                       GestureDetector(
-                        onTap: () {
-                          Navigator.push(context, MaterialPageRoute(builder: (context) => const UpdateProfileScreen()));
+                        onTap: () async {
+                          await Navigator.push(context, MaterialPageRoute(builder: (context) => const UpdateProfileScreen()));
+                          if (mounted) {
+                            _loadUserData();
+                          }
                         },
                         child: const Text(
                           'Edit',
@@ -721,31 +1232,28 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                     ],
                   ),
                   const SizedBox(height: 20),
-                  const Text('User ID', style: TextStyle(color: Colors.white70, fontSize: 13)),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1C1C1E),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(_userService.userId ?? '5a4e882d', style: const TextStyle(color: Colors.white, fontSize: 15)),
-                        const Icon(Icons.copy, color: Colors.white54, size: 18),
-                      ],
-                    ),
-                  ),
+                  _buildProfileInfoRow('Email', _userService.userEmail ?? 'Not provided', isCopyable: true),
+                  const SizedBox(height: 12),
+                  _buildProfileInfoRow('Mobile', '${_userService.userCountryCode ?? '+91'} ${_userService.userPhone ?? 'Not provided'}', isCopyable: true),
+                  const SizedBox(height: 12),
+                  // Sign-Up Time and Last Log-In hidden as per request
+                  // _buildProfileInfoRow('Sign-Up Time', _userService.signUpTime ?? '12/11/2025 | 12:30:45'),
+                  // const SizedBox(height: 12),
+                  // _buildProfileInfoRow('Last Log-In', _userService.lastLogin ?? '11/12/2025 | 11:02:12'),
+                  // const SizedBox(height: 12),
+                  _buildReferralCodeRow(),
+                  const SizedBox(height: 12),
+                  _buildLocationInfoRows(),
                   const SizedBox(height: 24),
-                  _buildProfileInfoRow('Email', _userService.userEmail ?? 'Not provided'),
-                  const SizedBox(height: 12),
-                  _buildProfileInfoRow('Sign-Up Time', _userService.signUpTime ?? '12/11/2025 | 12:30:45'),
-                  const SizedBox(height: 12),
-                  _buildProfileInfoRow('Last Log-In', _userService.lastLogin ?? '11/12/2025 | 11:02:12'),
-                  const SizedBox(height: 12),
-                  _buildProfileInfoRow('IP Address', _userService.ipAddress ?? 'Not available'),
-                  const SizedBox(height: 24),
+                ],
+              ),
+            ),
+            _buildAssetsAllocationSection(),
+            Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   _buildKYCTile(),
                   const SizedBox(height: 24),
                   _buildReferralHubTile(),
@@ -754,42 +1262,83 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   const SizedBox(height: 24),
                   _buildInviteFriendsTile(),
                   const SizedBox(height: 24),
-                  _buildSupportTile(),
-                  const SizedBox(height: 24),
-                  _buildSettingsTile(),
+                  _buildUpdatesTile(),
                   const SizedBox(height: 24),
                   _buildLogoutTile(),
                 ],
               ),
             ),
-            const Divider(color: Colors.white10, height: 1),
-            _buildExpandableSection(
-              title: 'Assets Allocation',
-              isExpanded: _isAssetsAllocationExpanded,
-              onTap: () => setState(() => _isAssetsAllocationExpanded = !_isAssetsAllocationExpanded),
-              content: _buildAssetsAllocationContent(),
-            ),
-            const Divider(color: Colors.white10, height: 1),
-            _buildUSMESection(),
-            const SizedBox(height: 24),
           ],
         ),
+      ),
+    ),
+    ],
+    ),
       ),
     );
   }
 
   Widget _buildKYCTile() {
+    final bool isCompleted = _userService.isKYCVerified();
+    final bool isPending = _userService.isKYCPending();
+    final bool canStart = _userService.isKYCNotStarted() || _userService.isKYCRejected();
+    final bool canRestart = _userService.canRestartKYC();
+    final bool needsSelfieUpload = _userService.needsSelfieUpload();
+    
+    final bool isNameMismatchRejection = _userService.kycStatus == 'Rejected' && 
+        _userService.kycRejectionReason != null && 
+        _userService.kycRejectionReason!.toLowerCase().contains('name mismatch');
+    
+    print('🔍 UI BUILD KYC: Status="${_userService.kycStatus}", isCompleted=$isCompleted, isPending=$isPending, canStart=$canStart, canRestart=$canRestart, needsSelfieUpload=$needsSelfieUpload, isNameMismatchRejection=$isNameMismatchRejection');
+
     return GestureDetector(
       onTap: () async {
-        if (_userService.isKYCNotStarted() || _userService.isKYCRejected()) {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const KYCProfessionalInfoScreen())
+        // Handle name mismatch rejection - show dialog
+        if (isNameMismatchRejection) {
+          _showNameMismatchDialog();
+          return;
+        }
+        
+        // Check if profile is complete before allowing KYC
+        if (!isCompleted && !_userService.isProfileComplete()) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Please complete your profile details first'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 3),
+            ),
           );
-          // KYC flow will handle status updates automatically
-          if (mounted) {
-            _loadUserData();
-            setState(() {});
+          Navigator.push(
+            context, 
+            MaterialPageRoute(builder: (context) => const UpdateProfileScreen())
+          ).then((_) {
+            if (mounted) {
+              _loadUserData();
+            }
+          });
+          return;
+        }
+        
+        // If KYC not completed, open website KYC page
+        if (!isCompleted) {
+          try {
+            final url = Uri.parse('https://www.creddx.com/profile/kyc');
+            await launchUrl(url, mode: LaunchMode.externalApplication);
+            // Refresh status after user returns
+            await Future.delayed(const Duration(seconds: 2));
+            if (mounted) {
+              _refreshKYCStatus();
+            }
+          } catch (e) {
+            debugPrint('Error launching KYC URL: $e');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Could not open KYC page: $e'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
           }
         }
       },
@@ -818,40 +1367,139 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'KYC Verification',
-                    style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: const Text(
+                          'KYC Verification',
+                          style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: _refreshKYCStatus,
+                        icon: const Icon(Icons.refresh, color: Color(0xFF84BD00), size: 20),
+                        tooltip: 'Refresh KYC Status',
+                        constraints: const BoxConstraints(),
+                        padding: EdgeInsets.zero,
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    _getKYCDescription(),
+                    needsSelfieUpload ? 'Document verified - upload selfie to complete' : _getKYCDescription(),
                     style: const TextStyle(color: Colors.white54, fontSize: 12),
                   ),
                 ],
               ),
             ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  _userService.kycStatus,
-                  style: TextStyle(
-                    color: _userService.getKYCStatusColor(),
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                if (_userService.kycSubmittedAt != null) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    _userService.kycSubmittedAt!,
-                    style: const TextStyle(color: Colors.white38, fontSize: 10),
+            if (isCompleted)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF84BD00).withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: const Color(0xFF84BD00).withOpacity(0.5), width: 1),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.verified, color: Color(0xFF84BD00), size: 14),
+                        SizedBox(width: 4),
+                        Text(
+                          'Completed',
+                          style: TextStyle(color: Color(0xFF84BD00), fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
-              ],
-            ),
-            if (_userService.isKYCNotStarted() || _userService.isKYCRejected())
-              const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 14),
+              )
+            else if (isPending)
+              canRestart
+                ? Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF84BD00),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Restart KYC',
+                          style: const TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.arrow_forward_ios, color: Colors.black, size: 10),
+                      ],
+                    ),
+                  )
+                : needsSelfieUpload
+                  ? Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF84BD00),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.camera_alt, color: Colors.black, size: 12),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Upload Selfie',
+                            style: const TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(width: 4),
+                          const Icon(Icons.arrow_forward_ios, color: Colors.black, size: 10),
+                        ],
+                      ),
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          _userService.kycStatus,
+                          style: TextStyle(
+                            color: _userService.getKYCStatusColor(),
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        if (_userService.kycSubmittedAt != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            _userService.kycSubmittedAt!,
+                            style: const TextStyle(color: Colors.white38, fontSize: 10),
+                          ),
+                        ],
+                      ],
+                    )
+            else
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF84BD00),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      !_userService.isProfileComplete() && !isCompleted ? 'Complete Profile' :
+                      _userService.kycStatus == 'Not Started' ? 'Complete KYC' : 
+                      isNameMismatchRejection ? 'Update Profile' :
+                      _userService.kycStatus == 'Rejected' ? 'Retry KYC' : 'Complete KYC',
+                      style: const TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.open_in_new, color: Colors.black, size: 10),
+                  ],
+                ),
+              ),
           ],
         ),
       ),
@@ -859,6 +1507,15 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   IconData _getKYCIcon() {
+    // Check if rejection is due to name mismatch
+    final bool isNameMismatchRejection = _userService.kycStatus == 'Rejected' && 
+        _userService.kycRejectionReason != null && 
+        _userService.kycRejectionReason!.toLowerCase().contains('name mismatch');
+    
+    if (isNameMismatchRejection) {
+      return Icons.warning_amber;
+    }
+    
     switch (_userService.kycStatus) {
       case 'Completed':
         return Icons.verified;
@@ -872,6 +1529,20 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   String _getKYCDescription() {
+    // If KYC is pending but document not submitted, show incomplete message
+    if (_userService.canRestartKYC()) {
+      return 'KYC incomplete - click to restart';
+    }
+    
+    // Check if rejection is due to name mismatch
+    final bool isNameMismatchRejection = _userService.kycStatus == 'Rejected' && 
+        _userService.kycRejectionReason != null && 
+        _userService.kycRejectionReason!.toLowerCase().contains('name mismatch');
+    
+    if (isNameMismatchRejection) {
+      return 'Name mismatch - Update profile for admin review';
+    }
+    
     switch (_userService.kycStatus) {
       case 'Completed':
         return 'Your identity has been verified';
@@ -884,30 +1555,116 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
   }
 
-  Widget _buildReferralHubTile() {
-    return GestureDetector(
-      onTap: () {
-        Navigator.push(context, MaterialPageRoute(builder: (context) => const ReferralHubScreen()));
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: const Color(0xFF1C1C1E),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.hub_outlined, color: Color(0xFF84BD00), size: 22),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'Referral Hub',
-                style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+  void _showNameMismatchDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text(
+            'Name Mismatch Detected',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Your KYC was rejected because the name on your documents does not match your profile name.',
+                style: TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Please update your profile name to match your government documents. The admin will review your updated profile.',
+                style: TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Rejection Reason: ${_userService.kycRejectionReason ?? "Unknown"}',
+                style: const TextStyle(color: Colors.orange, fontSize: 12),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Colors.grey),
               ),
             ),
-            const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 14),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                // Navigate to update profile screen
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const UpdateProfileScreen()),
+                ).then((_) {
+                  // Refresh data when returning
+                  if (mounted) {
+                    _loadUserData();
+                    setState(() {});
+                    // Show message that admin will review
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Profile updated successfully. Admin will review your updated profile.'),
+                        backgroundColor: Color(0xFF84BD00),
+                        duration: Duration(seconds: 4),
+                      ),
+                    );
+                  }
+                });
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF84BD00),
+              ),
+              child: const Text(
+                'Update Profile Name',
+                style: TextStyle(color: Colors.black),
+              ),
+            ),
           ],
-        ),
+        );
+      },
+    );
+  }
+
+  Widget _buildReferralHubTile() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.hub_outlined, color: Color(0xFF84BD00), size: 22),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Row(
+              children: [
+                const Text(
+                  'Referral Hub',
+                  style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'Coming Soon',
+                  style: TextStyle(
+                    color: Color(0xFF84BD00),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 14),
+        ],
       ),
     );
   }
@@ -915,9 +1672,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   Widget _buildPartnerProgramTile() {
     return GestureDetector(
       onTap: () {
-        // TODO: Navigate to Partner Program screen
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Partner Program coming soon!')),
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const AffiliateProgramScreen()),
         );
       },
       child: Container(
@@ -928,11 +1685,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         ),
         child: Row(
           children: [
-            const Icon(Icons.business_center, color: Color(0xFF84BD00), size: 22),
+            const Icon(Icons.people, color: Color(0xFF84BD00), size: 22),
             const SizedBox(width: 12),
             const Expanded(
               child: Text(
-                'Partner Program',
+                'Affiliate Program',
                 style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
               ),
             ),
@@ -944,11 +1701,44 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   Widget _buildInviteFriendsTile() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.person_add, color: Color(0xFF84BD00), size: 22),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Invite Friends',
+                  style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Coming Soon',
+                  style: TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 14),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUpdatesTile() {
     return GestureDetector(
       onTap: () {
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => const InviteFriendsScreen()),
+          MaterialPageRoute(builder: (context) => const UpdatesScreen()),
         );
       },
       child: Container(
@@ -959,14 +1749,37 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         ),
         child: Row(
           children: [
-            const Icon(Icons.person_add, color: Color(0xFF84BD00), size: 22),
+            const Icon(Icons.system_update, color: Color(0xFF84BD00), size: 22),
             const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'Invite Friends',
-                style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Updates',
+                    style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                  ),
+                  if (_currentVersion.isNotEmpty)
+                    Text(
+                      'Version $_currentVersion',
+                      style: const TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                ],
               ),
             ),
+            if (_isUpdateAvailable)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF84BD00),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text(
+                  'NEW',
+                  style: TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.bold),
+                ),
+              ),
+            const SizedBox(width: 8),
             const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 14),
           ],
         ),
@@ -974,13 +1787,29 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     );
   }
 
-  Widget _buildSupportTile() {
+  
+  Widget _buildLogoutTile() {
     return GestureDetector(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => const FeedbackScreen()),
-        );
+      onTap: () async {
+        final result = await AuthService.logout();
+        if (result['success'] == true) {
+          if (mounted) {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (context) => const LoginScreen()),
+              (route) => false,
+            );
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(result['message'] ?? 'Logout failed'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        }
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -990,11 +1819,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         ),
         child: Row(
           children: [
-            const Icon(Icons.headset_mic, color: Color(0xFF84BD00), size: 22),
+            const Icon(Icons.logout, color: Color(0xFFFF6B6B), size: 22),
             const SizedBox(width: 12),
             const Expanded(
               child: Text(
-                'Support',
+                'Logout',
                 style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
               ),
             ),
@@ -1005,43 +1834,328 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     );
   }
 
-  Widget _buildSettingsTile() {
-    return GestureDetector(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => const UpdateProfileScreen()),
-        );
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: const Color(0xFF1C1C1E),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.settings, color: Color(0xFF84BD00), size: 22),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'Settings',
-                style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
-              ),
-            ),
-            const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 14),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProfileInfoRow(String label, String value) {
+  Widget _buildProfileInfoRow(String label, String value, {bool isCopyable = false}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(label, style: const TextStyle(color: Colors.white38, fontSize: 13)),
-        Text(value, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+        Row(
+          children: [
+            Text(value, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+            if (isCopyable && value != 'Not provided') ...[
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () async {
+                  await Clipboard.setData(ClipboardData(text: value));
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Copied to clipboard!'),
+                        backgroundColor: Color(0xFF84BD00),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                },
+                child: const Icon(
+                  Icons.copy,
+                  color: Color(0xFF84BD00),
+                  size: 16,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildReferralCodeRow() {
+    final referralCode = _userService.referralCode ?? 'Loading...';
+    debugPrint('🏗️ Building referral code row: $referralCode');
+    debugPrint('🏗️ UserService referralCode: ${_userService.referralCode}');
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        const Text('Referral Code', style: TextStyle(color: Colors.white38, fontSize: 13)),
+        Row(
+          children: [
+            Text(
+              referralCode,
+              style: const TextStyle(
+                color: Color(0xFF84BD00),
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                fontFamily: 'monospace',
+              ),
+            ),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () async {
+                // Copy referral code to clipboard
+                if (referralCode != 'Loading...') {
+                  await Clipboard.setData(ClipboardData(text: referralCode));
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Referral code copied!'),
+                        backgroundColor: Color(0xFF84BD00),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                }
+              },
+              child: const Icon(
+                Icons.copy,
+                color: Color(0xFF84BD00),
+                size: 16,
+              ),
+            ),
+            const SizedBox(width: 4),
+            // Temporary debug button
+            GestureDetector(
+              onTap: () async {
+                await _userService.debugReferralCode();
+                setState(() {}); // Refresh UI after debug
+              },
+              child: const Icon(
+                Icons.bug_report,
+                color: Colors.orange,
+                size: 16,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLocationInfoRows() {
+    final userId = _userService.userId;
+    final country = _userService.userCountry;
+    final state = _userService.userState;
+    final city = _userService.userCity;
+    final isFetchingLocation = _userService.isFetchingLocationNames;
+
+    // Build location string, only include non-null and non-empty parts
+    List<String> locationParts = [];
+    if (city != null && city.isNotEmpty) locationParts.add(city);
+    if (state != null && state.isNotEmpty) locationParts.add(state);
+    if (country != null && country.isNotEmpty) locationParts.add(country);
+
+    String locationText;
+    if (locationParts.isNotEmpty) {
+      locationText = locationParts.join(', ');
+    } else if (isFetchingLocation) {
+      locationText = 'Fetching location...';
+    } else {
+      locationText = 'Location not provided';
+    }
+
+    return Column(
+      children: [
+        _buildProfileInfoRow('User ID', userId ?? 'Not provided', isCopyable: true),
+        const SizedBox(height: 12),
+        _buildProfileInfoRow('Location', locationText),
+      ],
+    );
+  }
+
+  Widget _buildSpotHoldingsList() {
+    // Get spot data from multiple sources
+    final spotBalances = _walletBalances['spot']?['balances'] as List<dynamic>? ?? [];
+    final spotBalanceMap = _walletBalances['spotBalance'] is Map ? _walletBalances['spotBalance'] as Map<String, dynamic>? : {};
+    final spotRawAssets = _walletBalances['spot_raw'] as List<dynamic>? ?? [];
+    final spotAssets = _walletBalances['spot_assets'] as List<dynamic>? ?? [];
+
+    // Also get from UnifiedWalletService
+    final unifiedSpotAssets = unified.UnifiedWalletService.walletBalance?.spotAssets ?? {};
+
+    // Combine data from all sources for comprehensive display
+    final Map<String, double> combinedHoldings = {};
+
+    // Helper to add to combinedHoldings
+    void addToHoldings(String? coin, double amount) {
+      if (coin != null && coin.isNotEmpty) {
+        final symbol = coin.toUpperCase();
+        combinedHoldings[symbol] = (combinedHoldings[symbol] ?? 0.0) + amount;
+      }
+    }
+
+    // Add from spotBalances list
+    for (final balance in spotBalances) {
+      if (balance is Map) {
+        final coin = balance['coin']?.toString() ?? balance['asset']?.toString();
+        final available = double.tryParse(balance['available']?.toString() ?? '0') ?? 0.0;
+        final locked = double.tryParse(balance['locked']?.toString() ?? '0') ?? 0.0;
+        addToHoldings(coin, available + locked);
+      }
+    }
+
+    // Add from spotBalanceMap
+    spotBalanceMap?.forEach((coin, value) {
+      final amount = double.tryParse(value.toString()) ?? 0.0;
+      addToHoldings(coin, amount);
+    });
+
+    // Add from spotRawAssets
+    for (final asset in spotRawAssets) {
+      if (asset is Map) {
+        final coin = asset['asset']?.toString() ?? asset['coin']?.toString();
+        final available = double.tryParse(asset['available']?.toString() ?? '0') ?? 0.0;
+        final locked = double.tryParse(asset['locked']?.toString() ?? '0') ?? 0.0;
+        addToHoldings(coin, available + locked);
+      }
+    }
+
+    // Add from spotAssets list
+    for (final asset in spotAssets) {
+      if (asset is Map) {
+        final coin = asset['asset']?.toString() ?? asset['coin']?.toString();
+        final available = double.tryParse(asset['available']?.toString() ?? '0') ?? 0.0;
+        final locked = double.tryParse(asset['locked']?.toString() ?? '0') ?? 0.0;
+        addToHoldings(coin, available + locked);
+      }
+    }
+
+    // Add from UnifiedWalletService spotAssets Map
+    unifiedSpotAssets.forEach((coin, data) {
+      double amount = 0.0;
+      if (data is num) {
+        amount = data.toDouble();
+      } else if (data is Map) {
+        final val = data['total'] ?? data['balance'] ?? data['available'] ?? data['free'] ?? '0';
+        amount = double.tryParse(val.toString()) ?? 0.0;
+      }
+      addToHoldings(coin, amount);
+    });
+
+    // For USDT, add total balance from all wallets (main + spot + p2p + bot)
+    // This ensures spot USDT shows the same as Coin view USDT (total across all wallets)
+    double totalUSDT = 0.0;
+    // 1. Try UnifiedWalletService (most accurate)
+    totalUSDT = unified.UnifiedWalletService.totalUSDTBalance;
+    // 2. Try pre-calculated aggregated fields from _fetchWalletBalances
+    if (totalUSDT == 0.0) {
+      totalUSDT = _mainUSDT + _spotUSDT + _p2pUSDT + _botUSDT + _holdingUSDT;
+    }
+    // 3. Try local _walletBalances map
+    if (totalUSDT == 0.0) {
+      final data = _walletBalances;
+      final usdtVal = data['usdt'] ?? data['USDT'] ?? data['usdt_balance'] ?? data['balance'];
+      if (usdtVal != null) {
+        if (usdtVal is num) totalUSDT = usdtVal.toDouble();
+        else if (usdtVal is String) totalUSDT = double.tryParse(usdtVal) ?? 0.0;
+      }
+    }
+    // 4. Try _apiWalletBalances as a last resort
+    if (totalUSDT == 0.0 && _apiWalletBalances.isNotEmpty) {
+      totalUSDT = _extractUSDTFromWalletData(_apiWalletBalances['main']) +
+                  _extractUSDTFromWalletData(_apiWalletBalances['spot']) +
+                  _extractUSDTFromWalletData(_apiWalletBalances['p2p']) +
+                  _extractUSDTFromWalletData(_apiWalletBalances['bot'] ?? _apiWalletBalances['demo_bot']) +
+                  _extractUSDTFromWalletData(_apiWalletBalances['holding']);
+    }
+    // Add the total USDT to combined holdings (this will show total USDT in spot section)
+    if (totalUSDT > 0) {
+      addToHoldings('USDT', totalUSDT);
+    }
+
+    // Get all coins: system coins + coins with holdings
+    // Include ALL coins from the system, even with 0 balance
+    final Set<String> allCoinsSet = {};
+
+    // Add all system coins from API
+    if (_allSystemCoins.isNotEmpty) {
+      allCoinsSet.addAll(_allSystemCoins);
+    }
+
+    // Add coins with actual balances
+    allCoinsSet.addAll(combinedHoldings.keys);
+
+    // Add default coins if no system coins available yet
+    if (allCoinsSet.isEmpty) {
+      allCoinsSet.addAll(['USDT', 'BTC', 'ETH', 'USDC', 'BNB']);
+    }
+
+    // Remove INR from spot
+    allCoinsSet.remove('INR');
+    allCoinsSet.remove('inr');
+
+    final List<String> allCoins = allCoinsSet.toList();
+
+    // Sort: Priority coins first, then by balance descending, then alphabetical
+    final List<String> priorityCoins = ['USDT', 'BTC', 'ETH', 'USDC', 'BNB', 'ADA', 'SOL', 'DOT', 'XRP', 'MATIC'];
+    allCoins.sort((a, b) {
+      final aPriority = priorityCoins.indexOf(a);
+      final bPriority = priorityCoins.indexOf(b);
+
+      if (aPriority != -1 || bPriority != -1) {
+        if (aPriority != -1 && bPriority != -1) return aPriority.compareTo(bPriority);
+        return aPriority != -1 ? -1 : 1;
+      }
+
+      final aBalance = combinedHoldings[a] ?? 0.0;
+      final bBalance = combinedHoldings[b] ?? 0.0;
+      if (bBalance != aBalance) return bBalance.compareTo(aBalance);
+      return a.compareTo(b);
+    });
+
+    // Build rows for each coin
+    return Column(
+      children: allCoins.asMap().entries.map((entry) {
+        final index = entry.key;
+        final coin = entry.value;
+        final balance = combinedHoldings[coin] ?? 0.0;
+        final isLast = index == allCoins.length - 1;
+
+        String formattedBalance;
+        if (_isWalletHidden) {
+          formattedBalance = '***';
+        } else if (coin == 'INR') {
+          formattedBalance = balance.toStringAsFixed(2);
+        } else if (coin == 'BTC') {
+          formattedBalance = balance.toStringAsFixed(8);
+        } else {
+          formattedBalance = balance.toStringAsFixed(6);
+        }
+
+        return Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    coin,
+                    style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500),
+                  ),
+                ),
+                SizedBox(
+                  width: 120,
+                  child: Text(
+                    _isWalletHidden ? '*** $coin' : '$formattedBalance $coin',
+                    style: const TextStyle(color: Color(0xFF84BD00), fontSize: 14, fontWeight: FontWeight.w600),
+                    textAlign: TextAlign.right,
+                  ),
+                ),
+              ],
+            ),
+            if (!isLast) const Divider(color: Colors.white10, height: 16),
+          ],
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildWalletRow(String walletType, String balance) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(walletType, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
+        Text(balance, style: const TextStyle(color: Color(0xFF84BD00), fontSize: 14, fontWeight: FontWeight.w600)),
       ],
     );
   }
@@ -1068,47 +2182,123 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     );
   }
 
+  Widget _buildToggleButton(String title, bool isSelected) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: isSelected ? const Color(0xFF007AFF) : const Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        title,
+        style: TextStyle(
+          color: isSelected ? Colors.white : Colors.white54,
+          fontSize: 14,
+          fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+        ),
+      ),
+    );
+  }
+
+  
+  Widget _buildAssetsAllocationSection() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 0),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.circular(0),
+        border: Border.symmetric(
+          horizontal: BorderSide(color: const Color(0xFF84BD00).withOpacity(0.3), width: 1.5),
+        ),
+      ),
+      child: Column(
+        children: [
+          // Header with tap to expand/collapse
+          GestureDetector(
+            onTap: () => setState(() => _isAssetsAllocationExpanded = !_isAssetsAllocationExpanded),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF84BD00).withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.account_balance_wallet, color: Color(0xFF84BD00), size: 28),
+                  ),
+                  const SizedBox(width: 16),
+                  const Expanded(
+                    child: Text(
+                      'Assets Allocation',
+                      style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  Icon(
+                    _isAssetsAllocationExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                    color: Colors.white54,
+                    size: 24,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Expandable content
+          if (_isAssetsAllocationExpanded) _buildAssetsAllocationContent(),
+        ],
+      ),
+    );
+  }
+
   Widget _buildAssetsAllocationContent() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              GestureDetector(
-                onTap: () => setState(() => _selectedView = 'wallet'),
-                child: _buildToggleButton('Wallet', _selectedView == 'wallet'),
-              ),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: () => setState(() => _selectedView = 'coin'),
-                child: _buildToggleButton('Coin', _selectedView == 'coin'),
-              ),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: () => setState(() => _selectedView = 'spot'),
-                child: _buildToggleButton('Spot', _selectedView == 'spot'),
-              ),
-              const Spacer(),
-              GestureDetector(
-                onTap: _refreshAssetData,
-                child: Icon(
-                  Icons.refresh,
-                  color: Colors.white54,
-                  size: 20,
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: () => setState(() => _selectedView = 'wallet'),
+                  child: _buildToggleButton('Wallet', _selectedView == 'wallet'),
                 ),
-              ),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: () => setState(() => _isWalletHidden = !_isWalletHidden),
-                child: Icon(
-                  _isWalletHidden ? Icons.visibility_off : Icons.visibility,
-                  color: Colors.white54,
-                  size: 20,
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () => setState(() => _selectedView = 'coin'),
+                  child: _buildToggleButton('Coin', _selectedView == 'coin'),
                 ),
-              ),
-            ],
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () {
+                    setState(() => _selectedView = 'spot');
+                    // Refresh spot data when switching to spot view
+                    _refreshSpotData();
+                  },
+                  child: _buildToggleButton('Spot', _selectedView == 'spot'),
+                ),
+                const SizedBox(width: 16),
+                GestureDetector(
+                  onTap: _refreshAssetData,
+                  child: Icon(
+                    Icons.refresh,
+                    color: Colors.white54,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () => setState(() => _isWalletHidden = !_isWalletHidden),
+                  child: Icon(
+                    _isWalletHidden ? Icons.visibility_off : Icons.visibility,
+                    color: Colors.white54,
+                    size: 20,
+                  ),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 24),
           // Headers
@@ -1144,7 +2334,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 return [_buildSpotHoldingsList()];
               }
               final items = _selectedView == 'wallet'
-                ? ['Main', 'SPOT', 'P2P', 'Bot']
+                ? ['INR', 'Main', 'SPOT', 'P2P', 'Bot']
                 : ['INR', 'USDT'];
               return items.asMap().entries.map((entry) {
                 final index = entry.key;
@@ -1169,7 +2359,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   String _getWalletBalance(String walletType) {
-    if (_isLoadingWallet) return '...';
+    if (_isLoadingWallet && !unified.UnifiedWalletService.isInitialized) return '...';
 
     // Use UnifiedWalletService like wallet screen
     double total = 0.0;
@@ -1178,19 +2368,30 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     switch (walletType.toUpperCase()) {
       case 'MAIN':
         total = unified.UnifiedWalletService.mainUSDTBalance;
+        if (total == 0.0) total = _mainUSDT;
         break;
       case 'SPOT':
         total = unified.UnifiedWalletService.spotUSDTBalance;
+        if (total == 0.0) total = _spotUSDT;
         break;
       case 'P2P':
         total = unified.UnifiedWalletService.p2pUSDTBalance;
+        if (total == 0.0) total = _p2pUSDT;
         break;
       case 'BOT':
         total = unified.UnifiedWalletService.botUSDTBalance;
+        if (total == 0.0) total = _botUSDT;
         break;
       case 'INR':
         currency = 'INR';
         total = unified.UnifiedWalletService.mainINRBalance;
+        // Fallback to socket data if unified service returns 0
+        if (total == 0.0) {
+          final socketInr = _walletBalances['inr'] ?? _walletBalances['INR'] ?? _walletBalances['inr_available'] ?? _walletBalances['inr_total'];
+          if (socketInr != null) {
+            total = double.tryParse(socketInr.toString()) ?? 0.0;
+          }
+        }
         break;
     }
 
@@ -1199,1663 +2400,74 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
   
   String _getCoinBalance(String coin) {
-    if (_isLoadingWallet) return '...';
-    
-    final coinKey = coin.toLowerCase();
-    final data = _walletBalances;
     double total = 0.0;
     
-    // If no data from API, show 0.00 (no mock data)
-    if (_walletBalances.isEmpty) {
-      debugPrint('No coin balance data available from API');
-      if (_isWalletHidden) return '*** $coin';
-      return '0.00 $coin';
-    }
-    
-    // Special handling for INR
     if (coin == 'INR') {
-      // First try flat format: mainBalance.INR
-      if (data['mainBalance'] is Map && data['mainBalance']['INR'] != null) {
-        total = double.tryParse(data['mainBalance']['INR'].toString()) ?? 0.0;
-        debugPrint('Found INR in mainBalance flat format: $total');
-      }
-
-      // Check in spot_assets (from SpotService)
-      if (total == 0.0 && data['spot_assets'] is Map) {
-        final spotAssets = data['spot_assets'] as Map;
-        if (spotAssets['INR'] != null) {
-          total = double.tryParse(spotAssets['INR']['available']?.toString() ?? spotAssets['INR']['total']?.toString() ?? '0') ?? 0.0;
-          debugPrint('Found INR in spot_assets: $total');
-        }
-      }
-
-      // Check in raw_assets or spot_raw (from SpotService)
-      final rawAssets = data['spot_raw'] ?? data['raw_assets'];
-      if (total == 0.0 && rawAssets is List) {
-        for (final asset in rawAssets) {
-          if (asset is Map && asset['asset']?.toString().toUpperCase() == 'INR') {
-            total = double.tryParse(asset['available']?.toString() ?? asset['total']?.toString() ?? '0') ?? 0.0;
-            debugPrint('Found INR in raw assets: $total');
-            break;
-          }
-        }
-      }
-
-      // Direct keys fallback
-      if (total == 0.0 && data['inr'] != null) {
-        total = double.tryParse(data['inr'].toString()) ?? 0.0;
-      } else if (total == 0.0 && data['inr_available'] != null) {
-        total = double.tryParse(data['inr_available'].toString()) ?? 0.0;
-      } else if (total == 0.0 && data['inr_total'] != null) {
-        total = double.tryParse(data['inr_total'].toString()) ?? 0.0;
-      }
-      
-      // Check top-level assets map
-      if (total == 0.0 && data['assets'] is Map) {
-        final assets = data['assets'] as Map;
-        if (assets['INR'] != null) {
-          final val = assets['INR'];
-          if (val is Map) {
-            total = double.tryParse(val['available']?.toString() ?? val['total']?.toString() ?? '0') ?? 0.0;
-          } else {
-            total = double.tryParse(val.toString()) ?? 0.0;
-          }
-        }
-      }
-
-      // Check nested data structure
-      if (total == 0.0 && data['data'] != null) {
-        final nestedData = data['data'];
-        if (nestedData is Map) {
-          total = double.tryParse(nestedData['inr']?.toString() ?? '0') ?? 0.0;
-          if (total == 0.0) {
-            total = double.tryParse(nestedData['inr_available']?.toString() ?? '0') ?? 0.0;
-          }
-        }
+      total = unified.UnifiedWalletService.totalINRBalance;
+      if (total == 0.0) {
+        // Fallback to local _walletBalances map
+        final inrVal = _walletBalances['inr'] ?? _walletBalances['INR'] ?? 0.0;
+        total = double.tryParse(inrVal.toString()) ?? 0.0;
       }
     } else if (coin == 'USDT') {
-      // For USDT in Coin View, show only MAIN wallet balance (like INR)
-      // Try flat format first: mainBalance.USDT
-      if (data['mainBalance'] is Map && data['mainBalance']['USDT'] != null) {
-        total = double.tryParse(data['mainBalance']['USDT'].toString()) ?? 0.0;
-        debugPrint('Found USDT in mainBalance flat format: $total');
-      }
-
-      // Check nested main wallet format
-      if (total == 0.0 && data['main'] != null) {
-        final mainWallet = data['main'];
-        if (mainWallet is Map) {
-          final balances = mainWallet['balances'];
-          if (balances is List) {
-            for (final bal in balances) {
-              if (bal is Map && (bal['coin']?.toString().toUpperCase() == 'USDT' || bal['asset']?.toString().toUpperCase() == 'USDT')) {
-                final available = double.tryParse(bal['available']?.toString() ?? '0') ?? 0.0;
-                final locked = double.tryParse(bal['locked']?.toString() ?? '0') ?? 0.0;
-                total = double.tryParse(bal['total']?.toString() ?? '0') ?? (available + locked);
-                debugPrint('Found USDT in main wallet nested format: $total');
-                break;
-              }
-            }
-          } else if (mainWallet['usdt_total'] != null) {
-            total = double.tryParse(mainWallet['usdt_total'].toString()) ?? 0.0;
-          } else if (mainWallet['usdt'] != null) {
-            total = double.tryParse(mainWallet['usdt'].toString()) ?? 0.0;
-          }
-        }
-      }
-
-      // Check nested data structure
-      if (total == 0.0 && data['data'] != null) {
-        final nestedData = data['data'];
-        if (nestedData is Map) {
-          // Try mainBalance in nested data
-          if (nestedData['mainBalance'] is Map && nestedData['mainBalance']['USDT'] != null) {
-            total = double.tryParse(nestedData['mainBalance']['USDT'].toString()) ?? 0.0;
-          }
-          // Try main wallet in nested data
-          if (total == 0.0 && nestedData['main'] != null) {
-            final mainWallet = nestedData['main'];
-            if (mainWallet is Map && mainWallet['balances'] is List) {
-              for (final bal in mainWallet['balances']) {
-                if (bal is Map && (bal['coin']?.toString().toUpperCase() == 'USDT' || bal['asset']?.toString().toUpperCase() == 'USDT')) {
-                  final available = double.tryParse(bal['available']?.toString() ?? '0') ?? 0.0;
-                  final locked = double.tryParse(bal['locked']?.toString() ?? '0') ?? 0.0;
-                  total = double.tryParse(bal['total']?.toString() ?? '0') ?? (available + locked);
-                  break;
-                }
-              }
-            }
-          }
-        }
-      }
-
-      // Direct key fallback
-      if (total == 0.0 && data['usdt'] != null) {
-        total = double.tryParse(data['usdt'].toString()) ?? 0.0;
-      }
-      if (total == 0.0 && data['usdt_total'] != null) {
-        total = double.tryParse(data['usdt_total'].toString()) ?? 0.0;
-      }
-      if (total == 0.0 && data['usdt_available'] != null) {
-        total = double.tryParse(data['usdt_available'].toString()) ?? 0.0;
-      }
-    } else {
-      // For other coins (BTC, ETH, etc.), sum from all wallets
-      // First try flat format: mainBalance, spotBalance, p2pBalance, botBalance
-      final flatFieldMap = {
-        'main': 'mainBalance',
-        'spot': 'spotBalance',
-        'p2p': 'p2pBalance',
-        'bot': 'botBalance',
-      };
-
-      for (String walletType in flatFieldMap.keys) {
-        final fieldName = flatFieldMap[walletType]!;
-        if (data[fieldName] != null) {
-          final walletData = data[fieldName];
-          if (walletData is Map) {
-            if (walletData[coin] != null) {
-              final value = double.tryParse(walletData[coin].toString()) ?? 0.0;
-              total += value;
-              debugPrint('Found $coin in flat format $fieldName: $value');
-            }
-          } else if (walletData is num && coin == 'USDT') {
-            final value = walletData.toDouble();
-            total += value;
-            debugPrint('Found USDT as direct number in $fieldName: $value');
-          }
-        }
-      }
-
-      // Try nested format
+      // 1. Try UnifiedWalletService (most accurate)
+      total = unified.UnifiedWalletService.totalUSDTBalance;
+      
+      // 2. Try pre-calculated aggregated fields from _fetchWalletBalances
       if (total == 0.0) {
-        final walletTypes = ['main', 'spot', 'p2p', 'bot'];
-        for (String walletType in walletTypes) {
-          if (data[walletType] != null) {
-            final wallet = data[walletType];
-            if (wallet is Map) {
-              final balances = wallet['balances'];
-              if (balances is List) {
-                for (final bal in balances) {
-                  if (bal is Map && bal['coin']?.toString().toUpperCase() == coin) {
-                    final available = double.tryParse(bal['available']?.toString() ?? '0') ?? 0.0;
-                    final locked = double.tryParse(bal['locked']?.toString() ?? '0') ?? 0.0;
-                    total += available + locked;
-                    break;
-                  }
-                }
-              } else if (wallet['${coinKey}_total'] != null) {
-                total += double.tryParse(wallet['${coinKey}_total'].toString()) ?? 0.0;
-              } else if (wallet[coinKey] != null) {
-                total += double.tryParse(wallet[coinKey].toString()) ?? 0.0;
-              }
+        total = _mainUSDT + _spotUSDT + _p2pUSDT + _botUSDT + _holdingUSDT;
+      }
+      
+      // 3. Try local _walletBalances map thoroughly
+      if (total == 0.0) {
+        final data = _walletBalances;
+        
+        // Try common top-level keys
+        final usdtVal = data['usdt'] ?? data['USDT'] ?? data['usdt_balance'] ?? data['balance'];
+        if (usdtVal != null) {
+          if (usdtVal is num) total = usdtVal.toDouble();
+          else if (usdtVal is String) total = double.tryParse(usdtVal) ?? 0.0;
+        }
+        
+        // Try mainBalance nested key
+        if (total == 0.0 && data['mainBalance'] is Map) {
+          final main = data['mainBalance'] as Map;
+          final val = main['USDT'] ?? main['usdt'];
+          if (val != null) {
+            if (val is num) total = val.toDouble();
+            else if (val is Map) total = double.tryParse(val['total']?.toString() ?? val['available']?.toString() ?? '0') ?? 0.0;
+          }
+        }
+        
+        // Try summing across different wallets if present in _walletBalances
+        if (total == 0.0) {
+          final keys = ['main', 'spot', 'p2p', 'bot'];
+          for (var key in keys) {
+            if (data[key] is Map) {
+              final w = data[key] as Map;
+              final bal = w['usdt'] ?? w['USDT'] ?? w['balance'];
+              if (bal != null) total += double.tryParse(bal.toString()) ?? 0.0;
             }
           }
         }
       }
 
-      // Check nested data structure
-      if (total == 0.0 && data['data'] != null) {
-        final nestedData = data['data'];
-        if (nestedData is Map) {
-          for (String walletType in ['main', 'spot', 'p2p', 'bot']) {
-            if (nestedData[walletType] != null) {
-              final wallet = nestedData[walletType];
-              if (wallet is Map && wallet['balances'] is List) {
-                for (final bal in wallet['balances']) {
-                  if (bal is Map && bal['coin']?.toString().toUpperCase() == coin) {
-                    final available = double.tryParse(bal['available']?.toString() ?? '0') ?? 0.0;
-                    final locked = double.tryParse(bal['locked']?.toString() ?? '0') ?? 0.0;
-                    total += available + locked;
-                    break;
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-
-      // Direct key fallback
-      if (total == 0.0 && data[coinKey] != null) {
-        total = double.tryParse(data[coinKey].toString()) ?? 0.0;
-      }
-      if (total == 0.0 && data['${coinKey}_total'] != null) {
-        total = double.tryParse(data['${coinKey}_total'].toString()) ?? 0.0;
+      // 4. Try _apiWalletBalances as a last resort
+      if (total == 0.0 && _apiWalletBalances.isNotEmpty) {
+        total = _extractUSDTFromWalletData(_apiWalletBalances['main']) +
+                _extractUSDTFromWalletData(_apiWalletBalances['spot']) +
+                _extractUSDTFromWalletData(_apiWalletBalances['p2p']) +
+                _extractUSDTFromWalletData(_apiWalletBalances['bot'] ?? _apiWalletBalances['demo_bot']) +
+                _extractUSDTFromWalletData(_apiWalletBalances['holding']);
       }
     }
-    
+
     if (_isWalletHidden) return '*** $coin';
     
-    // Format based on coin type
-    if (coin == 'INR') {
-      return '${total.toStringAsFixed(2)} $coin';
-    } else if (coin == 'BTC') {
-      return '${total.toStringAsFixed(8)} $coin';
-    } else {
-      return '${total.toStringAsFixed(6)} $coin';
-    }
+    // If still 0 and loading, show dots
+    if (total == 0.0 && _isLoadingWallet) return '...';
+    
+    return '${total.toStringAsFixed(2)} $coin';
   }
   
-  Widget _buildWalletRow(String walletType, String balance) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          // Wallet Icon
-          Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: _getWalletColor(walletType).withOpacity(0.2),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Icon(
-              _getWalletIcon(walletType),
-              color: _getWalletColor(walletType),
-              size: 16,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            flex: 2,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '$walletType Holding',
-                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
-                ),
-                if (!_isWalletHidden) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    _getWalletSubtitle(walletType),
-                    style: const TextStyle(color: Colors.white38, fontSize: 10),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          SizedBox(
-            width: 80,
-            child: Text(
-              balance,
-              style: const TextStyle(
-                color: Colors.white, 
-                fontSize: 12, 
-                fontWeight: FontWeight.w500
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          const SizedBox(width: 4),
-          SizedBox(
-            width: 50,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                GestureDetector(
-                  onTap: () {
-                    if (walletType == 'INR') {
-                      Navigator.push(context, MaterialPageRoute(builder: (context) => const InrDepositScreen()));
-                    } else {
-                      Navigator.push(context, MaterialPageRoute(builder: (context) => const DepositScreen()));
-                    }
-                  },
-                  child: Container(
-                    width: 50,
-                    padding: const EdgeInsets.symmetric(vertical: 3),
-                    decoration: BoxDecoration(
-                      color: walletType == 'INR' ? const Color(0xFF84BD00).withOpacity(0.2) : const Color(0xFF2C2C2E),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      'Deposit',
-                      style: TextStyle(
-                        color: walletType == 'INR' ? const Color(0xFF84BD00) : Colors.white70, 
-                        fontSize: 9, 
-                        fontWeight: FontWeight.w500
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 3),
-                GestureDetector(
-                  onTap: () {
-                    if (walletType == 'INR') {
-                      Navigator.push(context, MaterialPageRoute(builder: (context) => const InrWithdrawUpiScreen()));
-                    } else {
-                      Navigator.push(context, MaterialPageRoute(builder: (context) => const WithdrawScreen()));
-                    }
-                  },
-                  child: Container(
-                    width: 50,
-                    padding: const EdgeInsets.symmetric(vertical: 3),
-                    decoration: BoxDecoration(
-                      color: walletType == 'INR' ? const Color(0xFF84BD00) : const Color(0xFF84BD00),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      'Withdraw',
-                      style: TextStyle(
-                        color: Colors.black, 
-                        fontSize: 9, 
-                        fontWeight: FontWeight.w600
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Helper methods for wallet styling
-  IconData _getWalletIcon(String walletType) {
-    switch (walletType.toUpperCase()) {
-      case 'INR':
-        return Icons.currency_rupee;
-      case 'USDT':
-      case 'USDC':
-        return Icons.attach_money;
-      case 'BTC':
-        return Icons.currency_bitcoin;
-      case 'ETH':
-        return Icons.currency_exchange;
-      case 'SPOT':
-        return Icons.show_chart;
-      case 'P2P':
-        return Icons.swap_horiz;
-      case 'MAIN':
-        return Icons.account_balance;
-
-      default:
-        return Icons.wallet;
-    }
-  }
-  
-  Color _getWalletColor(String walletType) {
-    switch (walletType.toUpperCase()) {
-      case 'INR':
-        return const Color(0xFF84BD00);
-      case 'USDT':
-        return const Color(0xFF26A17B);
-      case 'USDC':
-        return const Color(0xFF2775CA);
-      case 'BTC':
-        return const Color(0xFFF7931A);
-      case 'ETH':
-        return const Color(0xFF627EEA);
-      case 'SPOT':
-        return const Color(0xFF9333EA);
-      case 'P2P':
-        return const Color(0xFF10B981);
-      case 'MAIN':
-        return const Color(0xFF3B82F6);
-
-      default:
-        return Colors.grey;
-    }
-  }
-  
-  String _getWalletSubtitle(String walletType) {
-    switch (walletType.toUpperCase()) {
-      case 'INR':
-        return 'Indian Rupee';
-      case 'USDT':
-        return 'Tether USD';
-      case 'USDC':
-        return 'USD Coin';
-      case 'BTC':
-        return 'Bitcoin';
-      case 'ETH':
-        return 'Ethereum';
-      case 'SPOT':
-        return 'Spot Trading';
-      case 'P2P':
-        return 'Peer-to-Peer';
-      case 'MAIN':
-        return 'Main Wallet';
-
-      default:
-        return 'Digital Asset';
-    }
-  }
-
-  Widget _buildToggleButton(String text, bool isSelected) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: isSelected ? const Color(0xFF84BD00) : const Color(0xFF2C2C2E),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(color: isSelected ? Colors.black : Colors.white70, fontSize: 11, fontWeight: FontWeight.w600),
-      ),
-    );
-  }
-
-  Widget _buildAssetRow(String symbol, String label, String balance, String price) {
-    return Row(
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(symbol, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              Text('USDT Price: $price', style: const TextStyle(color: Colors.white38, fontSize: 12)),
-            ],
-          ),
-        ),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Text(label, style: const TextStyle(color: Colors.white38, fontSize: 12)),
-              const SizedBox(height: 4),
-              Text(balance, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
-            ],
-          ),
-        ),
-        Column(
-          children: [
-            GestureDetector(
-              onTap: () {
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const WithdrawScreen()));
-              },
-              child: _buildAssetActionButton('Withdraw', const Color(0xFF84BD00)),
-            ),
-            const SizedBox(height: 8),
-            GestureDetector(
-              onTap: () {
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const DepositScreen()));
-              },
-              child: _buildAssetActionButton('Deposit', Colors.white10),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildAssetActionButton(String text, Color color) {
-    return Container(
-      width: 80,
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(4),
-      ),
-      alignment: Alignment.center,
-      child: Text(
-        text,
-        style: TextStyle(color: color == const Color(0xFF84BD00) ? Colors.black : Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-      ),
-    );
-  }
-
-  Widget _buildTrustedDevicesContent() {
-    if (_isLoadingDevices) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-        child: const Center(
-          child: BitcoinLoadingIndicator(size: 40),
-        ),
-      );
-    }
-
-    if (_trustedDevices.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-        child: Center(
-          child: Column(
-            children: [
-              Icon(
-                Icons.devices_outlined,
-                size: 48,
-                color: Colors.grey[600],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'No trusted devices found',
-                style: TextStyle(
-                  color: Colors.grey[400],
-                  fontSize: 16,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Your trusted devices will appear here',
-                style: TextStyle(
-                  color: Colors.grey[500],
-                  fontSize: 14,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      child: Column(
-        children: _trustedDevices.map((device) {
-          // Extract data from API response
-          final trusted = device['isTrusted'] == true || device['trusted'] == true ? 'YES' : 'NO';
-          final ip = device['ipAddress'] ?? device['ip'] ?? 'Unknown IP';
-          final date = device['lastLoginAt'] ?? device['createdAt'] ?? 'Unknown Date';
-          final deviceName = device['deviceName'] ?? device['deviceType'] ?? 'Unknown Device';
-          final deviceId = device['id']?.toString() ?? device['_id']?.toString() ?? '';
-          
-          return Column(
-            children: [
-              _buildDeviceItem(trusted, ip, date, deviceName, deviceId),
-              if (device != _trustedDevices.last) 
-                const Divider(color: Colors.white10, height: 32),
-            ],
-          );
-        }).toList(),
-      ),
-    );
-  }
-
-  Widget _buildDeviceItem(String trusted, String ip, String date, String device, String deviceId) {
-    return Row(
-      children: [
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.only(left: 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Trusted device', style: TextStyle(color: Colors.white38, fontSize: 11)),
-              const SizedBox(height: 4),
-              Text(trusted, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              const Text('Recent Activity', style: TextStyle(color: Colors.white38, fontSize: 11)),
-              const SizedBox(height: 4),
-              Text(date, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-            ],
-          ),
-        ),
-        ),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Login IP', style: TextStyle(color: Colors.white38, fontSize: 11)),
-              const SizedBox(height: 4),
-              Text(ip, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              const Text('Recent Activity Device', style: TextStyle(color: Colors.white38, fontSize: 11)),
-              const SizedBox(height: 4),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(device, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-                  ),
-                  if (deviceId.isNotEmpty) ...[
-                    const SizedBox(width: 8),
-                    Icon(
-                      Icons.verified_user_outlined,
-                      color: trusted == 'YES' ? const Color(0xFF84BD00) : Colors.grey[600],
-                      size: 16,
-                    ),
-                  ],
-                ],
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildUSMESection() {
-    return _buildExpandableSection(
-      title: 'Security & Devices',
-      isExpanded: true,
-      onTap: () {},
-      content: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 16),
-          
-
-          
-
-          const SizedBox(height: 12),
-          
-          // Trusted Devices Content
-          if (_isLoadingDevices)
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1C1C1E),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Center(
-                child: CircularProgressIndicator(color: Color(0xFF84BD00)),
-              ),
-            )
-          else if (_trustedDevices.isEmpty)
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1C1C1E),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Center(
-                child: Column(
-                  children: [
-                    Icon(
-                      Icons.devices_outlined,
-                      size: 32,
-                      color: Colors.grey[600],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'No trusted devices found',
-                      style: TextStyle(
-                        color: Colors.grey[400],
-                        fontSize: 14,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          else
-            Column(
-              children: _trustedDevices.map((device) {
-                final trusted = device['isTrusted'] == true || device['trusted'] == true ? 'YES' : 'NO';
-                final ip = device['ipAddress'] ?? device['ip'] ?? 'Unknown IP';
-                final date = device['lastLoginAt'] ?? device['createdAt'] ?? 'Unknown Date';
-                final deviceName = device['deviceName'] ?? device['deviceType'] ?? 'Unknown Device';
-                final deviceId = device['id']?.toString() ?? device['_id']?.toString() ?? '';
-                
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1C1C1E),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: trusted == 'YES' ? const Color(0xFF84BD00) : const Color(0xFF2C2C2E),
-                      width: 1,
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Device: $deviceName',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Status: $trusted',
-                                  style: TextStyle(
-                                    color: trusted == 'YES' ? const Color(0xFF84BD00) : Colors.grey[400],
-                                    fontSize: 12,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Last Activity: $date',
-                                  style: const TextStyle(
-                                    color: Color(0xFF8E8E93),
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Icon(
-                            Icons.verified_user_outlined,
-                            color: trusted == 'YES' ? const Color(0xFF84BD00) : Colors.grey[600],
-                            size: 20,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.location_on_outlined,
-                            color: const Color(0xFF8E8E93),
-                            size: 16,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'IP Address: $ip',
-                            style: const TextStyle(
-                              color: Color(0xFF8E8E93),
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                );
-              }).toList(),
-            ),
-          
-          const SizedBox(height: 32),
-          
-          // IP Address Summary
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1C1C1E),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFF2C2C2E)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.network_check_outlined,
-                      color: const Color(0xFF84BD00),
-                      size: 20,
-                    ),
-                    const SizedBox(width: 12),
-                    const Text(
-                      'IP Address Summary',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Current Session IP',
-                            style: TextStyle(color: Color(0xFF8E8E93), fontSize: 12),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            _userService.ipAddress ?? 'Loading...',
-                            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF84BD00).withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Text(
-                        'Secure',
-                        style: TextStyle(
-                          color: const Color(0xFF84BD00),
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPortfolioSummary() {
-    double totalPortfolioValue = 0.0;
-    
-    try {
-      // Calculate total portfolio value in USDT
-      if (_selectedView == 'wallet') {
-        // Wallet view: sum all wallet balances
-        final wallets = ['Main', 'SPOT', 'P2P', 'INR'];
-        for (String wallet in wallets) {
-          try {
-            final balanceStr = _getWalletBalance(wallet);
-            final balance = _parseBalanceValue(balanceStr, wallet == 'INR' ? 'INR' : 'USDT');
-            if (wallet == 'INR') {
-              // Convert INR to USDT using current conversion rate
-              totalPortfolioValue += balance * _inrToUsdtRate;
-            } else {
-              totalPortfolioValue += balance;
-            }
-          } catch (e) {
-            debugPrint('Error calculating balance for wallet $wallet: $e');
-            // Continue with other wallets even if one fails
-          }
-        }
-      } else if (_selectedView == 'coin') {
-        // Coin view: sum all coin values
-        final coins = ['INR', 'USDT', 'BTC', 'ETH'];
-        for (String coin in coins) {
-          try {
-            if (coin == 'USDT') {
-              final balanceStr = _getCoinBalance(coin);
-              final balance = _parseBalanceValue(balanceStr, 'USDT');
-              totalPortfolioValue += balance;
-            } else if (coin == 'BTC' || coin == 'ETH') {
-              final balanceStr = _getCoinBalance(coin);
-              final balance = _parseBalanceValue(balanceStr, coin);
-              final price = _assetPrices[coin] ?? 0.0;
-              totalPortfolioValue += balance * price;
-            } else if (coin == 'INR') {
-              final balanceStr = _getCoinBalance(coin);
-              final balance = _parseBalanceValue(balanceStr, 'INR');
-              totalPortfolioValue += balance * _inrToUsdtRate; // Convert INR to USDT
-            }
-          } catch (e) {
-            debugPrint('Error calculating value for coin $coin: $e');
-            // Continue with other coins even if one fails
-          }
-        }
-      } else if (_selectedView == 'spot') {
-        // Spot view: sum all spot holdings
-        final spotCoins = _getSpotCoinsFromData();
-        for (final coin in spotCoins) {
-          try {
-            final assetName = coin['asset'] as String;
-            final total = coin['total'] as double;
-
-            if (total > 0) {
-              if (assetName == 'USDT') {
-                totalPortfolioValue += total;
-              } else if (assetName == 'INR') {
-                totalPortfolioValue += total * _inrToUsdtRate;
-              } else {
-                // Get price from asset prices
-                final price = _assetPrices[assetName] ?? 0.0;
-                if (price > 0) {
-                  totalPortfolioValue += total * price;
-                }
-              }
-            }
-          } catch (e) {
-            debugPrint('Error calculating value for spot coin: $e');
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint('Error in portfolio calculation: $e');
-      // Return 0 if everything fails
-      totalPortfolioValue = 0.0;
-    }
-    
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1C1C1E),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF84BD00).withOpacity(0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    Icons.account_balance_wallet_outlined,
-                    color: const Color(0xFF84BD00),
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'Total Portfolio Value',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-              GestureDetector(
-                onTap: _loadConversionRate,
-                child: Icon(
-                  Icons.refresh,
-                  color: Colors.white54,
-                  size: 16,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(
-            _isWalletHidden 
-                ? '*** USDT' 
-                : '\$${totalPortfolioValue.toStringAsFixed(2)} USDT',
-            style: TextStyle(
-              color: const Color(0xFF84BD00),
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          if (!_isWalletHidden) ...[
-            const SizedBox(height: 8),
-            Text(
-              'Equivalent to all your assets combined',
-              style: TextStyle(
-                color: Colors.white54,
-                fontSize: 12,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'INR to USDT: 1 INR = $_inrToUsdtRate USDT',
-              style: TextStyle(
-                color: const Color(0xFF84BD00),
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            Text(
-              'USDT to INR: 1 USDT = $_usdtToInrRate INR',
-              style: TextStyle(
-                color: const Color(0xFF84BD00),
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLogoutButton() {
-    return GestureDetector(
-      onTap: () => _showLogoutConfirmDialog(),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 24),
-        decoration: BoxDecoration(
-          color: const Color(0xFFFF3B30),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.logout,
-              color: Colors.white,
-              size: 20,
-            ),
-            SizedBox(width: 8),
-            Text(
-              'Logout',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showLogoutConfirmDialog() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF1C1C1E),
-          title: const Text(
-            'Logout',
-            style: TextStyle(color: Colors.white),
-          ),
-          content: const Text(
-            'Are you sure you want to logout?',
-            style: TextStyle(color: Colors.white70),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text(
-                'Cancel',
-                style: TextStyle(color: Colors.grey),
-              ),
-            ),
-            TextButton(
-              onPressed: () async {
-                Navigator.of(context).pop();
-                await _handleLogout();
-              },
-              child: const Text(
-                'Logout',
-                style: TextStyle(color: Color(0xFFFF3B30)),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _handleLogout() async {
-    final result = await AuthService.logout();
-    if (result['success'] == true) {
-      // Navigate to login screen and clear all previous routes
-      if (mounted) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (context) => LoginScreen()),
-          (route) => false,
-        );
-      }
-    } else {
-      // Show error
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result['message'] ?? 'Logout failed'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  Widget _buildLogoutTile() {
-    return GestureDetector(
-      onTap: () => _showLogoutConfirmDialog(),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: const Color(0xFF1C1C1E),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: const Row(
-          children: [
-            Icon(Icons.logout, color: Color(0xFFFF3B30), size: 22),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'Logout',
-                style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
-              ),
-            ),
-            const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 14),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // Spot Holdings view - displays coins in card format like wallet screen
-  Widget _buildSpotHoldingsList() {
-    // Get spot coins from wallet data
-    final List<Map<String, dynamic>> spotCoins = _getSpotCoinsFromData();
-
-    if (spotCoins.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: const Color(0xFF1C1C1E),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: const Center(
-          child: Text(
-            'No spot holdings found',
-            style: TextStyle(color: Colors.white54, fontSize: 12),
-          ),
-        ),
-      );
-    }
-
-    return SizedBox(
-      height: 320,
-      child: ListView.builder(
-        itemCount: spotCoins.length,
-        itemBuilder: (context, index) => _buildSpotCoinItem(spotCoins[index]),
-      ),
-    );
-  }
-
-  // Coin icon URL helper - same as wallet screen
-  String _getCoinIconUrl(String coin) {
-    switch (coin.toUpperCase()) {
-      case 'BTC': return 'https://assets.coingecko.com/coins/images/1/small/bitcoin.png';
-      case 'ETH': return 'https://assets.coingecko.com/coins/images/279/small/ethereum.png';
-      case 'USDT': return 'https://assets.coingecko.com/coins/images/325/small/Tether.png';
-      case 'BNB': return 'https://assets.coingecko.com/coins/images/825/small/bnb-icon2_2x.png';
-      case 'SOL': return 'https://assets.coingecko.com/coins/images/4128/small/solana.png';
-      case 'ADA': return 'https://assets.coingecko.com/coins/images/975/small/cardano.png';
-      case 'DOT': return 'https://assets.coingecko.com/coins/images/12171/small/polkadot.png';
-      case 'MATIC': return 'https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png';
-      case 'AVAX': return 'https://assets.coingecko.com/coins/images/12559/small/Avalanche_Circle_RedWhite_Trans.png';
-      case 'LINK': return 'https://assets.coingecko.com/coins/images/877/small/chainlink-new-logo.png';
-      case 'UNI': return 'https://assets.coingecko.com/coins/images/12504/small/uniswap-uni.png';
-      case 'LTC': return 'https://assets.coingecko.com/coins/images/2/small/litecoin.png';
-      case 'XRP': return 'https://assets.coingecko.com/coins/images/44/small/xrp-symbol-white-128.png';
-      default: return '';
-    }
-  }
-
-  String _getCoinSymbol(String coin) {
-    switch (coin.toUpperCase()) {
-      case 'BTC': return '₿';
-      case 'ETH': return 'Ξ';
-      case 'USDT': return '₮';
-      default: return coin.isNotEmpty ? coin.substring(0, 1).toUpperCase() : '?';
-    }
-  }
-
-  int _coinDecimals(String symbol) {
-    if (symbol.toUpperCase() == 'BTC' || symbol.toUpperCase() == 'ETH') return 8;
-    return 2;
-  }
-
-  // Card-style coin item like wallet screen
-  Widget _buildSpotCoinItem(Map<String, dynamic> coin) {
-    final asset = coin['asset'] as String;
-    final total = coin['total'] as double;
-    final free = coin['free'] as double;
-    final locked = coin['locked'] as double;
-
-    final iconUrl = _getCoinIconUrl(asset);
-    final color = _getCoinColor(asset);
-    final symbol = _getCoinSymbol(asset);
-    final name = _getCoinFullName(asset);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1C1C1E),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white.withOpacity(0.05)),
-      ),
-      child: Row(
-        children: [
-          // Coin Icon
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              shape: BoxShape.circle,
-            ),
-            child: iconUrl.isNotEmpty
-                ? ClipOval(
-                    child: Image.network(
-                      iconUrl,
-                      width: 40,
-                      height: 40,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Center(
-                        child: Text(
-                          symbol,
-                          style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16),
-                        ),
-                      ),
-                    ),
-                  )
-                : Center(
-                    child: Text(
-                      symbol,
-                      style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16),
-                    ),
-                  ),
-          ),
-          const SizedBox(width: 12),
-          // Coin Info
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  asset,
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  name,
-                  style: const TextStyle(color: Colors.white54, fontSize: 10),
-                ),
-              ],
-            ),
-          ),
-          // Balance Info + Buttons
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                _isWalletHidden ? '***' : total.toStringAsFixed(_coinDecimals(asset)),
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                _isWalletHidden ? '*** avail' : '${free.toStringAsFixed(_coinDecimals(asset))} avail',
-                style: const TextStyle(color: Colors.white54, fontSize: 9),
-              ),
-              if (locked > 0)
-                Text(
-                  _isWalletHidden ? '*** locked' : '${locked.toStringAsFixed(_coinDecimals(asset))} locked',
-                  style: const TextStyle(color: Colors.orange, fontSize: 8),
-                ),
-              const SizedBox(height: 6),
-              // Deposit & Withdraw Buttons
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  GestureDetector(
-                    onTap: () => _showDepositDialog(asset),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF2C2C2E),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Text(
-                        'Deposit',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 8,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  GestureDetector(
-                    onTap: () => _showWithdrawDialog(asset),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF84BD00),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Text(
-                        'Withdraw',
-                        style: TextStyle(
-                          color: Colors.black,
-                          fontSize: 8,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSpotTableHeader() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Row(
-        children: [
-          const Expanded(
-            flex: 2,
-            child: Text(
-              'Token',
-              style: TextStyle(
-                color: Colors.white54,
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-          const Expanded(
-            flex: 3,
-            child: Text(
-              'Spot Wallet Balance',
-              style: TextStyle(
-                color: Colors.white54,
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-          Container(
-            width: 140,
-            alignment: Alignment.centerRight,
-            child: const Text(
-              'Actions',
-              style: TextStyle(
-                color: Colors.white54,
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSpotTableRow(Map<String, dynamic> coin) {
-    final asset = coin['asset'] as String;
-    final total = coin['total'] as double;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: Colors.white.withOpacity(0.1), width: 0.5),
-        ),
-      ),
-      child: Row(
-        children: [
-          // Token
-          Expanded(
-            flex: 2,
-            child: Text(
-              asset,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          // Spot Wallet Balance
-          Expanded(
-            flex: 3,
-            child: Text(
-              '${_formatCoinBalance(total, asset)} $asset',
-              style: const TextStyle(
-                color: Color(0xFF84BD00),
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-          // Actions
-          SizedBox(
-            width: 140,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                // Trend icon - smaller
-                Container(
-                  width: 24,
-                  height: 24,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF84BD00).withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: const Icon(
-                    Icons.trending_up,
-                    color: Color(0xFF84BD00),
-                    size: 14,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                // Deposit button - smaller
-                GestureDetector(
-                  onTap: () => _showDepositDialog(asset),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF2C2C2E),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: const Text(
-                      'Deposit',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                // Withdraw button - smaller
-                GestureDetector(
-                  onTap: () => _showWithdrawDialog(asset),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF84BD00),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: const Text(
-                      'Withdraw',
-                      style: TextStyle(
-                        color: Colors.black,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Extract spot coins from wallet data
-  List<Map<String, dynamic>> _getSpotCoinsFromData() {
-    final List<Map<String, dynamic>> coins = [];
-    final data = _walletBalances;
-    
-    // Check spot_raw or raw_assets from SpotService
-    final rawAssets = data['spot_raw'] ?? data['raw_assets'];
-    if (rawAssets is List) {
-      for (final asset in rawAssets) {
-        if (asset is Map) {
-          final assetName = asset['asset']?.toString().toUpperCase() ?? '';
-          final free = double.tryParse(asset['free']?.toString() ?? asset['available']?.toString() ?? '0') ?? 0.0;
-          final locked = double.tryParse(asset['locked']?.toString() ?? '0') ?? 0.0;
-          final total = free + locked;
-          
-          // Add all coins including zero balance
-          coins.add({
-            'asset': assetName,
-            'free': free,
-            'locked': locked,
-            'total': total,
-          });
-        }
-      }
-    }
-    
-    // Check spot_assets format
-    if (data['spot_assets'] is Map) {
-      final spotAssets = data['spot_assets'] as Map;
-      spotAssets.forEach((key, value) {
-        if (value is Map) {
-          final assetName = key.toString().toUpperCase();
-          final free = double.tryParse(value['free']?.toString() ?? value['available']?.toString() ?? '0') ?? 0.0;
-          final locked = double.tryParse(value['locked']?.toString() ?? '0') ?? 0.0;
-          final total = free + locked;
-          
-          // Skip if already added from raw_assets, add all including zero
-          if (!coins.any((c) => c['asset'] == assetName)) {
-            coins.add({
-              'asset': assetName,
-              'free': free,
-              'locked': locked,
-              'total': total,
-            });
-          }
-        }
-      });
-    }
-    
-    // Check spot balance from SocketService
-    if (data['spot'] != null && data['spot'] is Map) {
-      final spot = data['spot'] as Map;
-      final balances = spot['balances'];
-      if (balances is List) {
-        for (final bal in balances) {
-          if (bal is Map) {
-            final assetName = bal['coin']?.toString().toUpperCase() ?? bal['asset']?.toString().toUpperCase() ?? '';
-            final free = double.tryParse(bal['available']?.toString() ?? '0') ?? 0.0;
-            final locked = double.tryParse(bal['locked']?.toString() ?? '0') ?? 0.0;
-            final total = double.tryParse(bal['total']?.toString() ?? '0') ?? (free + locked);
-            
-            if (total > 0 && !coins.any((c) => c['asset'] == assetName)) {
-              coins.add({
-                'asset': assetName,
-                'free': free,
-                'locked': locked,
-                'total': total,
-              });
-            }
-          }
-        }
-      }
-    }
-    
-    return coins;
-  }
-
-  String _formatCoinBalance(double amount, String coin) {
-    if (_isWalletHidden) return '***';
-    if (coin == 'BTC' || coin == 'ETH') {
-      return amount.toStringAsFixed(6);
-    }
-    return amount.toStringAsFixed(2);
-  }
-
-  IconData _getCoinIcon(String coin) {
-    switch (coin.toUpperCase()) {
-      case 'INR':
-        return Icons.currency_rupee;
-      case 'USDT':
-      case 'USDC':
-        return Icons.attach_money;
-      case 'BTC':
-        return Icons.currency_bitcoin;
-      case 'ETH':
-        return Icons.currency_exchange;
-      case 'BNB':
-        return Icons.token;
-      case 'SOL':
-        return Icons.wb_sunny;
-      default:
-        return Icons.token_outlined;
-    }
-  }
-
-  Color _getCoinColor(String coin) {
-    switch (coin.toUpperCase()) {
-      case 'INR':
-        return const Color(0xFFE44134);
-      case 'USDT':
-        return const Color(0xFF26A17B);
-      case 'USDC':
-        return const Color(0xFF2775CA);
-      case 'BTC':
-        return const Color(0xFFF7931A);
-      case 'ETH':
-        return const Color(0xFF627EEA);
-      case 'BNB':
-        return const Color(0xFFF3BA2F);
-      case 'SOL':
-        return const Color(0xFF14F195);
-      default:
-        return const Color(0xFF84BD00);
-    }
-  }
-
-  String _getCoinFullName(String coin) {
-    switch (coin.toUpperCase()) {
-      case 'INR':
-        return 'Indian Rupee';
-      case 'USDT':
-        return 'Tether';
-      case 'USDC':
-        return 'USD Coin';
-      case 'BTC':
-        return 'Bitcoin';
-      case 'ETH':
-        return 'Ethereum';
-      case 'BNB':
-        return 'Binance Coin';
-      case 'SOL':
-        return 'Solana';
-      default:
-        return coin;
-    }
-  }
-
-  void _showDepositDialog(String asset) {
-    // Navigate to actual deposit screen
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => const DepositScreen()),
-    );
-  }
-
-  void _showSpotTradeDialog(String asset) {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF1C1C1E),
-          title: Text(
-            'Trade $asset',
-            style: const TextStyle(color: Colors.white, fontSize: 16),
-          ),
-          content: Text(
-            'Trading functionality coming soon!',
-            style: const TextStyle(color: Colors.white70),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text(
-                'OK',
-                style: TextStyle(color: Color(0xFF84BD00)),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showWithdrawDialog(String asset) {
-    // Navigate to actual withdraw screen
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => const WithdrawScreen()),
-    );
-  }
 }

@@ -1,8 +1,190 @@
 import 'package:flutter/material.dart';
 import 'kyc_digilocker_screen.dart';
+import 'kyc_selfie_screen.dart';
+import 'user_profile_screen.dart';
+import 'update_profile_screen.dart';
+import '../services/user_service.dart';
 
-class KYCDigiLockerInstructionScreen extends StatelessWidget {
+class KYCDigiLockerInstructionScreen extends StatefulWidget {
   const KYCDigiLockerInstructionScreen({super.key});
+
+  @override
+  State<KYCDigiLockerInstructionScreen> createState() =>
+      _KYCDigiLockerInstructionScreenState();
+}
+
+class _KYCDigiLockerInstructionScreenState
+    extends State<KYCDigiLockerInstructionScreen> {
+  final UserService _userService = UserService();
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkKYCStatusAndRedirect();
+      _checkProfileAndShowDialog();
+    });
+  }
+
+  Future<void> _checkKYCStatusAndRedirect() async {
+    try {
+      await _userService.fetchProfileDataFromAPI();
+      if (!mounted) return;
+
+      debugPrint('=== Instruction Screen: KYC Status Check ===');
+      debugPrint('documentImageVerified: ${_userService.documentImageVerified}');
+      debugPrint('kycStatus: ${_userService.kycStatus}');
+      debugPrint('shouldResumeKYCAtSelfieStep: ${_userService.shouldResumeKYCAtSelfieStep}');
+      debugPrint('needsSelfieUpload: ${_userService.needsSelfieUpload()}');
+
+      // PRIORITY 1: If documents are verified, go directly to selfie (even if rejected)
+      if (_userService.documentImageVerified == true) {
+        debugPrint('✅ Instruction screen: Documents verified, redirecting to selfie');
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const KYCSelfieScreen()),
+        );
+        return;
+      }
+
+      // PRIORITY 2: Check if should resume at selfie step
+      if (_userService.shouldResumeKYCAtSelfieStep) {
+        debugPrint('✅ Instruction screen: Should resume at selfie, redirecting');
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const KYCSelfieScreen()),
+        );
+        return;
+      }
+
+      final status = _userService.kycStatus.toLowerCase();
+      if (status == 'completed' ||
+          status == 'verified' ||
+          status == 'approved') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Your KYC is already verified!'),
+            backgroundColor: Color(0xFF84BD00),
+          ),
+        );
+        Navigator.of(context).pop();
+        return;
+      }
+
+      // If KYC is pending but document not verified (incomplete), allow restart
+      if (_userService.canRestartKYC()) {
+        // Don't block - let user proceed to restart KYC
+        return;
+      }
+
+      if (status == 'pending' ||
+          status == 'submitted' ||
+          status == 'processing') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Your KYC is already under review.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        Navigator.of(context).pop();
+        return;
+      }
+    } catch (e) {
+      debugPrint('Error checking KYC status on instruction screen: $e');
+    }
+  }
+
+  // Check if profile is complete
+  bool _isProfileComplete() {
+    return _userService.hasEmail() &&
+        _userService.userPhone != null &&
+        _userService.userPhone!.isNotEmpty;
+  }
+
+  // Check profile and show dialog if incomplete
+  void _checkProfileAndShowDialog() {
+    if (!_isProfileComplete()) {
+      _showProfileRequiredDialog();
+    }
+  }
+
+  // Show profile completion required dialog
+  void _showProfileRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text(
+            'Profile Incomplete',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'Please complete your profile (email and phone number) before starting KYC verification.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).pop(); // Go back to previous screen
+              },
+              child: const Text(
+                'Go Back',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const UpdateProfileScreen(),
+                  ),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF84BD00),
+              ),
+              child: const Text(
+                'Complete Profile',
+                style: TextStyle(color: Colors.black),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _proceedToKYC() {
+    debugPrint('=== _proceedToKYC called ===');
+    debugPrint('documentImageVerified: ${_userService.documentImageVerified}');
+    debugPrint('isProfileComplete: ${_isProfileComplete()}');
+    
+    if (_isProfileComplete()) {
+      // If documents already verified, go directly to selfie
+      if (_userService.documentImageVerified == true) {
+        debugPrint('✅ Instruction screen: Documents already verified, going to selfie');
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const KYCSelfieScreen()),
+        );
+        return;
+      }
+      
+      // Otherwise, go to DigiLocker screen
+      debugPrint('➡️ Going to DigiLocker screen');
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => const KYCDigiLockerScreen()),
+      );
+    } else {
+      debugPrint('⚠️ Profile incomplete, showing dialog');
+      _showProfileRequiredDialog();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -24,10 +206,14 @@ class KYCDigiLockerInstructionScreen extends StatelessWidget {
           children: [
             const Text(
               'Know Your Customers (KYC)',
-              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const Text(
-              'DigiLocker Setup (1/3)',
+              'DigiLocker Setup (1/2)',
               style: TextStyle(color: Colors.white70, fontSize: 12),
             ),
           ],
@@ -95,19 +281,22 @@ class KYCDigiLockerInstructionScreen extends StatelessWidget {
             _buildInstructionItem(
               icon: Icons.smartphone,
               title: 'DigiLocker Account',
-              description: 'You need an active DigiLocker account linked to your mobile number.',
+              description:
+                  'You need an active DigiLocker account linked to your mobile number.',
             ),
             const SizedBox(height: 16),
             _buildInstructionItem(
               icon: Icons.description,
               title: 'Aadhaar Linked',
-              description: 'Your DigiLocker should have your Aadhaar card linked for verification.',
+              description:
+                  'Your DigiLocker should have your Aadhaar card linked for verification.',
             ),
             const SizedBox(height: 16),
             _buildInstructionItem(
               icon: Icons.security,
               title: 'Secure Process',
-              description: 'Your data is securely fetched directly from DigiLocker. We do not store your documents.',
+              description:
+                  'Your data is securely fetched directly from DigiLocker. We do not store your documents.',
             ),
             const SizedBox(height: 40),
             // Steps
@@ -144,14 +333,7 @@ class KYCDigiLockerInstructionScreen extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const KYCDigiLockerScreen(),
-                    ),
-                  );
-                },
+                onPressed: _proceedToKYC,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF84BD00),
                   foregroundColor: Colors.black,
@@ -163,10 +345,7 @@ class KYCDigiLockerInstructionScreen extends StatelessWidget {
                 ),
                 child: const Text(
                   'Continue',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                 ),
               ),
             ),
@@ -191,10 +370,7 @@ class KYCDigiLockerInstructionScreen extends StatelessWidget {
                 ),
                 child: const Text(
                   'Back',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                 ),
               ),
             ),
@@ -219,11 +395,7 @@ class KYCDigiLockerInstructionScreen extends StatelessWidget {
             color: const Color(0xFF84BD00).withOpacity(0.1),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Icon(
-            icon,
-            color: const Color(0xFF84BD00),
-            size: 24,
-          ),
+          child: Icon(icon, color: const Color(0xFF84BD00), size: 24),
         ),
         const SizedBox(width: 16),
         Expanded(
@@ -279,10 +451,7 @@ class KYCDigiLockerInstructionScreen extends StatelessWidget {
         Expanded(
           child: Text(
             text,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 14,
-            ),
+            style: const TextStyle(color: Colors.white70, fontSize: 14),
           ),
         ),
       ],

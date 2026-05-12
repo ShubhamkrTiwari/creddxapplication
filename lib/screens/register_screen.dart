@@ -43,7 +43,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
       });
 
       try {
-        final result = await AuthService.signupSendOtp(_emailController.text.trim());
+        final referralCode = _referralController.text.trim().isNotEmpty ? _referralController.text.trim() : null;
+        final result = await AuthService.signupSendOtp(
+          _emailController.text.trim(),
+          referralCode: referralCode,
+        );
 
         if (result['success']) {
           _showSuccess('OTP sent to your email!');
@@ -74,10 +78,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
       });
 
       try {
+        final referralCode = _referralController.text.trim().isNotEmpty ? _referralController.text.trim() : null;
+        debugPrint('=== REGISTER SCREEN DEBUG ===');
+        debugPrint('Email: ${_emailController.text.trim()}');
+        debugPrint('OTP: ${_otpController.text.trim()}');
+        debugPrint('Referral Code Raw: "${_referralController.text.trim()}"');
+        debugPrint('Referral Code Is Empty: ${_referralController.text.trim().isEmpty}');
+        debugPrint('Referral Code To Send: $referralCode');
+        
         final result = await AuthService.completeSignupWithOtp(
           _emailController.text.trim(),
           _otpController.text.trim(),
-          referralCode: _referralController.text.trim().isNotEmpty ? _referralController.text.trim() : null,
+          referralCode: referralCode,
         );
 
         if (result['success']) {

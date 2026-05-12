@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/wallet_service.dart';
+import '../services/socket_service.dart';
+import '../services/unified_wallet_service.dart' as unified;
 import 'otp_verification_screen.dart';
 
 class InternalDepositScreen extends StatefulWidget {
@@ -21,6 +24,8 @@ class _InternalDepositScreenState extends State<InternalDepositScreen> with Sing
   double _availableBalance = 0.0;
   List<Map<String, dynamic>> _transferHistory = [];
   late TabController _tabController;
+  StreamSubscription? _balanceSubscription;
+  StreamSubscription? _unifiedWalletSubscription;
 
   @override
   void initState() {
@@ -28,43 +33,44 @@ class _InternalDepositScreenState extends State<InternalDepositScreen> with Sing
     _tabController = TabController(length: 2, vsync: this);
     _fetchBalance();
     _fetchTransferHistory();
+    _subscribeToBalance();
+    _subscribeToUnifiedWallet();
+  }
+
+  void _subscribeToUnifiedWallet() {
+    _unifiedWalletSubscription = unified.UnifiedWalletService.walletBalanceStream.listen((walletBalance) {
+      if (mounted && walletBalance != null) {
+        setState(() {
+          // Show Main wallet USDT balance only (same as send_screen.dart)
+          final mainBalance = unified.UnifiedWalletService.mainUSDTBalance;
+          _availableBalance = mainBalance;
+          debugPrint('Internal Deposit Screen: Main wallet balance updated: $_availableBalance USDT');
+        });
+      }
+    });
   }
 
   Future<void> _fetchBalance() async {
-    try {
-      final result = await WalletService.getAllWalletBalances();
-      if (result['success'] == true && result['data'] != null) {
-        final data = result['data'];
-        double totalAvailable = 0.0;
-
-        // Sum up USDT from all wallet types
-        final walletTypeMap = {
-          'spot': 'spotBalance',
-          'main': 'mainBalance',
-          'p2p': 'p2pBalance',
-          'bot': 'botBalance',
-        };
-
-        for (String type in walletTypeMap.keys) {
-          final fieldName = walletTypeMap[type]!;
-          final walletData = data[fieldName];
-
-          if (walletData != null) {
-            if (walletData is Map && walletData['USDT'] != null) {
-              totalAvailable += double.tryParse(walletData['USDT'].toString()) ?? 0.0;
-            } else if (walletData is num) {
-              totalAvailable += walletData.toDouble();
-            }
-          }
-        }
-
-        setState(() {
-          _availableBalance = totalAvailable;
-        });
-      }
-    } catch (e) {
-      print('Error fetching balance: $e');
+    // Use UnifiedWalletService for consistent and accurate balance data
+    await unified.UnifiedWalletService.refreshAllBalances();
+    
+    if (mounted) {
+      setState(() {
+        // Show Main wallet USDT balance only (same as send_screen.dart)
+        final mainBalance = unified.UnifiedWalletService.mainUSDTBalance;
+        _availableBalance = mainBalance;
+        debugPrint('Internal Deposit Screen: Main wallet balance fetched: $_availableBalance USDT');
+      });
     }
+  }
+
+  void _subscribeToBalance() {
+    _balanceSubscription = SocketService.balanceStream.listen((data) {
+      if (mounted && (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary')) {
+        // Socket updates are handled by UnifiedWalletService, which will trigger _subscribeToUnifiedWallet
+        debugPrint('Internal Deposit Screen: Socket balance update received, will be processed by UnifiedWalletService');
+      }
+    });
   }
 
   Future<void> _fetchTransferHistory() async {
@@ -740,7 +746,9 @@ class _InternalDepositScreenState extends State<InternalDepositScreen> with Sing
     if (timestamp.isNotEmpty) {
       try {
         final date = DateTime.parse(timestamp);
-        formattedDate = _formatDateTime(date);
+        // Convert to local time if the parsed time is UTC
+        final localDate = date.isUtc ? date.toLocal() : date;
+        formattedDate = _formatDateTime(localDate);
       } catch (e) {
         // Keep original timestamp if parsing fails
       }
@@ -936,6 +944,8 @@ class _InternalDepositScreenState extends State<InternalDepositScreen> with Sing
 
   @override
   void dispose() {
+    _balanceSubscription?.cancel();
+    _unifiedWalletSubscription?.cancel();
     _tabController.dispose();
     _recipientUidController.dispose();
     _amountController.dispose();

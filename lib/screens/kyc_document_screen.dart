@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'kyc_selfie_screen.dart';
 import 'kyc_pending_screen.dart';
+import 'user_profile_screen.dart';
+import 'update_profile_screen.dart';
 import '../services/user_service.dart';
 
 class KYCDocumentScreen extends StatefulWidget {
@@ -24,6 +26,62 @@ class _KYCDocumentScreenState extends State<KYCDocumentScreen> {
   void initState() {
     super.initState();
     _loadDocumentTypes();
+    // Check profile completeness when screen loads
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkProfileAndShowDialog();
+    });
+  }
+
+  // Check if profile is complete
+  bool _isProfileComplete() {
+    return _userService.hasEmail() &&
+           _userService.userPhone != null &&
+           _userService.userPhone!.isNotEmpty;
+  }
+
+  // Check profile and show dialog if incomplete
+  void _checkProfileAndShowDialog() {
+    if (!_isProfileComplete()) {
+      _showProfileRequiredDialog();
+    }
+  }
+
+  // Show profile completion required dialog
+  void _showProfileRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text(
+            'Profile Incomplete',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'Please complete your profile (email and phone number) before starting KYC verification.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).pop(); // Go back to previous screen
+              },
+              child: const Text('Go Back', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const UpdateProfileScreen()));
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
+              child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _loadDocumentTypes() async {
@@ -317,6 +375,12 @@ class _KYCDocumentScreenState extends State<KYCDocumentScreen> {
   }
 
   void _validateAndProceed() async {
+    // Check profile completeness before proceeding
+    if (!_isProfileComplete()) {
+      _showProfileRequiredDialog();
+      return;
+    }
+
     if (_selectedDocumentType.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select a document type')),

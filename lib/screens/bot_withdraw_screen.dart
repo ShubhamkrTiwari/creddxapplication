@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
+import '../services/socket_service.dart';
+import '../services/unified_wallet_service.dart';
+import 'dart:async';
 
 class BotWithdrawScreen extends StatefulWidget {
   final Map<String, dynamic> strategy;
@@ -21,12 +24,61 @@ class _BotWithdrawScreenState extends State<BotWithdrawScreen> {
   double _maxWithdrawAmount = 0.0;
   double _currentInvestment = 0.0;
   bool _isLoadingInvestment = false;
+  double _liveBotBalance = 0.0;
+  StreamSubscription? _balanceSubscription;
 
   @override
   void initState() {
     super.initState();
     _fetchCurrentInvestment();
     _fetchMaxWithdrawAmount();
+    _fetchBotBalance();
+    _subscribeToBotBalance();
+  }
+
+  @override
+  void dispose() {
+    _balanceSubscription?.cancel();
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _fetchBotBalance() async {
+    try {
+      final result = await BotService.getBotBalance();
+      if (mounted && result['success'] == true && result['data'] != null) {
+        final data = result['data'];
+        double balance = 0.0;
+        if (data['balance'] != null) {
+          balance = double.tryParse(data['balance'].toString()) ?? 0.0;
+        } else if (data['totalBalance'] != null) {
+          balance = double.tryParse(data['totalBalance'].toString()) ?? 0.0;
+        } else if (data['availableBalance'] != null) {
+          balance = double.tryParse(data['availableBalance'].toString()) ?? 0.0;
+        }
+        setState(() {
+          _liveBotBalance = balance;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching bot balance: $e');
+    }
+  }
+
+  void _subscribeToBotBalance() {
+    _balanceSubscription = UnifiedWalletService.walletBalanceStream.listen((balance) {
+      if (mounted && balance != null) {
+        setState(() {
+          _liveBotBalance = balance.botBalance;
+        });
+        debugPrint('Withdraw Screen: Bot balance updated from UnifiedWalletService: ${_liveBotBalance}');
+      }
+    });
+
+    // Initial balance
+    if (UnifiedWalletService.walletBalance != null) {
+      _liveBotBalance = UnifiedWalletService.walletBalance!.botBalance;
+    }
   }
 
   Future<void> _fetchMaxWithdrawAmount() async {
@@ -117,6 +169,14 @@ class _BotWithdrawScreenState extends State<BotWithdrawScreen> {
       );
 
       if (result['success'] == true) {
+        // Immediately update local balance for instant feedback
+        setState(() {
+          _liveBotBalance = _liveBotBalance + amount;
+        });
+
+        // Refresh global balance
+        UnifiedWalletService.refreshBotBalance();
+
         _showSnackBar(result['message'] ?? 'Withdrawal successful!');
         Navigator.pop(context, true);
       } else {
@@ -130,7 +190,7 @@ class _BotWithdrawScreenState extends State<BotWithdrawScreen> {
   }
 
   void _setMaxAmount() {
-    _amountController.text = _maxWithdrawAmount.toStringAsFixed(2);
+    _amountController.text = _maxWithdrawAmount.toString();
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
@@ -196,7 +256,7 @@ class _BotWithdrawScreenState extends State<BotWithdrawScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        '${_maxWithdrawAmount.toStringAsFixed(2)} USDT',
+                        '$_maxWithdrawAmount USDT',
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 28,
@@ -282,7 +342,7 @@ class _BotWithdrawScreenState extends State<BotWithdrawScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Withdrawal will be processed from your active investment in ${widget.strategy['name']?.toString() ?? 'this strategy'}. Max withdraw: ${_maxWithdrawAmount.toStringAsFixed(2)} USDT',
+                          'Withdrawal will be processed from your active investment in ${widget.strategy['name']?.toString() ?? 'this strategy'}. Max withdraw: $_maxWithdrawAmount USDT',
                           style: const TextStyle(
                             color: Colors.orange,
                             fontSize: 12,

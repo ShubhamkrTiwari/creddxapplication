@@ -1,7 +1,10 @@
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/p2p_service.dart';
+import '../services/kyc_service.dart';
 import 'login_screen.dart';
+import 'affiliate_program_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String? userId; // Added userId parameter
@@ -48,7 +51,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       _userDetails = results[0];
       _tradesSummary = results[1];
       _feedbackStats = results[2];
-      _myAds = results[3]['docs']?['docs'] ?? []; // Based on common response structure
+      _myAds = results[3]?['docs']?['docs'] ?? []; // Based on common response structure
 
       // Fetch average times if we have a userId
       if (targetUserId != null) {
@@ -63,6 +66,9 @@ class _ProfileScreenState extends State<ProfileScreen>
         }
       }
 
+      // Fetch real-time KYC status from API
+      await _checkAndUpdateKYCStatus();
+
       if (mounted) {
         setState(() => _isLoading = false);
       }
@@ -71,6 +77,33 @@ class _ProfileScreenState extends State<ProfileScreen>
       if (mounted) {
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  Future<void> _checkAndUpdateKYCStatus() async {
+    try {
+      final kycResult = await KYCService.getKYCStatus();
+      if (kycResult['success'] == true) {
+        final responseData = kycResult['data'];
+        final status = responseData?['status']?.toString().toLowerCase() ?? '';
+        
+        // Update KYC status in user details based on API response
+        final bool isKycVerified = status == 'completed' || status == 'already_completed';
+        final bool isKycRejected = status == 'rejected';
+        
+        if (_userDetails != null && _userDetails!['userDetails'] != null) {
+          _userDetails!['userDetails']['isKycVerified'] = isKycVerified;
+          _userDetails!['userDetails']['kycStatus'] = status;
+          debugPrint('KYC Status updated from API: $status, isKycVerified: $isKycVerified, isKycRejected: $isKycRejected');
+          
+          // Update UI to reflect new KYC status
+          if (mounted) {
+            setState(() {});
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error checking KYC status from API: $e');
     }
   }
 
@@ -210,7 +243,9 @@ class _ProfileScreenState extends State<ProfileScreen>
     final user = _userDetails?['userDetails'] ?? {};
     final name = user['fullName'] ?? 'User';
     final registrationDays = _tradesSummary?['firstTradeDaysAgo'] ?? 'N/A';
-    final isKycVerified = user['isKycVerified'] ?? false;
+    final kycStatus = user['kycStatus']?.toString().toLowerCase() ?? '';
+    final isKycVerified = kycStatus == 'completed' || kycStatus == 'already_completed';
+    final isKycRejected = kycStatus == 'rejected';
 
     return Container(
       color: const Color(0xFF161618),
@@ -310,11 +345,16 @@ class _ProfileScreenState extends State<ProfileScreen>
               const SizedBox(width: 24),
               _buildStatusItem('Phone', 'Done', const Color(0xFF00C851)), // Assume phone is verified if logged in
               const SizedBox(width: 24),
-              _buildStatusItem('KYC', isKycVerified ? 'Done' : 'Pending', 
-                  isKycVerified ? const Color(0xFF00C851) : const Color(0xFFFF3B30)),
+              _buildStatusItem('KYC', 
+                  isKycVerified ? 'Complete' : (isKycRejected ? 'Rejected' : 'Pending'), 
+                  isKycVerified ? const Color(0xFF00C851) : (isKycRejected ? const Color(0xFFFF3B30) : const Color(0xFFFF9500))),
             ],
           ),
           const SizedBox(height: 12),
+          if (user['userId'] != null || user['_id'] != null) ...[
+            _buildUserIdRow(user['userId']?.toString() ?? user['_id']?.toString() ?? ''),
+            const SizedBox(height: 12),
+          ],
           Text(
             registrationDays.contains('Ago') ? '$registrationDays since the first trade' : 'New User',
             style: const TextStyle(
@@ -349,6 +389,48 @@ class _ProfileScreenState extends State<ProfileScreen>
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildUserIdRow(String userId) {
+    return Row(
+      children: [
+        Text(
+          'User ID: ',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+          ),
+        ),
+        Text(
+          userId,
+          style: const TextStyle(
+            color: Color(0xFF8E8E93),
+            fontSize: 14,
+          ),
+        ),
+        const SizedBox(width: 8),
+        GestureDetector(
+          onTap: () async {
+            await Clipboard.setData(ClipboardData(text: userId));
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('User ID copied!'),
+                  backgroundColor: Color(0xFF84BD00),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            }
+          },
+          child: const Icon(
+            Icons.copy,
+            color: Color(0xFF84BD00),
+            size: 16,
+          ),
+        ),
+      ],
     );
   }
 
@@ -403,13 +485,65 @@ class _ProfileScreenState extends State<ProfileScreen>
       child: SingleChildScrollView(
         child: Column(
           children: [
+            // Affiliate Program Button
+            GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const AffiliateProgramScreen(),
+                  ),
+                );
+              },
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 16),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF84BD00), Color(0xFF6A9600)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.people, color: Colors.white, size: 24),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Affiliate Program',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'View your referral income',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 16),
+                  ],
+                ),
+              ),
+            ),
             _buildDetailItem('30D Trades', trades30d.toString()),
             _buildDetailItem('Trade Counterparties', counterparties.toString()),
             _buildDetailItem('Total Completed Trades', totalTrades.toString()),
             _buildDetailItem('Buy', buyTrades.toString(), color: const Color(0xFF00C851)),
             _buildDetailItem('Sell', sellTrades.toString(), color: const Color(0xFFFF3B30)),
             _buildDetailItem('Avg. Release Time', _avgReleaseTime),
-            _buildDetailItem('Avg. Pay Time', _avgPayTime),
           ],
         ),
       ),

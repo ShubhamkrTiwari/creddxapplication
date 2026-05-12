@@ -59,8 +59,9 @@ class _FuturesScreenState extends State<FuturesScreen>
         ),
         centerTitle: true,
       ),
-      body: Center(
-        child: Column(
+      body: SafeArea(
+        child: Center(
+          child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             AnimatedBuilder(
@@ -148,6 +149,7 @@ class _FuturesScreenState extends State<FuturesScreen>
               ),
             ),
           ],
+          ),
         ),
       ),
     );

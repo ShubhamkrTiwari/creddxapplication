@@ -5,6 +5,7 @@ import '../services/unified_wallet_service.dart';
 import 'package_program_screen.dart';
 import 'bot_invest_screen.dart';
 import 'bot_withdraw_screen.dart';
+import 'bot_subscription_screen.dart';
 
 class BotTradeDetailScreen extends StatefulWidget {
   static bool hasPackage = false;
@@ -73,23 +74,46 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
         String? plan;
         final subscription = data['subscription'];
         
-        if (subscription != null) {
-          final endDateStr = subscription['endDate']?.toString();
-          if (endDateStr != null) {
-            final endDate = DateTime.tryParse(endDateStr);
-            if (endDate != null) {
-              final currentDate = DateTime.now();
-              final remainingDays = endDate.difference(currentDate).inDays;
+        debugPrint('Subscription Data: $subscription');
+        
+        if (subscription != null && subscription is Map) {
+          // Check if subscription has plan field
+          final planValue = subscription['plan']?.toString();
+          
+          if (planValue != null && planValue.isNotEmpty && planValue.toLowerCase() != 'null') {
+            // Check end date if available
+            final endDateStr = subscription['endDate']?.toString();
+            
+            if (endDateStr != null && endDateStr.isNotEmpty && endDateStr.toLowerCase() != 'null') {
+              try {
+                final endDate = DateTime.parse(endDateStr);
+                final currentDate = DateTime.now();
+                final remainingDays = endDate.difference(currentDate).inDays;
 
-              debugPrint('Subscription End Date: $endDate, Remaining Days: $remainingDays');
+                debugPrint('Subscription End Date: $endDate, Remaining Days: $remainingDays');
 
-              if (remainingDays <= 0) {
-                plan = null; // Expired
-              } else {
-                plan = subscription['plan']?.toString();
+                if (remainingDays > 0) {
+                  plan = planValue;
+                  debugPrint('Valid subscription found: $plan');
+                } else {
+                  debugPrint('Subscription expired');
+                }
+              } catch (e) {
+                debugPrint('Error parsing end date: $e');
+                // If date parsing fails but plan exists, consider it valid
+                plan = planValue;
+                debugPrint('Using plan without date validation: $plan');
               }
+            } else {
+              // No end date but plan exists - consider it valid
+              plan = planValue;
+              debugPrint('Using plan without end date: $plan');
             }
+          } else {
+            debugPrint('No valid plan found in subscription');
           }
+        } else {
+          debugPrint('No subscription data found');
         }
 
         // 5. Set Investments (Strategy-wise) - Use correct keys matching widget.name format
@@ -138,12 +162,9 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
   // Helper to check Invest Button Conditions
   bool _canInvest() {
     // 7. Invest Button Conditions
-    if (_btnDisable) return false;
-    // Allow button if no subscription (to navigate to subscribe) OR if has valid subscription
-    if (_subscriptionPlan == null) return true;
-    if (_walletBalance <= 0) return false;
+    if (_isLoading) return false; // Disable only during loading
     if (!widget.isAvailable) return false;
-    
+    // Allow button if no subscription (to navigate to subscribe) OR if has valid subscription
     return true;
   }
 
@@ -339,18 +360,56 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
   }
 
   void _handleInvestClick() {
+    debugPrint('=== INVEST BUTTON CLICKED (Trade Detail) ===');
+    debugPrint('Subscription Plan: $_subscriptionPlan');
+    
     if (_subscriptionPlan != null) {
-      // Open separate Invest screen
+      // User is subscribed - Open invest screen
+      debugPrint('User is subscribed - Opening invest screen');
       _openInvestScreen();
     } else {
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => const PackageProgramScreen()),
-      ).then((result) {
-        // Refresh data regardless of result to get updated subscription status
-        _fetchUserData();
-      });
+      // User is not subscribed - Show subscribe dialog
+      debugPrint('User not subscribed - Showing subscribe dialog');
+      _showSubscribeDialog();
     }
+  }
+
+  void _showSubscribeDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1C1C1E),
+          title: const Text(
+            'Subscribe to Invest',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'You need an active subscription to invest in bot strategies. Subscribe now to access premium trading features.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => BotSubscriptionScreen(),
+                  ),
+                ).then((_) => _fetchUserData());
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
+              child: const Text('Subscribe', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _openInvestScreen() {
@@ -529,9 +588,10 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
         ),
         centerTitle: true,
       ),
-      body: _isLoading 
-        ? const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)))
-        : SingleChildScrollView(
+      body: SafeArea(
+        child: _isLoading 
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFF84BD00)))
+          : SingleChildScrollView(
             padding: const EdgeInsets.symmetric(horizontal: 20.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -609,7 +669,7 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
                           ),
                         ),
                         Text(
-                          '${_investedAmount.toStringAsFixed(2)} USDT',
+                          '$_investedAmount USDT',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 18,
@@ -655,7 +715,7 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
                             child: SizedBox(
                               height: 56,
                               child: ElevatedButton(
-                                onPressed: _btnDisable ? null : _openWithdrawScreen,
+                                onPressed: (_isLoading || _investedAmount <= 0) ? null : _openWithdrawScreen,
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF84BD00),
                                   foregroundColor: Colors.black,
@@ -703,6 +763,7 @@ class _BotTradeDetailScreenState extends State<BotTradeDetailScreen> {
               ],
             ),
           ),
+        ),
     );
   }
 

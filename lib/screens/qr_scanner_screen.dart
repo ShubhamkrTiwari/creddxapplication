@@ -34,7 +34,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
             flex: 4,
             child: MobileScanner(
               controller: controller,
-              onDetect: (capture) {
+              onDetect: (BarcodeCapture capture) {
                 final List<Barcode> barcodes = capture.barcodes;
                 for (final barcode in barcodes) {
                   if (barcode.rawValue != null && isScanning) {

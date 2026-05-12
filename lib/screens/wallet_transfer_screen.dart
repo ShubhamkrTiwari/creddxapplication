@@ -3,6 +3,10 @@ import 'dart:async';
 import '../services/wallet_service.dart';
 import '../services/spot_service.dart';
 import '../services/socket_service.dart';
+import '../services/bot_service.dart';
+import '../services/user_service.dart';
+import '../services/unified_wallet_service.dart' as unified;
+import '../services/auto_refresh_service.dart';
 import 'package:intl/intl.dart';
 
 class InternalTransferScreen extends StatefulWidget {
@@ -19,19 +23,19 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
   final TextEditingController _amountController = TextEditingController();
   bool _isLoading = false;
   bool _isFetchingBalances = true;
-  bool _isFetchingHistory = false;
   bool _isFetchingCoins = true;
   Map<String, dynamic> _balances = {};
-  List<Map<String, dynamic>> _transferHistory = [];
   List<Map<String, dynamic>> _coins = [];
   Map<String, String> _coinSymbolToId = {};
   StreamSubscription? _balanceSubscription;
+  StreamSubscription? _unifiedWalletSubscription;
+
+  final UserService _userService = UserService();
 
   final List<Map<String, String>> _walletTypes = [
-    {'code': 'main', 'name': 'Main Wallet (1)'},
-    {'code': 'p2p', 'name': 'P2P Wallet (2)'},
-    {'code': 'bot', 'name': 'Bot Wallet (3)'},
-    {'code': 'spot', 'name': 'Spot Wallet (4)'},
+    {'code': 'main', 'name': 'Main Wallet'},
+    {'code': 'p2p', 'name': 'P2P Wallet'},
+    {'code': 'spot', 'name': 'Spot Wallet'},
   ];
 
   @override
@@ -39,46 +43,156 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
     super.initState();
     _fetchCoins();
     _fetchBalances();
-    _fetchTransferHistory();
     _subscribeToSocketBalance();
+    _subscribeToUnifiedWallet();
   }
 
   @override
   void dispose() {
     _balanceSubscription?.cancel();
+    _unifiedWalletSubscription?.cancel();
     _amountController.dispose();
     super.dispose();
+  }
+
+  void _subscribeToUnifiedWallet() {
+    _unifiedWalletSubscription = unified.UnifiedWalletService.walletBalanceStream.listen((walletBalance) {
+      if (mounted && walletBalance != null) {
+        setState(() {
+          // Update balances from UnifiedWalletService for consistency with WalletScreen
+          final spotBalance = unified.UnifiedWalletService.spotUSDTBalance;
+          final spotCoin = unified.UnifiedWalletService.usdtCoinBalance;
+          final spotAvailable = spotCoin?.free ?? spotBalance;
+          final spotLocked = spotCoin?.locked ?? 0.0;
+
+          _balances['spot'] = {
+            'available': spotAvailable.toStringAsFixed(2),
+            'locked': spotLocked.toStringAsFixed(2),
+            'total': (spotAvailable + spotLocked).toStringAsFixed(2),
+          };
+
+          _balances['main'] = {
+            'available': unified.UnifiedWalletService.mainUSDTBalance.toStringAsFixed(2),
+            'locked': '0.00',
+            'total': unified.UnifiedWalletService.mainUSDTBalance.toStringAsFixed(2),
+          };
+
+          _balances['p2p'] = {
+            'available': unified.UnifiedWalletService.p2pUSDTBalance.toStringAsFixed(2),
+            'locked': '0.00',
+            'total': unified.UnifiedWalletService.p2pUSDTBalance.toStringAsFixed(2),
+          };
+
+          _balances['bot'] = {
+            'available': unified.UnifiedWalletService.botUSDTBalance.toStringAsFixed(2),
+            'locked': '0.00',
+            'total': unified.UnifiedWalletService.botUSDTBalance.toStringAsFixed(2),
+          };
+
+          _isFetchingBalances = false;
+        });
+      }
+    });
   }
 
   void _subscribeToSocketBalance() {
     _balanceSubscription?.cancel();
     _balanceSubscription = SocketService.balanceStream.listen((data) {
-      if (mounted && data['type'] == 'balance_update') {
-        setState(() {
-          final assets = data['assets'] as List?;
-          if (assets != null) {
-            // Find the selected coin (usually USDT) in the socket update
-            final assetData = assets.firstWhere(
-              (a) => a['asset'] == _selectedCoin,
-              orElse: () => null,
-            );
+      if (mounted) {
+        debugPrint('=== SOCKET BALANCE UPDATE IN TRANSFER SCREEN ===');
+        debugPrint('Event type: ${data['type']}');
+        debugPrint('Full data: $data');
 
-            if (assetData != null) {
-              final available = double.tryParse(assetData['available']?.toString() ?? '0.0') ?? 0.0;
-              final locked = double.tryParse(assetData['locked']?.toString() ?? '0.0') ?? 0.0;
-              final total = available + locked;
+        // Handle wallet_summary_update for all wallets including bot
+        if (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary') {
+          final balanceData = data['data'];
+          if (balanceData != null && balanceData is Map) {
+            // Update bot balance from wallet summary - use availableBalance to show only investable amount
+            final availableBalance = balanceData['availableBalance'] ?? balanceData['available'];
+            if (availableBalance != null) {
+              double botAvailable = 0.0;
+              if (availableBalance is num) {
+                botAvailable = availableBalance.toDouble();
+              } else if (availableBalance is Map) {
+                botAvailable = double.tryParse(availableBalance['USDT']?.toString() ?? '0') ?? 0.0;
+              } else {
+                botAvailable = double.tryParse(availableBalance.toString()) ?? 0.0;
+              }
+              setState(() {
+                _balances['bot'] = {
+                  'available': botAvailable.toStringAsFixed(2),
+                  'locked': '0.00',
+                  'total': botAvailable.toStringAsFixed(2),
+                };
+              });
+              debugPrint('✅ Bot available balance updated from wallet summary: $botAvailable');
+            }
 
-              // The socket balance update specifically updates the Spot Wallet
-              _balances['spot'] = {
-                'available': available.toStringAsFixed(2),
-                'locked': locked.toStringAsFixed(2),
-                'total': total.toStringAsFixed(2),
-              };
-              
-              debugPrint('Socket balance update applied to Spot Wallet: $available $_selectedCoin');
+            // Update other wallets from wallet summary
+            final mainBalance = balanceData['mainBalance'] ?? balanceData['main'];
+            if (mainBalance != null) {
+              double mainAvailable = 0.0;
+              if (mainBalance is num) {
+                mainAvailable = mainBalance.toDouble();
+              } else if (mainBalance is Map) {
+                mainAvailable = double.tryParse(mainBalance['USDT']?.toString() ?? '0') ?? 0.0;
+              }
+              setState(() {
+                _balances['main'] = {
+                  'available': mainAvailable.toStringAsFixed(2),
+                  'locked': '0.00',
+                  'total': mainAvailable.toStringAsFixed(2),
+                };
+              });
+            }
+
+            final p2pBalance = balanceData['p2pBalance'] ?? balanceData['p2p'];
+            if (p2pBalance != null) {
+              double p2pAvailable = 0.0;
+              if (p2pBalance is num) {
+                p2pAvailable = p2pBalance.toDouble();
+              } else if (p2pBalance is Map) {
+                p2pAvailable = double.tryParse(p2pBalance['USDT']?.toString() ?? '0') ?? 0.0;
+              }
+              setState(() {
+                _balances['p2p'] = {
+                  'available': p2pAvailable.toStringAsFixed(2),
+                  'locked': '0.00',
+                  'total': p2pAvailable.toStringAsFixed(2),
+                };
+              });
             }
           }
-        });
+        }
+
+        // Handle balance_update for spot wallet
+        if (data['type'] == 'balance_update') {
+          setState(() {
+            final assets = data['assets'] as List?;
+            if (assets != null) {
+              // Find the selected coin (usually USDT) in the socket update
+              final assetData = assets.firstWhere(
+                (a) => a['asset'] == _selectedCoin,
+                orElse: () => null,
+              );
+
+              if (assetData != null) {
+                final available = double.tryParse(assetData['available']?.toString() ?? '0.0') ?? 0.0;
+                final locked = double.tryParse(assetData['locked']?.toString() ?? '0.0') ?? 0.0;
+                final total = available + locked;
+
+                // The socket balance update specifically updates the Spot Wallet
+                _balances['spot'] = {
+                  'available': available.toStringAsFixed(2),
+                  'locked': locked.toStringAsFixed(2),
+                  'total': total.toStringAsFixed(2),
+                };
+
+                debugPrint('✅ Spot balance updated from socket: $available $_selectedCoin');
+              }
+            }
+          });
+        }
       }
     });
   }
@@ -121,22 +235,90 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
 
   Future<void> _fetchBalances() async {
     setState(() => _isFetchingBalances = true);
-    
+
+    // Use UnifiedWalletService for consistent balance data (same as WalletScreen)
+    await unified.UnifiedWalletService.refreshAllBalances();
+
+    if (mounted) {
+      setState(() {
+        // Get balances from UnifiedWalletService for consistency
+        final spotBalance = unified.UnifiedWalletService.spotUSDTBalance;
+        final spotCoin = unified.UnifiedWalletService.usdtCoinBalance;
+        final spotAvailable = spotCoin?.free ?? spotBalance;
+        final spotLocked = spotCoin?.locked ?? 0.0;
+
+        _balances['spot'] = {
+          'available': spotAvailable.toStringAsFixed(2),
+          'locked': spotLocked.toStringAsFixed(2),
+          'total': (spotAvailable + spotLocked).toStringAsFixed(2),
+        };
+
+        _balances['main'] = {
+          'available': unified.UnifiedWalletService.mainUSDTBalance.toStringAsFixed(2),
+          'locked': '0.00',
+          'total': unified.UnifiedWalletService.mainUSDTBalance.toStringAsFixed(2),
+        };
+
+        _balances['p2p'] = {
+          'available': unified.UnifiedWalletService.p2pUSDTBalance.toStringAsFixed(2),
+          'locked': '0.00',
+          'total': unified.UnifiedWalletService.p2pUSDTBalance.toStringAsFixed(2),
+        };
+
+        _balances['bot'] = {
+          'available': unified.UnifiedWalletService.botUSDTBalance.toStringAsFixed(2),
+          'locked': '0.00',
+          'total': unified.UnifiedWalletService.botUSDTBalance.toStringAsFixed(2),
+        };
+
+        _isFetchingBalances = false;
+        debugPrint('Balances updated from UnifiedWalletService - Main: ${unified.UnifiedWalletService.mainUSDTBalance}, Spot: $spotAvailable (locked: $spotLocked), P2P: ${unified.UnifiedWalletService.p2pUSDTBalance}, Bot: ${unified.UnifiedWalletService.botUSDTBalance}');
+      });
+    }
+  }
+
+  // Fallback method for fetching balances directly from APIs (kept for reference if needed)
+  Future<void> _fetchBalancesFallback() async {
+    setState(() => _isFetchingBalances = true);
+
+    // Fetch bot balance specifically from BotService to get availableBalance
+    final botBalanceResult = await BotService.getBotBalance();
+
     // Fetch both WalletService and SpotService balances
     final result = await WalletService.getAllWalletBalances();
     final spotResult = await SpotService.getBalance();
-    
+
     if (mounted) {
       setState(() {
         _balances = {};
-        
+
+        // Step 0: Set bot balance from BotService (has correct availableBalance)
+        if (botBalanceResult['success'] == true && botBalanceResult['data'] != null) {
+          final data = botBalanceResult['data'];
+          double botAvailable = 0.0;
+          // Prefer availableBalance to show only investable amount
+          if (data['availableBalance'] != null) {
+            botAvailable = double.tryParse(data['availableBalance'].toString()) ?? 0.0;
+          } else if (data['balance'] != null) {
+            botAvailable = double.tryParse(data['balance'].toString()) ?? 0.0;
+          } else if (data['totalBalance'] != null) {
+            botAvailable = double.tryParse(data['totalBalance'].toString()) ?? 0.0;
+          }
+          _balances['bot'] = {
+            'available': botAvailable.toStringAsFixed(2),
+            'locked': '0.00',
+            'total': botAvailable.toStringAsFixed(2),
+          };
+          debugPrint('Bot balance from BotService API: $botAvailable');
+        }
+
         // Step 1: Fetch spot balance from SpotService API (GET /balance/:user_id)
         if (spotResult['success'] == true && spotResult['data'] != null) {
           final spotData = spotResult['data'];
           double spotAvailable = double.tryParse(spotData['usdt_available']?.toString() ?? '0.0') ?? 0.0;
           double spotLocked = double.tryParse(spotData['usdt_locked']?.toString() ?? '0.0') ?? 0.0;
           double spotTotal = spotAvailable + spotLocked;
-          
+
           _balances['spot'] = {
             'available': spotAvailable.toStringAsFixed(2),
             'locked': spotLocked.toStringAsFixed(2),
@@ -144,11 +326,11 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
           };
           debugPrint('SpotService spot balance - Available: $spotAvailable, Locked: $spotLocked, Total: $spotTotal');
         }
-        
+
         // Step 2: Fetch wallet balances from WalletService (main, p2p, bot, spot)
         if (result['success'] == true && result['data'] != null) {
           final data = result['data'];
-          
+
           // Parse spotBalance from API response if not already set from SpotService
           if (_balances['spot'] == null && data['spotBalance'] != null) {
             final spotTotal = double.tryParse(data['spotBalance'].toString()) ?? 0.0;
@@ -159,26 +341,32 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
             };
             debugPrint('Spot balance from WalletService API: $spotTotal');
           }
-          
+
           // Handle flat format: {mainBalance: {USDT: Y}, p2pBalance: Z, botBalance: W}
           final walletTypeMap = {
-            'main': 'mainBalance', 
+            'main': 'mainBalance',
             'p2p': 'p2pBalance',
             'bot': 'botBalance',
             'demo_bot': 'demoBalance',
           };
-          
+
           bool foundBalances = false;
-          
+
           for (String type in walletTypeMap.keys) {
+            // Skip bot if already set from BotService (has correct availableBalance)
+            if (type == 'bot' && _balances['bot'] != null) {
+              debugPrint('Skipping bot balance from WalletService (already set from BotService)');
+              continue;
+            }
+
             final fieldName = walletTypeMap[type]!;
             final walletData = data[fieldName];
-            
+
             if (walletData != null) {
               double available = 0.0;
               double total = 0.0;
               double inrTotal = 0.0;
-              
+
               if (walletData is Map) {
                 // Format: {INR: X, USDT: Y}
                 if (walletData['USDT'] != null) {
@@ -193,19 +381,19 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                 total = walletData.toDouble();
                 available = total;
               }
-              
+
               _balances[type] = {
                 'available': available.toStringAsFixed(2),
                 'locked': '0.00',
                 'total': total.toStringAsFixed(2),
                 'inr_total': inrTotal.toStringAsFixed(2),
               };
-              
+
               foundBalances = true;
               debugPrint('$type USDT - Available: $available, Total: $total, INR: $inrTotal');
             }
           }
-          
+
           // Fallback to nested format if flat format doesn't work
           if (!foundBalances) {
             // Extract USDT balances from all wallet types
@@ -246,42 +434,6 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
     }
   }
 
-  Future<void> _fetchTransferHistory() async {
-    setState(() => _isFetchingHistory = true);
-    final result = await WalletService.getWalletTransferHistory(
-      coin: _selectedCoin,
-      limit: 10,
-    );
-    if (mounted) {
-      setState(() {
-        if (result['success'] == true && result['data'] != null) {
-          final data = result['data'];
-          
-          if (data is List) {
-            // API returns data as a direct list of transfers
-            _transferHistory = List<Map<String, dynamic>>.from(data);
-          } else if (data is Map) {
-            // Handle nested formats
-            if (data['transfers'] != null && data['transfers'] is List) {
-              _transferHistory = List<Map<String, dynamic>>.from(data['transfers']);
-            } else if (data['data'] != null && data['data'] is List) {
-              _transferHistory = List<Map<String, dynamic>>.from(data['data']);
-            } else if (data['message'] == 'Success' && data['data'] is List) {
-              _transferHistory = List<Map<String, dynamic>>.from(data['data']);
-            } else {
-              _transferHistory = [];
-            }
-          } else {
-            _transferHistory = [];
-          }
-        } else {
-          _transferHistory = [];
-        }
-        _isFetchingHistory = false;
-      });
-    }
-  }
-
   void _swapWallets() {
     setState(() {
       final temp = _fromWallet;
@@ -290,6 +442,8 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
     });
   }
 
+  
+  
   // Get coin ID from coin symbol using real API data
   String _getCoinId(String coinSymbol) {
     final upperSymbol = coinSymbol.toUpperCase();
@@ -307,38 +461,25 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
   }
 
   Future<void> _handleTransfer() async {
-    if (_amountController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter amount'), backgroundColor: Colors.red),
-      );
+    if (_amountController.text.trim().isEmpty) {
+      _showError('Please enter amount');
       return;
     }
 
     final amount = double.tryParse(_amountController.text) ?? 0;
     if (amount <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter a valid amount'), backgroundColor: Colors.red),
-      );
+      _showError('Enter a valid amount');
       return;
     }
 
-    // Check available balance
+    if (_fromWallet == _toWallet) {
+      _showError('Cannot transfer to the same wallet');
+      return;
+    }
+
     final availableBalance = double.tryParse(_getWalletBalance(_fromWallet)) ?? 0;
     if (amount > availableBalance) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Insufficient balance. Available: $availableBalance USDT'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    // Prevent same wallet transfer
-    if (_fromWallet == _toWallet) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot transfer to the same wallet'), backgroundColor: Colors.red),
-      );
+      _showError('Insufficient balance. Available: ${availableBalance.toStringAsFixed(2)} $_selectedCoin');
       return;
     }
 
@@ -361,8 +502,51 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
 
       if (result['success'] == true) {
         _amountController.clear();
-        await _fetchBalances(); // Refresh balances
-        await _fetchTransferHistory(); // Refresh transfer history
+
+        // If transfer was from or to bot wallet, fetch bot balance specifically
+        if (_fromWallet == 'bot' || _toWallet == 'bot') {
+          // Trigger socket requests for real-time update
+          SocketService.requestWalletBalance();
+          SocketService.requestWalletSummary();
+
+          // Wait a bit for socket to update
+          await Future.delayed(const Duration(milliseconds: 300));
+
+          // Directly fetch bot balance from API to ensure it's updated
+          try {
+            final botBalanceResult = await BotService.getBotBalance();
+            if (botBalanceResult['success'] == true && botBalanceResult['data'] != null) {
+              final data = botBalanceResult['data'];
+              double balance = 0.0;
+              // Prefer availableBalance to show only investable amount
+              if (data['availableBalance'] != null) {
+                balance = double.tryParse(data['availableBalance'].toString()) ?? 0.0;
+              } else if (data['balance'] != null) {
+                balance = double.tryParse(data['balance'].toString()) ?? 0.0;
+              } else if (data['totalBalance'] != null) {
+                balance = double.tryParse(data['totalBalance'].toString()) ?? 0.0;
+              }
+              setState(() {
+                _balances['bot'] = {
+                  'available': balance.toStringAsFixed(2),
+                  'locked': '0.00',
+                  'total': balance.toStringAsFixed(2),
+                };
+              });
+              debugPrint('✅ Bot available balance fetched directly from API: $balance');
+            }
+          } catch (e) {
+            debugPrint('Error fetching bot balance: $e');
+          }
+        }
+
+        // IMMEDIATE BALANCE REFRESH AFTER TRANSFER
+        debugPrint('WalletTransferScreen: Triggering immediate balance refresh after transfer...');
+        await Future.wait([
+          _fetchBalances(), // Existing balance fetch
+          unified.UnifiedWalletService.refreshAllBalances(),
+          AutoRefreshService.forceRefreshAll(),
+        ]);
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -395,17 +579,15 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
 
   @override
   Widget build(BuildContext context) {
-    double available = 0.0;
-    if (_balances[_fromWallet] != null) {
-      available = double.tryParse(_balances[_fromWallet]['available']?.toString() ?? '0') ?? 0.0;
-    }
+    // Show selected "From" wallet balance as available
+    double available = double.tryParse(_balances[_fromWallet]?['available']?.toString() ?? '0') ?? 0.0;
 
     return Scaffold(
       backgroundColor: const Color(0xFF0D0D0D),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text('Internal Transfer', style: TextStyle(color: Colors.white)),
+        title: const Text('Wallet Transfer', style: TextStyle(color: Colors.white)),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.pop(context),
@@ -474,7 +656,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                       children: [
                         Row(
                           children: [
-                            const Text('Available Balance', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                            Text('Available (${_getWalletDisplayName(_fromWallet)})', style: TextStyle(color: Colors.white54, fontSize: 12)),
                             const Spacer(),
                             if (_isFetchingBalances)
                               const SizedBox(
@@ -491,7 +673,7 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${_getWalletBalance(_fromWallet)} USDT',
+                          '${_balances[_fromWallet]?['available'] ?? '0.00'} USDT',
                           style: const TextStyle(color: Color(0xFF84BD00), fontSize: 16, fontWeight: FontWeight.bold),
                         ),
                       ],
@@ -586,74 +768,6 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
                     : const Text('Confirm Transfer', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16)),
               ),
             ),
-            const SizedBox(height: 24),
-            // Transfer History Section
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1A1A1A),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Text(
-                        'Recent Transfers',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const Spacer(),
-                      if (_isFetchingHistory)
-                        const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(color: Color(0xFF84BD00), strokeWidth: 2),
-                        )
-                      else
-                        GestureDetector(
-                          onTap: _fetchTransferHistory,
-                          child: const Icon(Icons.refresh, color: Color(0xFF84BD00), size: 20),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  if (_transferHistory.isEmpty && !_isFetchingHistory)
-                    const Center(
-                      child: Text(
-                        'No transfer history found',
-                        style: TextStyle(color: Colors.white54, fontSize: 12),
-                      ),
-                    )
-                  else
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _transferHistory.length > 5 ? 5 : _transferHistory.length,
-                      itemBuilder: (context, index) {
-                        final transfer = _transferHistory[index];
-                        return _buildTransferHistoryItem(transfer);
-                      },
-                    ),
-                  if (_transferHistory.length > 5)
-                    Center(
-                      child: TextButton(
-                        onPressed: () {
-                          // TODO: Navigate to full transfer history
-                        },
-                        child: const Text(
-                          'View All',
-                          style: TextStyle(color: Color(0xFF84BD00)),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
           ],
         ),
       ),
@@ -728,206 +842,6 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
         
         return cleaned.isEmpty ? 'Wallet' : cleaned;
     }
-  }
-
-  Widget _buildTransferHistoryItem(Map<String, dynamic> transfer) {
-    // Try different possible field names for wallet information
-    final fromWallet = transfer['from']?.toString() ?? 
-                       transfer['fromWallet']?.toString() ?? 
-                       transfer['source_wallet']?.toString() ?? 
-                       transfer['source']?.toString() ?? '';
-                       
-    final toWallet = transfer['to']?.toString() ?? 
-                     transfer['toWallet']?.toString() ?? 
-                     transfer['destination_wallet']?.toString() ?? 
-                     transfer['destination']?.toString() ?? '';
-    
-    // Convert wallet type numbers to names if they are numbers
-    String cleanFromWallet = fromWallet;
-    String cleanToWallet = toWallet;
-    
-    try {
-      final fromWalletNum = int.tryParse(fromWallet);
-      final toWalletNum = int.tryParse(toWallet);
-      
-      if (fromWalletNum != null) {
-        cleanFromWallet = _getWalletTypeName(fromWalletNum);
-      } else {
-        // Use the new helper method to convert wallet names to display names
-        cleanFromWallet = _getWalletDisplayName(fromWallet);
-      }
-      
-      if (toWalletNum != null) {
-        cleanToWallet = _getWalletTypeName(toWalletNum);
-      } else {
-        // Use the new helper method to convert wallet names to display names
-        cleanToWallet = _getWalletDisplayName(toWallet);
-      }
-    } catch (e) {
-      // If parsing fails, use the helper method for cleanup
-      cleanFromWallet = _getWalletDisplayName(fromWallet);
-      cleanToWallet = _getWalletDisplayName(toWallet);
-    }
-    
-    // Final fallback - ensure we have clean names
-    cleanFromWallet = cleanFromWallet.isEmpty ? 'Wallet' : cleanFromWallet;
-    cleanToWallet = cleanToWallet.isEmpty ? 'Wallet' : cleanToWallet;
-    
-    final amount = transfer['amount']?.toString() ?? '0.00';
-    final coin = transfer['coin'] ?? 'USDT';
-    
-    // Handle different coin data formats
-    String coinSymbol = 'USDT';
-    if (coin is List && coin.isNotEmpty) {
-      final firstCoin = coin[0];
-      if (firstCoin is Map) {
-        coinSymbol = firstCoin['symbol']?.toString() ?? 'USDT';
-      }
-    } else if (coin is Map) {
-      coinSymbol = coin['symbol']?.toString() ?? 'USDT';
-    } else if (coin is String) {
-      coinSymbol = coin;
-    }
-    
-    final status = transfer['status']?.toString() ?? 'completed';
-    final createdAt = transfer['createdAt']?.toString();
-    
-    String formattedDate = 'Unknown';
-    if (createdAt != null) {
-      try {
-        final dateTime = DateTime.parse(createdAt);
-        formattedDate = DateFormat('MMM dd, yyyy - HH:mm').format(dateTime);
-      } catch (e) {
-        formattedDate = createdAt;
-      }
-    }
-    
-    Color statusColor = status == 'completed' ? const Color(0xFF84BD00) : 
-                       status == 'pending' ? Colors.orange : Colors.red;
-    
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF252525),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        children: [
-          // From/To row with dots and arrow
-          Row(
-            children: [
-              // From wallet with blue dot
-              Row(
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: const BoxDecoration(
-                      color: Colors.blue,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'From: $cleanFromWallet',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-              
-              // Arrow
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Icon(
-                  Icons.arrow_forward,
-                  color: Colors.white54,
-                  size: 16,
-                ),
-              ),
-              
-              // To wallet with green dot
-              Row(
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: const BoxDecoration(
-                      color: Colors.green,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'To: $cleanToWallet',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          
-          const SizedBox(height: 12),
-          
-          // Details row
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              // Value
-              Text(
-                '\$${double.tryParse(amount)?.toStringAsFixed(2) ?? amount}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              
-              // Status button
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: status == 'completed' ? const Color(0xFF84BD00) : 
-                         status == 'pending' ? Colors.orange : Colors.red,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  status.toUpperCase(),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          
-          const SizedBox(height: 8),
-          
-          // Date
-          Row(
-            children: [
-              Text(
-                formattedDate,
-                style: const TextStyle(
-                  color: Colors.white54,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _buildWalletSelector(String label, String value, ValueChanged<String?> onChanged) {

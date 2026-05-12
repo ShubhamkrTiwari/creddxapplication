@@ -2,8 +2,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
 import '../services/auth_service.dart';
+import '../services/socket_service.dart';
 import 'bot_trade_detail_screen.dart';
 import 'login_screen.dart';
+import '../main_navigation.dart';
 
 class SubscriptionScreen extends StatefulWidget {
   const SubscriptionScreen({super.key});
@@ -56,6 +58,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   Timer? _countdownTimer;
   String _totalBalance = '0.00';
   bool _isLoadingBalance = false;
+  StreamSubscription? _balanceSubscription;
   
   // Selected plan for subscription - gets values from _packages
   Map<String, dynamic> get _selectedPackage => _packages.firstWhere(
@@ -71,6 +74,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     _loadUserSubscription();
     _loadBotBalance();
     _startCountdownTimer();
+    _subscribeToBotBalance();
   }
 
   Future<void> _loadBotBalance() async {
@@ -91,6 +95,32 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         setState(() => _isLoadingBalance = false);
       }
     }
+  }
+
+  void _subscribeToBotBalance() {
+    _balanceSubscription = SocketService.balanceStream.listen((data) {
+      if (mounted && (data['type'] == 'wallet_summary_update' || data['type'] == 'wallet_summary')) {
+        final balanceData = data['data'];
+        if (balanceData != null && balanceData is Map) {
+          // Use availableBalance instead of botBalance to show only investable amount
+          final availableBalance = balanceData['availableBalance'] ?? balanceData['available'];
+          if (availableBalance != null) {
+            double newBalance = 0.0;
+            if (availableBalance is num) {
+              newBalance = availableBalance.toDouble();
+            } else if (availableBalance is Map) {
+              newBalance = double.tryParse(availableBalance['USDT']?.toString() ?? '0') ?? 0.0;
+            } else {
+              newBalance = double.tryParse(availableBalance.toString()) ?? 0.0;
+            }
+            setState(() {
+              _totalBalance = newBalance.toStringAsFixed(2);
+            });
+            debugPrint('Subscription Screen: Available balance updated: $newBalance');
+          }
+        }
+      }
+    });
   }
 
   Future<void> _loadUserSubscription() async {
@@ -122,7 +152,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             final endDate = DateTime.tryParse(subscription['endDate'].toString());
             if (endDate != null) {
               final currentDate = DateTime.now();
-              remainingDays = endDate.difference(currentDate).inDays;
+              remainingDays = endDate.difference(currentDate).inDays + 1;
 
               // 5. Expired case
               if (remainingDays <= 0) {
@@ -178,6 +208,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   @override
   void dispose() {
     _countdownTimer?.cancel();
+    _balanceSubscription?.cancel();
     super.dispose();
   }
 
@@ -206,10 +237,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF0D0D0D),
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
+        automaticallyImplyLeading: false,
         title: const Text(
           'Package Program',
           style: TextStyle(
@@ -294,9 +322,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
-                        'Basic Package',
-                        style: TextStyle(
+                      Text(
+                        _isSubscribed && _planName != null ? _planName! : 'Basic Package',
+                        style: const TextStyle(
                           color: Colors.white,
                           fontSize: 24,
                           fontWeight: FontWeight.bold,
@@ -305,12 +333,12 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF84BD00),
+                          color: _isSubscribed ? const Color(0xFF84BD00) : const Color(0xFF84BD00),
                           borderRadius: BorderRadius.circular(20),
                         ),
-                        child: const Text(
-                          'POPULAR',
-                          style: TextStyle(
+                        child: Text(
+                          _isSubscribed ? 'ACTIVE' : 'POPULAR',
+                          style: const TextStyle(
                             color: Colors.black,
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
@@ -418,7 +446,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  _buildDetailRow('Plan', _planName ?? 'Annual Plan'),
+                  _buildDetailRow('Plan', _planName ?? 'Basic Package'),
                   _buildDetailRow('Status', _isSubscribed ? 'Active' : 'Inactive'),
                   _buildDetailRow('Days Remaining', '$_daysLeft days'),
                   _buildDetailRow('Price', _planPrice != null ? '\$${_planPrice!.toStringAsFixed(2)}' : '\$25.00'),
@@ -798,7 +826,11 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(context); // Close dialog
-              Navigator.pop(context); // Go back to previous screen
+              // Navigate to MainNavigation (root screen) and clear all previous screens
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (context) => const MainNavigation()),
+                (route) => false,
+              );
             },
             child: const Text(
               'OK',

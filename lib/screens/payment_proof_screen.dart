@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import '../services/wallet_service.dart';
 import '../services/auth_service.dart';
+import '../main_navigation.dart';
 
 class PaymentProofScreen extends StatefulWidget {
   final String amount;
@@ -80,7 +81,15 @@ class _PaymentProofScreenState extends State<PaymentProofScreen> {
   }
 
   Future<void> _submitDeposit() async {
-    if (_transactionIdController.text.isEmpty) return;
+    if (_transactionIdController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Transaction ID is required'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
     
     setState(() {
       _isLoading = true;
@@ -101,9 +110,12 @@ class _PaymentProofScreenState extends State<PaymentProofScreen> {
       
       request.fields['amount'] = widget.amount;
       request.fields['txid'] = _transactionIdController.text;
-      final accountNumber = _bankDetails?['accountNumber'] ?? widget.account ?? '698f14193c74d9cba2ab4eb1';
-      final accountName = _bankDetails?['accountHolder'] ?? widget.senderAccountName ?? 'shikha';
-      request.fields['account'] = accountNumber;
+      
+      // Use _id for the account field, fallback to widget.account or a default ID
+      final accountId = _bankDetails?['_id'] ?? widget.account ?? '698f14193c74d9cba2ab4eb1';
+      final accountName = _bankDetails?['accountHolderName'] ?? _bankDetails?['accountHolder'] ?? widget.senderAccountName ?? 'shikha';
+      
+      request.fields['account'] = accountId;
       request.fields['senderAccountName'] = accountName;
       
       if (_selectedImage != null) {
@@ -132,12 +144,43 @@ class _PaymentProofScreenState extends State<PaymentProofScreen> {
       if (response.statusCode == 200) {
         // Show success
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Deposit request submitted successfully')),
+          const SnackBar(
+            content: Text('Deposit request submitted successfully'),
+            backgroundColor: Color(0xFF84BD00),
+          ),
         );
+        // Navigate back to home screen immediately
+        if (mounted) {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (context) => const MainNavigation()),
+            (route) => false,
+          );
+        }
       } else {
-        // Show error
+        // Parse and show backend error message
+        String errorMessage = 'Failed to submit deposit';
+        try {
+          final errorData = json.decode(response.body);
+          if (errorData is Map) {
+            // Try to extract error message from various possible fields
+            errorMessage = errorData['message']?.toString() ??
+                          errorData['error']?.toString() ??
+                          errorData['errors']?.toString() ??
+                          errorData['msg']?.toString() ??
+                          'Failed: ${response.body}';
+          } else if (errorData is String) {
+            errorMessage = errorData;
+          }
+        } catch (_) {
+          errorMessage = response.body.isNotEmpty ? response.body : 'Failed to submit deposit';
+        }
+        
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed: ${response.body}')),
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } catch (e) {

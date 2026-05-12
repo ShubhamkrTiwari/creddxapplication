@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/bot_service.dart';
+import '../services/socket_service.dart';
 import 'bot_trade_detail_screen.dart';
+import '../main_navigation.dart';
 
 class PackageProgramScreen extends StatefulWidget {
   const PackageProgramScreen({super.key});
@@ -34,7 +36,7 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
         if (startDate != null) {
           final endDate = startDate.add(Duration(days: duration));
           final now = DateTime.now();
-          final daysLeft = endDate.difference(now).inDays;
+          final daysLeft = endDate.difference(now).inDays + 1;
           
           if (daysLeft > 0) {
             setState(() {
@@ -214,7 +216,7 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
                           : Text(
                               _isSubscribed 
                                   ? 'Already Subscribed'
-                                  : 'Get Annual Plan',
+                                  : 'Get Basic Package',
                               style: TextStyle(
                                 color: _isSubscribed ? Colors.white : Colors.black,
                                 fontSize: 16,
@@ -252,7 +254,7 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  _buildDetailRow('Plan', 'Annual Plan'),
+                  _buildDetailRow('Plan', 'Basic Package'),
                   _buildDetailRow('Status', 'Active'),
                   _buildDetailRow('Price', '\$25'),
                   _buildDetailRow('Duration', '365 Days'),
@@ -397,10 +399,10 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
     setState(() => _isSubscribing = true);
     
     try {
-      debugPrint('=== SUBSCRIBING TO ANNUAL PLAN ===');
+      debugPrint('=== SUBSCRIBING TO BASIC PACKAGE ===');
       
       final response = await BotService.subscribeToPlan(
-        plan: 'Annual Plan',
+        plan: 'Basic Package',
         price: 25.0, // Set price to 25 USD as required by API
       );
       
@@ -413,7 +415,7 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
         // Set the global package state to true
         BotTradeDetailScreen.hasPackage = true;
         
-        _showSuccessDialog('Subscription successful!', response['message'] ?? 'You are now subscribed to Annual Plan');
+        _showSuccessDialog('Subscription successful!', response['message'] ?? 'You are now subscribed to Basic Package');
       } else {
         _showErrorDialog('Subscription failed', response['error'] ?? 'Something went wrong');
       }
@@ -442,7 +444,11 @@ class _PackageProgramScreenState extends State<PackageProgramScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(context); // Close dialog
-              Navigator.pop(context, true); // Go back to previous screen with success
+              // Navigate to MainNavigation (root screen) and clear all previous screens
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (context) => const MainNavigation()),
+                (route) => false,
+              );
             },
             child: const Text(
               'OK',

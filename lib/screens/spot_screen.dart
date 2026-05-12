@@ -49,8 +49,12 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
   List<Map<String, dynamic>> _sellOrders = [];
   List<Map<String, dynamic>> _buyOrders = [];
   List<Map<String, dynamic>> _openOrders = [];
-  List<Map<String, dynamic>> _recentTrades = [];
+  List<Map<String, dynamic>> _closedOrders = [];
   List<Map<String, dynamic>> _symbols = [];
+  
+  // Slider expansion states
+  bool _isOpenOrdersExpanded = true;
+  bool _isClosedOrdersExpanded = true;
   Map<String, dynamic>? _balance;
   bool _isLoadingBalance = true;
   String? _balanceError;
@@ -71,7 +75,6 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
   bool _isLoadingSymbols = false;
   StreamSubscription? _balanceSubscription;
   StreamSubscription? _orderbookSubscription;
-  StreamSubscription? _tradesSubscription;
   StreamSubscription? _ordersSubscription;
   StreamSubscription? _fillsSubscription;
   StreamSubscription? _tickerSubscription;
@@ -126,7 +129,6 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
     // Restore persistent user orders
     _buyOrders = List<Map<String, dynamic>>.from(SpotService.userBuyOrders);
     _sellOrders = List<Map<String, dynamic>>.from(SpotService.userSellOrders);
-    _recentTrades = List<Map<String, dynamic>>.from(SpotService.userTrades);
     _selectedSymbol = SpotService.currentSymbol;
     
     // Initialize price controller
@@ -399,7 +401,6 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
     _amountController.dispose();
     _balanceSubscription?.cancel();
     _orderbookSubscription?.cancel();
-    _tradesSubscription?.cancel();
     _ordersSubscription?.cancel();
     _fillsSubscription?.cancel();
     _tickerSubscription?.cancel();
@@ -486,22 +487,6 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
           });
         }
       });
-
-      // Listen to trade updates (WebSocket event type: 'trade')
-      _tradesSubscription?.cancel();
-      _tradesSubscription = SpotSocketService.tradesStream.listen((data) {
-        final eventType = data['type'] ?? data['event'];
-        final symbol = data['symbol'] ?? data['data']?['symbol'];
-        if (mounted && eventType == 'trade' && symbol == _selectedSymbol) {
-          setState(() {
-            _recentTrades.insert(0, data['data']);
-            if (_recentTrades.length > 50) {
-              _recentTrades = _recentTrades.take(50).toList();
-            }
-            _isWebSocketConnected = true;
-          });
-        }
-      });
       
       // Subscribe to order updates
       _ordersSubscription?.cancel();
@@ -532,16 +517,20 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
               break;
             case 'filled':
               _loadOpenOrders();
+              _loadClosedOrders();
               _loadBalance(forceRefresh: true);
               _showMessage('$symbol: Order fully filled ${qty.toStringAsFixed(6)}', isError: false);
               break;
             case 'cancelled':
               _loadOpenOrders();
+              _loadClosedOrders();
               _loadBalance(forceRefresh: true);
               _showMessage('$symbol: Order cancelled', isError: false);
               break;
             case 'rejected':
               final reason = orderData['reason'] ?? 'Order rejected';
+              _loadOpenOrders();
+              _loadClosedOrders();
               _loadBalance(forceRefresh: true);
               _showMessage('$symbol: Order rejected - $reason', isError: true);
               break;
@@ -567,25 +556,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
 
           debugPrint('Fill received: $fillData');
 
-          // Add to recent trades for visual feedback
-          final newTrade = {
-            'price': price,
-            'amount': qty,
-            'side': side,
-            'timestamp': DateTime.now().toIso8601String(),
-            'isMyOrder': true,
-            'isMaker': isMaker,
-            'fee': fee,
-            'feeAsset': feeAsset,
-          };
-
-          setState(() {
-            _recentTrades.insert(0, newTrade);
-            if (_recentTrades.length > 50) {
-              _recentTrades = _recentTrades.take(50).toList();
-            }
-          });
-
+          
           // Show fill notification with fee info
           final total = qty * price;
           _showMessage(
@@ -734,8 +705,8 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
     await Future.wait([
       _loadTicker(),
       _loadOrderBook(),
-      _loadRecentTrades(),
       _loadOpenOrders(),
+      _loadClosedOrders(),
       _loadBalance(),
       _loadSymbols(),
       _loadFees(),
@@ -930,20 +901,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
     });
   }
 
-  // Load recent trades
-  Future<void> _loadRecentTrades() async {
-    try {
-      final result = await SpotService.getRecentTrades(_selectedSymbol);
-      if (result['success'] && result['data'] != null) {
-        setState(() {
-          _recentTrades = List<Map<String, dynamic>>.from(result['data']);
-        });
-      }
-    } catch (e) {
-      print('Error loading recent trades: $e');
-    }
-  }
-
+  
   // Load open orders
   Future<void> _loadOpenOrders() async {
     try {
@@ -973,6 +931,39 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
       print('Error loading open orders: $e');
       setState(() {
         _openOrders = [];
+      });
+    }
+  }
+
+  // Load closed orders
+  Future<void> _loadClosedOrders() async {
+    try {
+      print('Loading closed orders for symbol: $_selectedSymbol');
+      final result = await SpotService.getUserTradeHistory(symbol: _selectedSymbol);
+      print('Closed orders result: $result');
+      
+      if (result['success'] && result['data'] != null) {
+        final ordersData = result['data'];
+        print('Closed orders data type: ${ordersData.runtimeType}');
+        
+        setState(() {
+          if (ordersData is List) {
+            _closedOrders = List<Map<String, dynamic>>.from(ordersData);
+          } else {
+            _closedOrders = [];
+          }
+          print('Loaded ${_closedOrders.length} closed orders');
+        });
+      } else {
+        print('Failed to load closed orders: ${result['error']}');
+        setState(() {
+          _closedOrders = [];
+        });
+      }
+    } catch (e) {
+      print('Error loading closed orders: $e');
+      setState(() {
+        _closedOrders = [];
       });
     }
   }
@@ -1244,23 +1235,11 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
           _showMessage('Order placed successfully!');
         }
         
-        // Add order to order book and recent trades immediately for visual feedback
+        // Add order to order book immediately for visual feedback
         if (orderData != null) {
           final displayPrice = _orderType == 'Market' ? _currentPrice : effectivePrice;
-          final newTrade = {
-            'price': displayPrice,
-            'amount': _amount,
-            'side': _isBuy ? 'Buy' : 'Sell',
-            'timestamp': DateTime.now().toIso8601String(),
-            'isMyOrder': true,
-          };
           
           setState(() {
-            // Add to recent trades
-            _recentTrades.insert(0, newTrade);
-            if (_recentTrades.length > 50) {
-              _recentTrades = _recentTrades.take(50).toList();
-            }
             
             // Add to order book for limit orders
             if (_orderType == 'Limit') {
@@ -1283,7 +1262,6 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
             // Save to persistent storage
             SpotService.userBuyOrders = List<Map<String, dynamic>>.from(_buyOrders.where((o) => o['isMyOrder'] == true));
             SpotService.userSellOrders = List<Map<String, dynamic>>.from(_sellOrders.where((o) => o['isMyOrder'] == true));
-            SpotService.userTrades = List<Map<String, dynamic>>.from(_recentTrades);
           });
         }
         
@@ -1699,7 +1677,8 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
     return Scaffold(
       backgroundColor: const Color(0xFF0D0D0D),
       appBar: _buildAppBar(),
-      body: Column(
+      body: SafeArea(
+        child: Column(
         children: [
           Expanded(
             child: SingleChildScrollView(
@@ -1708,15 +1687,17 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
                   const SizedBox(height: 20),
                   _buildTradingSection(),
                   const SizedBox(height: 20),
-                  _buildRecentTradesSection(),
                   const SizedBox(height: 20),
                   _buildOpenOrdersSection(),
+                  const SizedBox(height: 20),
+                  _buildClosedOrdersSection(),
                   const SizedBox(height: 100),
                 ],
               ),
             ),
           ),
         ],
+      ),
       ),
     );
   }
@@ -3602,118 +3583,10 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
     );
   }
 
-  Widget _buildRecentTradesSection() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: const Color(0xFF1A1A1A),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Recent Trades',
-                  style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                TextButton(
-                  onPressed: () {},
-                  child: const Text(
-                    'View All',
-                    style: TextStyle(color: Color(0xFF84BD00), fontSize: 12),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            _buildRecentTradesTable(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRecentTradesTable() {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF2A2A2A),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        children: [
-          // Table Header
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-            decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: Colors.white10)),
-            ),
-            child: Row(
-              children: [
-                Expanded(flex: 2, child: _tableHeader('Price')),
-                Expanded(flex: 2, child: _tableHeader('Amount')),
-                Expanded(flex: 2, child: _tableHeader('Time')),
-                Expanded(flex: 2, child: _tableHeader('Side')),
-              ],
-            ),
-          ),
-          // Table Rows
-          ..._recentTrades.take(10).map((trade) => _buildTradeRow(trade)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTradeRow(Map<String, dynamic> trade) {
-    final price = trade['price'] ?? 0.0;
-    final qty = trade['qty'] ?? trade['amount'] ?? 0.0;
-    final timestamp = trade['timestamp'] ?? 0;
-    final side = trade['taker_side'] ?? trade['side'] ?? 'Buy';
-    final isBuy = side == 'Buy';
-    final isMyOrder = trade['isMyOrder'] == true;
-    
-    // Convert timestamp to readable time
-    String timeStr;
-    if (timestamp is int) {
-      final time = DateTime.fromMillisecondsSinceEpoch(timestamp);
-      timeStr = '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
-    } else if (timestamp is String) {
-      final time = DateTime.parse(timestamp);
-      timeStr = '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
-    } else {
-      timeStr = 'Now';
-    }
-    
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-      decoration: BoxDecoration(
-        border: const Border(bottom: BorderSide(color: Colors.white10)),
-        color: isMyOrder ? (isBuy ? const Color(0xFF84BD00).withValues(alpha: 0.15) : Colors.red.withValues(alpha: 0.15)) : null,
-      ),
-      child: Row(
-        children: [
-          Expanded(flex: 2, child: _tableCell('${price.toStringAsFixed(2)}', 10, isBuy ? const Color(0xFF84BD00) : Colors.red)),
-          Expanded(flex: 2, child: _tableCell('${qty.toStringAsFixed(4)}', 10)),
-          Expanded(flex: 2, child: _tableCell(timeStr, 10)),
-          Expanded(flex: 2, child: _tableCell(isMyOrder ? '$side (You)' : side, 10, isBuy ? const Color(0xFF84BD00) : Colors.red)),
-        ],
-      ),
-    );
-  }
-
   Widget _buildOpenOrdersSection() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Container(
-        padding: const EdgeInsets.all(16),
-        constraints: BoxConstraints(
-          minHeight: 400, // Increased minimum height
-          maxHeight: 500, // Added maximum height
-        ),
         decoration: BoxDecoration(
           color: const Color(0xFF1A1A1A),
           borderRadius: BorderRadius.circular(12),
@@ -3721,26 +3594,60 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Open Orders',
-                  style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                TextButton(
-                  onPressed: () {},
-                  child: const Text(
-                    'All',
-                    style: TextStyle(color: Color(0xFF84BD00), fontSize: 12),
+            // Header with expand/collapse
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Open Orders',
+                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
                   ),
+                  Row(
+                    children: [
+                      TextButton(
+                        onPressed: () {},
+                        child: const Text(
+                          'All',
+                          style: TextStyle(color: Color(0xFF84BD00), fontSize: 12),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _isOpenOrdersExpanded = !_isOpenOrdersExpanded;
+                          });
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2A2A2A),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Icon(
+                            _isOpenOrdersExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            // Expandable content
+            if (_isOpenOrdersExpanded)
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                constraints: BoxConstraints(
+                  minHeight: 300,
+                  maxHeight: 400,
                 ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: _buildOpenOrdersTable(),
-            ),
+                child: _buildOpenOrdersTable(),
+              ),
           ],
         ),
       ),
@@ -3892,5 +3799,207 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
         ),
       );
     }
+  }
+
+  Widget _buildClosedOrdersSection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1A1A),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header with expand/collapse
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Closed Orders',
+                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  Row(
+                    children: [
+                      TextButton(
+                        onPressed: () {},
+                        child: const Text(
+                          'All',
+                          style: TextStyle(color: Color(0xFF84BD00), fontSize: 12),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _isClosedOrdersExpanded = !_isClosedOrdersExpanded;
+                          });
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2A2A2A),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Icon(
+                            _isClosedOrdersExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            // Expandable content
+            if (_isClosedOrdersExpanded)
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                constraints: BoxConstraints(
+                  minHeight: 250,
+                  maxHeight: 350,
+                ),
+                child: _buildClosedOrdersTable(),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildClosedOrdersTable() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF2A2A2A),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        children: [
+          // Table Header
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: Colors.white10)),
+            ),
+            child: Row(
+              children: [
+                Expanded(flex: 2, child: _tableHeader('Price(USDT)')),
+                Expanded(flex: 2, child: _tableHeader('Amount(BTC)')),
+                Expanded(flex: 2, child: _tableHeader('Executed(BTC)')),
+                Expanded(flex: 2, child: _tableHeader('Total')),
+                Expanded(flex: 3, child: _tableHeader('Type')),
+                Expanded(flex: 2, child: _tableHeader('Status')),
+              ],
+            ),
+          ),
+          // Table Rows with scroll
+          Expanded(
+            child: _closedOrders.isEmpty
+                ? Container(
+                    padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 16),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.history_outlined,
+                          color: Colors.white.withValues(alpha: 0.3),
+                          size: 48,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'No closed orders',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.5),
+                            fontSize: 14,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Completed orders will appear here',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.3),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : SingleChildScrollView(
+                    child: Column(
+                      children: _closedOrders.map((order) => _buildClosedOrderRow(order)).toList(),
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClosedOrderRow(Map<String, dynamic> order) {
+    final orderId = order['order_id']?.toString() ?? order['id']?.toString() ?? '';
+    final orderPrice = order['price'] ?? 0.0;
+    final orderSide = order['side'] ?? 'Buy';
+    final orderQty = order['qty'] ?? order['quantity'] ?? 0.0;
+    final executed = order['executed'] ?? orderQty;
+    final total = orderPrice * executed;
+    final status = order['status'] ?? 'filled';
+    
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Colors.white10)),
+      ),
+      child: Row(
+        children: [
+          Expanded(flex: 2, child: _tableCell('${orderPrice.toStringAsFixed(1)} USDT', 10)),
+          Expanded(flex: 2, child: _tableCell('${orderQty.toStringAsFixed(2)} BTC', 10)),
+          Expanded(flex: 2, child: _tableCell('${executed.toStringAsFixed(2)} BTC', 10)),
+          Expanded(flex: 2, child: _tableCell('${total.toStringAsFixed(2)} USDT', 10)),
+          Expanded(flex: 3, child: _tableCell(order['order_type'] ?? 'Limit', 10)),
+          Expanded(flex: 2, child: _buildStatusCell(status)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusCell(String status) {
+    Color statusColor;
+    String statusText;
+    
+    switch (status.toLowerCase()) {
+      case 'filled':
+        statusColor = Colors.green;
+        statusText = 'Filled';
+        break;
+      case 'cancelled':
+        statusColor = Colors.red;
+        statusText = 'Cancelled';
+        break;
+      case 'rejected':
+        statusColor = Colors.orange;
+        statusText = 'Rejected';
+        break;
+      default:
+        statusColor = Colors.grey;
+        statusText = status;
+    }
+    
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: statusColor.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        statusText,
+        style: TextStyle(color: statusColor, fontSize: 8),
+        textAlign: TextAlign.center,
+      ),
+    );
   }
 }

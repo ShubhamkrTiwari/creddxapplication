@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 class TradingViewChart extends StatefulWidget {
@@ -34,11 +34,34 @@ class TradingViewChart extends StatefulWidget {
 
 class _TradingViewChartState extends State<TradingViewChart> {
   bool _isLoading = true;
-  InAppWebViewController? _webViewController;
+  late WebViewController _webViewController;
 
   @override
   void initState() {
     super.initState();
+    _webViewController = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageStarted: (url) {
+            setState(() {
+              _isLoading = true;
+            });
+          },
+          onPageFinished: (url) {
+            setState(() {
+              _isLoading = false;
+            });
+          },
+          onWebResourceError: (error) {
+            setState(() {
+              _isLoading = false;
+            });
+            debugPrint('TradingView WebView error: $error');
+          },
+        ),
+      );
+    _loadChart();
   }
 
   @override
@@ -52,18 +75,14 @@ class _TradingViewChartState extends State<TradingViewChart> {
   }
 
   void _loadChart() {
-    if (_webViewController != null) {
-      final url = _buildTradingViewUrl();
-      _webViewController!.loadUrl(
-        urlRequest: URLRequest(url: WebUri(url)),
-      );
-    }
+    final url = _buildTradingViewUrl();
+    _webViewController.loadRequest(Uri.parse(url));
   }
 
   String _buildTradingViewUrl() {
     final symbol = widget.symbol.contains(':') 
         ? widget.symbol 
-        : 'BINANCE:${widget.symbol}';
+        : 'KUCOIN:${widget.symbol}';
     
     final params = {
       'frameElementId': 'tradingview_chart',
@@ -112,27 +131,8 @@ class _TradingViewChartState extends State<TradingViewChart> {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          InAppWebView(
-            initialUrlRequest: URLRequest(url: WebUri(url)),
-            onWebViewCreated: (controller) {
-              _webViewController = controller;
-            },
-            onLoadStart: (controller, url) {
-              setState(() {
-                _isLoading = true;
-              });
-            },
-            onLoadStop: (controller, url) {
-              setState(() {
-                _isLoading = false;
-              });
-            },
-            onReceivedError: (controller, request, error) {
-              setState(() {
-                _isLoading = false;
-              });
-              debugPrint('TradingView WebView error: $error');
-            },
+          WebViewWidget(
+            controller: _webViewController,
           ),
           if (_isLoading)
             Container(
@@ -215,7 +215,7 @@ class _TradingViewChartState extends State<TradingViewChart> {
   }
 
   void refreshChart() {
-    if (!kIsWeb && _webViewController != null) {
+    if (!kIsWeb) {
       _loadChart();
     }
   }

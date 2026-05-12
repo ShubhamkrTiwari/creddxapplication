@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../services/wallet_service.dart';
+import '../services/bot_service.dart';
 
 class WalletHistoryScreen extends StatefulWidget {
   const WalletHistoryScreen({super.key});
@@ -14,33 +16,40 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
   bool _isLoading = true;
   List<dynamic> _transactions = [];
   List<dynamic> _transfers = [];
+  List<dynamic> _conversions = [];
+  List<dynamic> _subscriptions = [];
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _fetchHistory();
   }
 
   Future<void> _fetchHistory() async {
     setState(() {
       _isLoading = true;
-      _error = null;
+      // Error cleared on new fetch
     });
 
     try {
       final results = await Future.wait([
         WalletService.getCompleteTransactionHistory(),
         WalletService.getWalletTransferHistory(),
+        WalletService.getConversionHistory(limit: 50),
+        BotService.getSubscriptionHistory(),
+        BotService.getBotInvestmentHistory(),
       ]);
 
       if (mounted) {
         setState(() {
-          // Explicit casting to fix the "operator '[]' isn't defined for Object" error
-          final txResult = results[0] as Map<String, dynamic>;
-          final transferResult = results[1] as Map<String, dynamic>;
-          
+          final txResult = results[0];
+          final transferResult = results[1];
+          final conversionResult = results[2];
+          final subscriptionResult = results[3];
+          final botInvestmentResult = results[4];
+
           if (txResult['success'] == true) {
             final txData = txResult['data'] as Map<String, dynamic>;
             _transactions = txData['transactions'] ?? [];
@@ -53,6 +62,55 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
               _transfers = transferData['transfers'] ?? [];
             }
           }
+          if (conversionResult['success'] == true) {
+            final conversionData = conversionResult['data'];
+            if (conversionData is List) {
+              _conversions = conversionData.map((item) {
+                final conversion = Map<String, dynamic>.from(item);
+                conversion['transactionType'] = 'conversion';
+                conversion['isConversion'] = true;
+                return conversion;
+              }).toList();
+            } else if (conversionData is Map && conversionData['conversions'] != null) {
+              _conversions = (conversionData['conversions'] as List).map((item) {
+                final conversion = Map<String, dynamic>.from(item);
+                conversion['transactionType'] = 'conversion';
+                conversion['isConversion'] = true;
+                return conversion;
+              }).toList();
+            }
+          }
+          if (subscriptionResult['success'] == true) {
+            final subscriptionData = subscriptionResult['data'];
+            if (subscriptionData is Map) {
+              _subscriptions = subscriptionData['subscriptions'] ?? [];
+            } else if (subscriptionData is List) {
+              _subscriptions = subscriptionData;
+            }
+          }
+          
+          // Merge bot investment transactions into main transactions list
+          if (botInvestmentResult['success'] == true) {
+            final botInvestmentData = botInvestmentResult['data'];
+            List<dynamic> botTransactions = [];
+            
+            if (botInvestmentData is Map) {
+              botTransactions = botInvestmentData['investments'] ?? [];
+            } else if (botInvestmentData is List) {
+              botTransactions = botInvestmentData;
+            }
+            
+            // Add bot transactions to main transactions list
+            _transactions.addAll(botTransactions);
+            
+            // Sort all transactions by date (newest first)
+            _transactions.sort((a, b) {
+              final aDate = DateTime.tryParse(a['createdAt']?.toString() ?? '') ?? DateTime.now();
+              final bDate = DateTime.tryParse(b['createdAt']?.toString() ?? '') ?? DateTime.now();
+              return bDate.compareTo(aDate);
+            });
+          }
+          
           _isLoading = false;
         });
       }
@@ -60,6 +118,7 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
       if (mounted) {
         setState(() {
           _error = e.toString();
+          debugPrint('Error fetching history: $e');
           _isLoading = false;
         });
       }
@@ -95,6 +154,8 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
           tabs: const [
             Tab(text: 'Transactions'),
             Tab(text: 'Transfers'),
+            Tab(text: 'Conversions'),
+            Tab(text: 'Subscriptions'),
           ],
         ),
       ),
@@ -105,6 +166,8 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
               children: [
                 _buildTransactionList(),
                 _buildTransferList(),
+                _buildConversionList(),
+                _buildSubscriptionList(),
               ],
             ),
     );
@@ -122,12 +185,35 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
         padding: const EdgeInsets.all(16),
         itemCount: _transactions.length,
         itemBuilder: (context, index) {
-          final tx = _transactions[index];
-          final String type = tx['transactionType'] ?? tx['type'] ?? 'Unknown';
-          final String coin = tx['coin'] ?? '';
+          final tx = _transactions[index] is Map<String, dynamic>
+              ? _transactions[index] as Map<String, dynamic>
+              : Map<String, dynamic>.from(_transactions[index]);
+          final dynamic typeRaw = tx['transactionType'] ?? tx['type'] ?? 'Unknown';
+          final dynamic coinRaw = tx['coin'] ?? tx['asset'] ?? '';
+          final String type = typeRaw is List ? (typeRaw.isNotEmpty ? typeRaw[0].toString() : 'Unknown') : typeRaw.toString();
+          final String coin = coinRaw is List ? (coinRaw.isNotEmpty ? coinRaw[0].toString() : '') : coinRaw.toString();
           final double amount = double.tryParse(tx['amount']?.toString() ?? '0') ?? 0;
-          final DateTime date = DateTime.tryParse(tx['createdAt']?.toString() ?? '') ?? DateTime.now();
+          // Try multiple possible time field names from API
+          final String? timeStr = tx['createdAt']?.toString() ??
+                                   tx['created_at']?.toString() ??
+                                   tx['timestamp']?.toString() ??
+                                   tx['date']?.toString() ??
+                                   tx['time']?.toString();
+          final DateTime date = timeStr != null
+              ? DateTime.tryParse(timeStr) ?? DateTime.now()
+              : DateTime.now();
+          // Convert to local time if the parsed time is UTC
+          final DateTime localDate = date.isUtc ? date.toLocal() : date;
           final bool isCredit = amount > 0 || type.toLowerCase().contains('deposit') || type.toLowerCase().contains('credit');
+          final bool isBotTransaction = type.toLowerCase().contains('bot');
+          
+          // Check for INR withdrawal details
+          final bankDetails = tx['bankDetails'] ?? tx['withdrawDetails'] ?? tx['bank_details'];
+          final upiId = tx['upiId'] ?? tx['upi_id'];
+          final withdrawType = tx['withdrawType'] ?? tx['withdraw_type'];
+          final category = tx['category']?.toString() ?? '';
+          final bool isINRWithdrawal = category == 'inr' || (type == 'withdrawal' && bankDetails != null);
+          final bool isUPI = withdrawType == 2 || upiId != null;
 
           return Container(
             margin: const EdgeInsets.only(bottom: 12),
@@ -136,51 +222,190 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
               color: const Color(0xFF1A1A1A),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CircleAvatar(
-                  backgroundColor: (isCredit ? Colors.green : Colors.red).withOpacity(0.1),
-                  child: Icon(
-                    isCredit ? Icons.arrow_downward : Icons.arrow_upward,
-                    color: isCredit ? Colors.green : Colors.red,
-                    size: 20,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        type.toUpperCase(),
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        DateFormat('MMM dd, yyyy HH:mm').format(date),
-                        style: const TextStyle(color: Colors.white54, fontSize: 12),
-                      ),
-                    ],
-                  ),
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                Row(
                   children: [
-                    Text(
-                      '${isCredit ? '+' : ''}$amount $coin',
-                      style: TextStyle(
-                        color: isCredit ? Colors.green : Colors.red,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: isBotTransaction 
+                            ? const Color(0xFF84BD00).withOpacity(0.1)
+                            : (isCredit ? Colors.green : Colors.red).withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(12),
+                        border: isBotTransaction 
+                            ? Border.all(color: const Color(0xFF84BD00).withOpacity(0.3), width: 1)
+                            : null,
+                      ),
+                      child: isBotTransaction 
+                          ? const Icon(
+                              Icons.smart_toy,
+                              color: Color(0xFF84BD00),
+                              size: 24,
+                            )
+                          : Icon(
+                              isCredit ? Icons.arrow_downward : Icons.arrow_upward,
+                              color: isCredit ? Colors.green : Colors.red,
+                              size: 20,
+                            ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            isINRWithdrawal ? '${_getTransactionTypeLabel(type)} ${isUPI ? 'UPI' : 'BANK'}' : _getTransactionTypeLabel(type),
+                            style: TextStyle(
+                              color: isBotTransaction ? const Color(0xFF84BD00) : Colors.white, 
+                              fontWeight: FontWeight.bold, 
+                              fontSize: 14
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            DateFormat('MMM dd, yyyy hh:mm a').format(localDate),
+                            style: const TextStyle(color: Colors.white54, fontSize: 12),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      tx['status']?.toString().toUpperCase() ?? 'COMPLETED',
-                      style: const TextStyle(color: Colors.white38, fontSize: 10),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          isINRWithdrawal ? '₹${amount.toStringAsFixed(2)}' : '${isCredit ? '+' : ''}$amount',
+                          style: TextStyle(
+                            color: isCredit ? Colors.green : Colors.red,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Builder(
+                          builder: (context) {
+                            final dynamic txStatusRaw = tx['status'] ?? 'COMPLETED';
+                            String txStatus = txStatusRaw is List
+                                ? (txStatusRaw.isNotEmpty ? txStatusRaw[0].toString().toUpperCase() : 'COMPLETED')
+                                : txStatusRaw.toString().toUpperCase();
+                            
+                            // Check for rejection indicators
+                            final isRejected = tx['isRejected'] == true || 
+                                             tx['rejected'] == true || 
+                                             txStatus.contains('REJECT') ||
+                                             txStatus.contains('FAIL') ||
+                                             txStatus.contains('CANCEL');
+                            
+                            if (isRejected) {
+                              txStatus = 'REJECTED';
+                            }
+                            
+                            // Determine status color
+                            Color statusColor = Colors.white38;
+                            if (txStatus.contains('REJECT') || txStatus.contains('FAIL') || txStatus.contains('CANCEL')) {
+                              statusColor = Colors.red;
+                            } else if (txStatus.contains('PENDING') || txStatus.contains('PROCESSING')) {
+                              statusColor = Colors.orange;
+                            } else if (txStatus.contains('COMPLET') || txStatus.contains('SUCCESS')) {
+                              statusColor = Colors.green;
+                            }
+                            
+                            return Text(
+                              txStatus,
+                              style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.w600),
+                            );
+                          },
+                        ),
+                      ],
                     ),
                   ],
                 ),
+                // Show bank/UPI details for INR withdrawals
+                if (isINRWithdrawal || bankDetails != null || upiId != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.05),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (bankDetails != null && bankDetails['accountHolderName']?.toString().isNotEmpty == true)
+                          Text(
+                            'Account Holder: ${bankDetails!['accountHolderName']}',
+                            style: const TextStyle(color: Colors.white70, fontSize: 12),
+                          ),
+                        if (isUPI && upiId != null) ...[
+                          Text(
+                            'UPI ID: $upiId',
+                            style: const TextStyle(color: Colors.white70, fontSize: 12),
+                          ),
+                        ] else if (bankDetails != null && bankDetails['bankName']?.toString().isNotEmpty == true) ...[
+                          Text(
+                            'Bank: ${bankDetails!['bankName']}',
+                            style: const TextStyle(color: Colors.white70, fontSize: 12),
+                          ),
+                          if (bankDetails != null && bankDetails['accountNumber']?.toString().isNotEmpty == true)
+                            Text(
+                              'Account: XXXX${bankDetails!['accountNumber'].toString().substring(bankDetails!['accountNumber'].toString().length > 4 ? bankDetails!['accountNumber'].toString().length - 4 : 0)}',
+                              style: const TextStyle(color: Colors.white70, fontSize: 12),
+                            ),
+                          if (bankDetails != null && bankDetails['ifscCode']?.toString().isNotEmpty == true)
+                            Text(
+                              'IFSC: ${bankDetails!['ifscCode']}',
+                              style: const TextStyle(color: Colors.white54, fontSize: 11),
+                            ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+                
+                // Show bot transaction details
+                if (isBotTransaction) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF84BD00).withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: const Color(0xFF84BD00).withOpacity(0.2),
+                        width: 1,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (tx['botName'] != null)
+                          Text(
+                            'Bot: ${tx['botName']}',
+                            style: const TextStyle(color: Color(0xFF84BD00), fontSize: 12, fontWeight: FontWeight.w600),
+                          ),
+                        if (tx['strategy'] != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Strategy: ${tx['strategy']}',
+                            style: const TextStyle(color: Colors.white70, fontSize: 12),
+                          ),
+                        ],
+                        if (tx['description'] != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            tx['description'].toString(),
+                            style: const TextStyle(color: Colors.white70, fontSize: 12),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           );
@@ -201,12 +426,630 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
         padding: const EdgeInsets.all(16),
         itemCount: _transfers.length,
         itemBuilder: (context, index) {
-          final transfer = _transfers[index];
-          final String from = transfer['fromWallet'] ?? 'Unknown';
-          final String to = transfer['toWallet'] ?? 'Unknown';
-          final String coin = transfer['coin'] ?? '';
+          final transfer = _transfers[index] is Map<String, dynamic>
+              ? _transfers[index] as Map<String, dynamic>
+              : Map<String, dynamic>.from(_transfers[index]);
+          final dynamic fromRaw = transfer['fromWallet'] ?? transfer['from_wallet'] ?? transfer['from'] ?? 'Unknown';
+          final dynamic toRaw = transfer['toWallet'] ?? transfer['to_wallet'] ?? transfer['to'] ?? 'Unknown';
+          final dynamic coinRaw = transfer['coin'] ?? transfer['asset'] ?? 'USDT';
+          final String from = fromRaw is List ? (fromRaw.isNotEmpty ? fromRaw[0].toString() : 'Unknown') : fromRaw.toString();
+          final String to = toRaw is List ? (toRaw.isNotEmpty ? toRaw[0].toString() : 'Unknown') : toRaw.toString();
+          final String coin = coinRaw is List ? (coinRaw.isNotEmpty ? coinRaw[0].toString() : 'USDT') : coinRaw.toString();
           final double amount = double.tryParse(transfer['amount']?.toString() ?? '0') ?? 0;
-          final DateTime date = DateTime.tryParse(transfer['createdAt']?.toString() ?? '') ?? DateTime.now();
+          final dynamic statusRaw = transfer['status'] ?? 'Completed';
+          final String status = statusRaw is List ? (statusRaw.isNotEmpty ? statusRaw[0].toString() : 'Completed') : statusRaw.toString();
+          final String? txId = transfer['transactionId']?.toString() ?? transfer['txId']?.toString() ?? transfer['id']?.toString();
+          // Try multiple possible time field names from API
+          final String? timeStr = transfer['createdAt']?.toString() ??
+                                   transfer['created_at']?.toString() ??
+                                   transfer['timestamp']?.toString() ??
+                                   transfer['date']?.toString() ??
+                                   transfer['time']?.toString();
+          final DateTime date = timeStr != null
+              ? DateTime.tryParse(timeStr) ?? DateTime.now()
+              : DateTime.now();
+          // Convert to local time if the parsed time is UTC
+          final DateTime localDate = date.isUtc ? date.toLocal() : date;
+
+          // Wallet colors
+          final Color fromColor = _getWalletColor(from);
+          final Color toColor = _getWalletColor(to);
+
+          // Status color
+          Color statusColor = const Color(0xFF84BD00);
+          if (status.toLowerCase().contains('pending')) {
+            statusColor = Colors.orange;
+          } else if (status.toLowerCase().contains('fail')) {
+            statusColor = Colors.red;
+          } else if (status.toLowerCase().contains('success') || status.toLowerCase().contains('complete')) {
+            statusColor = const Color(0xFF84BD00);
+          }
+
+          return _buildTransferCard(
+            transfer: transfer,
+            from: from,
+            to: to,
+            coin: coin,
+            amount: amount,
+            status: status,
+            txId: txId,
+            localDate: localDate,
+            fromColor: fromColor,
+            toColor: toColor,
+            statusColor: statusColor,
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildTransferCard({
+    required Map<String, dynamic> transfer,
+    required String from,
+    required String to,
+    required String coin,
+    required double amount,
+    required String status,
+    required String? txId,
+    required DateTime localDate,
+    required Color fromColor,
+    required Color toColor,
+    required Color statusColor,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            const Color(0xFF1E1E24),
+            const Color(0xFF16161A),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.08),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.3),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Column(
+          children: [
+            // Top accent bar with gradient
+            Container(
+              height: 3,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [fromColor, toColor],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header Row
+                  Row(
+                    children: [
+                      // Animated transfer icon
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              fromColor.withValues(alpha: 0.25),
+                              toColor.withValues(alpha: 0.15),
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.1),
+                            width: 1,
+                          ),
+                        ),
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            Icon(Icons.swap_horiz, color: Colors.white.withValues(alpha: 0.9), size: 26),
+                            Positioned(
+                              right: 8,
+                              top: 8,
+                              child: Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: statusColor,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: const Color(0xFF1E1E24), width: 1.5),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Text(
+                                  'Transfer',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15,
+                                    letterSpacing: -0.3,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: statusColor.withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: statusColor.withValues(alpha: 0.3),
+                                      width: 1,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    status.toUpperCase(),
+                                    style: TextStyle(
+                                      color: statusColor,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Icon(Icons.access_time, size: 11, color: Colors.white.withValues(alpha: 0.4)),
+                                const SizedBox(width: 4),
+                                Text(
+                                  DateFormat('MMM dd, yyyy • hh:mm a').format(localDate),
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.5),
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Amount display
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              Colors.white.withValues(alpha: 0.08),
+                              Colors.white.withValues(alpha: 0.02),
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.1),
+                            width: 1,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.remove, color: Colors.red.withValues(alpha: 0.8), size: 12),
+                                const SizedBox(width: 2),
+                                Text(
+                                  amount.toStringAsFixed(5),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 1),
+                            Text(
+                              coin,
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.5),
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // Transfer flow path
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.03),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.06),
+                        width: 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        // From side
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'FROM',
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.35),
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 1,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Container(
+                                    width: 36,
+                                    height: 36,
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                        colors: [
+                                          fromColor.withValues(alpha: 0.3),
+                                          fromColor.withValues(alpha: 0.1),
+                                        ],
+                                      ),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: fromColor.withValues(alpha: 0.4),
+                                        width: 1.5,
+                                      ),
+                                    ),
+                                    child: Icon(
+                                      _getWalletIcon(from),
+                                      color: fromColor,
+                                      size: 18,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          _capitalizeWallet(from),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                        if (txId != null && txId.isNotEmpty)
+                                          Text(
+                                            'ID: ${_shortenId(txId)}',
+                                            style: TextStyle(
+                                              color: Colors.white.withValues(alpha: 0.35),
+                                              fontSize: 9,
+                                              fontFamily: 'monospace',
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        // Arrow connector
+                        Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Column(
+                            children: [
+                              Container(
+                                width: 28,
+                                height: 28,
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [fromColor.withValues(alpha: 0.5), toColor.withValues(alpha: 0.5)],
+                                  ),
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                child: Icon(
+                                  Icons.arrow_forward,
+                                  color: Colors.white.withValues(alpha: 0.9),
+                                  size: 14,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Container(
+                                width: 40,
+                                height: 2,
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [fromColor.withValues(alpha: 0.6), toColor.withValues(alpha: 0.6)],
+                                  ),
+                                  borderRadius: BorderRadius.circular(1),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        // To side
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                'TO',
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.35),
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 1,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.end,
+                                      children: [
+                                        Text(
+                                          _capitalizeWallet(to),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                        Text(
+                                          '+${amount.toStringAsFixed(5)} $coin',
+                                          style: TextStyle(
+                                            color: Colors.green.withValues(alpha: 0.8),
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Container(
+                                    width: 36,
+                                    height: 36,
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                        colors: [
+                                          toColor.withValues(alpha: 0.3),
+                                          toColor.withValues(alpha: 0.1),
+                                        ],
+                                      ),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: toColor.withValues(alpha: 0.4),
+                                        width: 1.5,
+                                      ),
+                                    ),
+                                    child: Icon(
+                                      _getWalletIcon(to),
+                                      color: toColor,
+                                      size: 18,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (txId != null && txId.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    GestureDetector(
+                      onTap: () {
+                        Clipboard.setData(ClipboardData(text: txId));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Transaction ID copied'),
+                            duration: Duration(seconds: 2),
+                            backgroundColor: Color(0xFF2A2A30),
+                          ),
+                        );
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.04),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.08),
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.copy,
+                              size: 12,
+                              color: Colors.white.withValues(alpha: 0.5),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              'TX: $txId',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.5),
+                                fontSize: 10,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _shortenId(String id) {
+    if (id.length <= 12) return id;
+    return '${id.substring(0, 6)}...${id.substring(id.length - 6)}';
+  }
+
+  Color _getWalletColor(String wallet) {
+    final normalized = wallet.toLowerCase().trim();
+    switch (normalized) {
+      case 'main': return const Color(0xFF84BD00);
+      case 'spot': return const Color(0xFF627EEA);
+      case 'p2p': return const Color(0xFF26A17B);
+      case 'bot': return const Color(0xFFF7931A);
+      default: return Colors.grey;
+    }
+  }
+
+  IconData _getWalletIcon(String wallet) {
+    final normalized = wallet.toLowerCase().trim();
+    switch (normalized) {
+      case 'main': return Icons.account_balance_wallet;
+      case 'spot': return Icons.trending_up;
+      case 'p2p': return Icons.people;
+      case 'bot': return Icons.smart_toy;
+      default: return Icons.wallet;
+    }
+  }
+
+  String _capitalizeWallet(String wallet) {
+    if (wallet.isEmpty) return 'Unknown';
+    return wallet[0].toUpperCase() + wallet.substring(1).toLowerCase();
+  }
+
+  Widget _buildConversionList() {
+    if (_conversions.isEmpty) {
+      return _buildEmptyState('No conversions found');
+    }
+
+    return RefreshIndicator(
+      onRefresh: _fetchHistory,
+      color: const Color(0xFF84BD00),
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: _conversions.length,
+        itemBuilder: (context, index) {
+          final conversion = _conversions[index] is Map<String, dynamic>
+              ? _conversions[index] as Map<String, dynamic>
+              : Map<String, dynamic>.from(_conversions[index]);
+
+          // API uses type field: 1 = INR to USDT, 2 = USDT to INR
+          final int? conversionType = int.tryParse(conversion['type']?.toString() ?? '');
+          String fromCurrency;
+          String toCurrency;
+          
+          // Determine conversion direction from API type field
+          String safeString(dynamic value, String defaultValue) {
+            if (value == null) return defaultValue;
+            if (value is List) return value.isNotEmpty ? value[0].toString() : defaultValue;
+            return value.toString();
+          }
+          if (conversionType != null) {
+            if (conversionType == 2) {
+              // USDT to INR
+              fromCurrency = 'USDT';
+              toCurrency = 'INR';
+            } else if (conversionType == 1) {
+              // INR to USDT
+              fromCurrency = 'INR';
+              toCurrency = 'USDT';
+            } else {
+              // Fallback to field parsing for unknown types
+              fromCurrency = safeString(conversion['fromCurrency'] ?? conversion['from_currency'], 'INR');
+              toCurrency = safeString(conversion['toCurrency'] ?? conversion['to_currency'], 'USDT');
+            }
+          } else {
+            // Fallback: try to read fromCurrency/toCurrency fields if type is not available
+            fromCurrency = safeString(conversion['fromCurrency'] ?? conversion['from_currency'], 'INR');
+            toCurrency = safeString(conversion['toCurrency'] ?? conversion['to_currency'], 'USDT');
+          }
+          final double fromAmount = double.tryParse(
+              conversion['fromAmount']?.toString() ??
+                  conversion['from_amount']?.toString() ?? '0') ?? 0;
+          final double toAmount = double.tryParse(
+              conversion['toAmount']?.toString() ??
+                  conversion['to_amount']?.toString() ??
+                  conversion['converted_amount']?.toString() ?? '0') ?? 0;
+          final double rate = double.tryParse(
+              conversion['rate']?.toString() ??
+                  conversion['conversion_rate']?.toString() ?? '0') ?? 0;
+          final dynamic statusRaw = conversion['status'] ?? 'Completed';
+          final String status = statusRaw is List
+              ? (statusRaw.isNotEmpty ? statusRaw[0].toString() : 'Completed')
+              : statusRaw.toString();
+          // Try multiple possible time field names from API
+          final String? timeStr = conversion['createdAt']?.toString() ??
+                                   conversion['created_at']?.toString() ??
+                                   conversion['timestamp']?.toString() ??
+                                   conversion['date']?.toString() ??
+                                   conversion['time']?.toString();
+          final DateTime date = timeStr != null
+              ? DateTime.tryParse(timeStr) ?? DateTime.now()
+              : DateTime.now();
+          // Convert to local time if the parsed time is UTC
+          final DateTime localDate = date.isUtc ? date.toLocal() : date;
+
+          Color statusColor = const Color(0xFF84BD00);
+          switch (status.toLowerCase()) {
+            case 'pending':
+              statusColor = Colors.orange;
+              break;
+            case 'failed':
+            case 'rejected':
+              statusColor = Colors.red;
+              break;
+            case 'completed':
+            case 'success':
+              statusColor = const Color(0xFF84BD00);
+              break;
+          }
 
           return Container(
             margin: const EdgeInsets.only(bottom: 12),
@@ -215,37 +1058,298 @@ class _WalletHistoryScreenState extends State<WalletHistoryScreen> with SingleTi
               color: const Color(0xFF1A1A1A),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const CircleAvatar(
-                  backgroundColor: Color(0xFF84BD00),
-                  child: Icon(Icons.swap_horiz, color: Colors.black, size: 20),
+                Row(
+                  children: [
+                    CircleAvatar(
+                      backgroundColor: const Color(0xFF26A17B).withValues(alpha: 0.1),
+                      child: const Icon(Icons.currency_exchange, color: Color(0xFF26A17B), size: 20),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '$fromCurrency ➔ $toCurrency',
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            DateFormat('MMM dd, yyyy hh:mm a').format(localDate),
+                            style: const TextStyle(color: Colors.white54, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          status.isNotEmpty ? status[0].toUpperCase() + status.substring(1) : 'Completed',
+                          style: TextStyle(color: statusColor, fontSize: 11, fontWeight: FontWeight.w500),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 16),
-                Expanded(
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        '${from.toUpperCase()} ➔ ${to.toUpperCase()}',
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'From:',
+                            style: const TextStyle(color: Colors.white70, fontSize: 12),
+                          ),
+                          Text(
+                            '${fromAmount.toStringAsFixed(5)} $fromCurrency',
+                            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        DateFormat('MMM dd, yyyy HH:mm').format(date),
-                        style: const TextStyle(color: Colors.white54, fontSize: 12),
+                      const SizedBox(height: 8),
+                      const Icon(Icons.arrow_downward, color: Colors.white38, size: 16),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'To:',
+                            style: const TextStyle(color: Colors.white70, fontSize: 12),
+                          ),
+                          Text(
+                            '${toAmount.toStringAsFixed(4)} $toCurrency',
+                            style: const TextStyle(color: Color(0xFF26A17B), fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                        ],
                       ),
+                      if (rate > 0) ...[
+                        const Divider(color: Colors.white12, height: 16),
+                        Text(
+                          'Rate: 1 $fromCurrency = ${rate.toStringAsFixed(4)} $toCurrency',
+                          style: const TextStyle(color: Colors.white38, fontSize: 10),
+                        ),
+                      ],
                     ],
                   ),
                 ),
-                Text(
-                  '$amount $coin',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  String _getTransactionTypeLabel(String type) {
+    final lowerType = type.toLowerCase();
+    switch (lowerType) {
+      case '6':
+      case 'invest':
+      case 'deposit':
+      case 'investment':
+        return 'Invest';
+      case '5':
+      case '7':
+      case 'withdraw':
+      case 'withdrawal':
+      case 'debit':
+      case 'transfer':
+        return 'Withdraw';
+      case 'subscription':
+        return 'Subscription';
+      case 'bot_invest':
+        return 'Bot Invest';
+      case 'bot_withdraw':
+        return 'Bot Withdraw';
+      default:
+        // Capitalize first letter if it's text, or return as is
+        if (type.isEmpty) return 'Unknown';
+        if (RegExp(r'^[0-9]+$').hasMatch(type)) return 'Transaction'; // Fallback for unknown codes
+        return type[0].toUpperCase() + type.substring(1);
+    }
+  }
+
+  Widget _buildSubscriptionList() {
+    if (_subscriptions.isEmpty) {
+      return _buildEmptyState('No subscriptions found');
+    }
+
+    return RefreshIndicator(
+      onRefresh: _fetchHistory,
+      color: const Color(0xFF84BD00),
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: _subscriptions.length,
+        itemBuilder: (context, index) {
+          final subscription = _subscriptions[index] is Map<String, dynamic>
+              ? _subscriptions[index] as Map<String, dynamic>
+              : Map<String, dynamic>.from(_subscriptions[index]);
+          
+          final String plan = subscription['plan']?.toString() ?? 'Basic Package';
+          final double amount = double.tryParse(subscription['amount']?.toString() ?? '0') ?? 0;
+          final String? timeStr = subscription['createdAt']?.toString() ??
+                                   subscription['created_at']?.toString() ??
+                                   subscription['timestamp']?.toString();
+          final DateTime date = timeStr != null
+              ? DateTime.tryParse(timeStr) ?? DateTime.now()
+              : DateTime.now();
+          final DateTime localDate = date.isUtc ? date.toLocal() : date;
+          final String status = subscription['status']?.toString().toUpperCase() ?? 'COMPLETED';
+          
+          // Status color
+          Color statusColor = Colors.green;
+          if (status.contains('PENDING') || status.contains('PROCESSING')) {
+            statusColor = Colors.orange;
+          } else if (status.contains('FAIL') || status.contains('CANCEL') || status.contains('REJECT')) {
+            statusColor = Colors.red;
+          }
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A1A1A),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: const Color(0xFF84BD00).withOpacity(0.2),
+                width: 1,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            const Color(0xFF84BD00).withOpacity(0.3),
+                            const Color(0xFF84BD00).withOpacity(0.1),
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: const Color(0xFF84BD00).withOpacity(0.4),
+                          width: 1,
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.card_membership,
+                        color: Color(0xFF84BD00),
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            plan,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Subscription Payment',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.7),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          '-\$${amount.toStringAsFixed(5)}',
+                          style: const TextStyle(
+                            color: Color(0xFFFF3B30),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: statusColor.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: statusColor.withOpacity(0.3),
+                              width: 1,
+                            ),
+                          ),
+                          child: Text(
+                            status,
+                            style: TextStyle(
+                              color: statusColor,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.access_time,
+                      color: Colors.white.withOpacity(0.5),
+                      size: 16,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      DateFormat('MMM dd, yyyy • hh:mm a').format(localDate),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+                // Additional subscription details
+                if (subscription['description'] != null) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      subscription['description'].toString(),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.7),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           );

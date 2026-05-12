@@ -94,46 +94,17 @@ class _PayUpiScreenState extends State<PayUpiScreen> {
               child: Column(
                 children: [
                   // QR Code with GPay Logo
-                  Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Container(
-                        width: 200,
-                        height: 200,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: QrImageView(
-                          data: qrData,
-                          version: QrVersions.auto,
-                          size: 180,
-                          padding: const EdgeInsets.all(10),
-                        ),
-                      ),
-                      // GPay Logo in center
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(8),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.1),
-                              blurRadius: 4,
-                            ),
-                          ],
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(6),
-                          child: Image.asset(
-                            'assets/images/logogoogle.png',
-                            fit: BoxFit.contain,
-                          ),
-                        ),
-                      ),
-                    ],
+                  QrImageView(
+                    data: qrData,
+                    version: QrVersions.auto,
+                    size: 200.0,
+                    errorCorrectionLevel: QrErrorCorrectLevel.H,
+                    embeddedImage: const AssetImage('assets/images/logogoogle.png'),
+                    embeddedImageStyle: const QrEmbeddedImageStyle(
+                      size: Size(40, 40),
+                    ),
+                    backgroundColor: Colors.white,
+                    padding: const EdgeInsets.all(10),
                   ),
                   const SizedBox(height: 16),
                   // UPI ID with copy button

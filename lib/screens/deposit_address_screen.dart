@@ -287,25 +287,11 @@ class _DepositAddressScreenState extends State<DepositAddressScreen> {
                               ),
                             ),
                             const SizedBox(height: 24),
-                            // CreddX logo text
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.account_balance_wallet,
-                                  color: const Color(0xFF84BD00),
-                                  size: 20,
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  'CreddX',
-                                  style: TextStyle(
-                                    color: Colors.grey[400],
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
+                            // CreddX logo
+                            Image.asset(
+                              'assets/images/Creddxlogo.png',
+                              height: 30,
+                              fit: BoxFit.contain,
                             ),
                           ],
                         ),

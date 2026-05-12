@@ -20,7 +20,7 @@ class BinanceService {
       final response = await http.get(
         Uri.parse('$_baseUrl/api/v3/ticker/24hr'),
         headers: {'Accept': 'application/json'},
-      ).timeout(const Duration(seconds: 30));
+      ).timeout(const Duration(seconds: 8));
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
@@ -217,7 +217,7 @@ class BinanceService {
       final response = await http.get(
         Uri.parse('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1'),
         headers: {'Accept': 'application/json'},
-      ).timeout(const Duration(seconds: 30));
+      ).timeout(const Duration(seconds: 8));
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);

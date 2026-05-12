@@ -9,9 +9,10 @@ import 'dart:math' show pi, cos, sin, min, max, Random;
 import 'coming_soon_screen.dart';
 import 'deposit_screen.dart';
 import 'internal_deposit_screen.dart';
+import 'send_screen.dart';
 import 'notification_screen.dart';
 import 'p2p_trading_screen.dart';
-import 'internal_transfer_screen.dart';
+import 'wallet_transfer_screen.dart';
 import 'wallet_history_screen.dart';
 import 'invite_friends_screen.dart';
 import 'withdraw_screen.dart';
@@ -19,14 +20,20 @@ import 'withdraw_crypto_screen.dart';
 import 'withdraw_inr_screen.dart';
 import 'inr_deposit_screen.dart';
 import 'conversion_screen.dart';
+import 'bot_main_screen.dart';
 import 'spot_screen.dart';
 import '../services/socket_service.dart';
 import '../services/user_service.dart';
 import '../services/wallet_service.dart';
 import '../services/spot_service.dart';
 import '../services/binance_service.dart';
+import '../services/unified_wallet_service.dart' as unified;
+import '../services/auto_refresh_service.dart';
+import '../services/balance_sync_service.dart';
 import '../utils/coin_icon_mapper.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
+import '../widgets/no_internet_widget.dart';
+import '../widgets/optimized_crypto_list.dart';
 
 // Custom Crypto-themed Refresh Indicator
 class CryptoRefreshIndicator extends StatefulWidget {
@@ -245,7 +252,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String _selectedTab = 'Favorites';
   final List<String> _tabs = ['Market', 'Perp Futures', 'Std. Futures'];
   final NumberFormat _compactFormat = NumberFormat.compactCurrency(symbol: '', decimalDigits: 1);
@@ -253,13 +260,16 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _cryptoData = [];
   bool _isLoading = true;
   double _totalBalance = 0.0;
-  bool _isBalanceVisible = true;
+  double _availableBalance = 0.0;
+  bool _isBalanceVisible = false; // Balance hidden by default after login
   
   // WebSocket for real-time favorites data
   Map<String, Map<String, dynamic>> _favoritesMarketData = {};
   bool _isWebSocketConnected = false;
   StreamSubscription<Map<String, dynamic>>? _marketDataSubscription;
-  StreamSubscription<Map<String, dynamic>>? _balanceSubscription;
+  StreamSubscription<unified.WalletBalance?>? _balanceSubscription;
+  StreamSubscription<double>? _balanceSyncSubscription;
+  StreamSubscription<Map<String, dynamic>>? _socketBalanceSubscription;
   
   // Candlestick chart data for Std. Futures
   List<Map<String, dynamic>> _candleData = [];
@@ -269,6 +279,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final List<String> _timeframes = ['Line', '15 Min', '1 Hour', '4 Hour', '1 Day', 'More'];
   
   Timer? _priceTimer;
+  Timer? _balanceRefreshTimer;
   final String _marketBaseUrl = 'http://13.202.34.205:9000';
   
   // Binance market data
@@ -279,40 +290,383 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, double> _marketCapData = {};
 
   String _selectedSpotSymbol = 'BTCUSDT';
-  
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     UserService().initUserData();
-    _fetchInitialData();
     _startPriceUpdates();
     _generateMockCandleData();
-    
+
+    // Set up balance subscriptions FIRST before any async initialization
+    // to avoid missing initial stream emissions from UnifiedWalletService
+    _subscribeToBalance();
+    _subscribeToBalanceSync();
+    _subscribeToSocketBalance();
+
+    // Initialize BalanceSyncService for app-wide balance sync
+    BalanceSyncService().initialize();
+
     // Connect WebSocket for Favorites real-time data
     _connectWebSocketForFavorites();
-    _subscribeToBalance();
+
+    // Start periodic balance refresh timer
+    _startBalanceRefreshTimer();
+
+    // Initialize wallet services and fetch balance AFTER subscriptions are ready
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      debugPrint('Home Screen: Post-frame initialization starting...');
+
+      // Initialize UnifiedWalletService and fetch balances
+      await unified.UnifiedWalletService.initialize();
+
+      // Force refresh all balances to ensure latest data after login
+      await unified.UnifiedWalletService.refreshAllBalances();
+
+      // Fetch initial data (market + wallet balance via API)
+      await _fetchInitialData();
+
+      // Connect to Socket Service for real-time balance updates
+      await _connectSocketService();
+
+      debugPrint('Home Screen: Post-frame initialization complete');
+    });
   }
 
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _priceTimer?.cancel();
+    _balanceRefreshTimer?.cancel();
+    _marketDataSubscription?.cancel();
+    _binanceWsSubscription?.cancel();
+    _balanceSubscription?.cancel();
+    _balanceSyncSubscription?.cancel();
+    _socketBalanceSubscription?.cancel();
+    BinanceService.disconnectAll();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed && mounted) {
+      // Refresh balance when app comes to foreground (with rate limiting)
+      debugPrint('Home Screen: App resumed, refreshing balance');
+      final now = DateTime.now();
+      if (_lastApiFetchTime == null || now.difference(_lastApiFetchTime!) > _minApiFetchInterval) {
+        _lastApiFetchTime = now;
+        _fetchWalletBalance();
+      } else {
+        debugPrint('Home Screen: Skipping resume refresh, too soon');
+      }
+    }
+  }
+
+  // Track last API fetch time to prevent rapid successive calls
+  DateTime? _lastApiFetchTime;
+  static const _minApiFetchInterval = Duration(seconds: 10);
+
   void _subscribeToBalance() {
-    _balanceSubscription = SocketService.balanceStream.listen((data) {
-      if (data['type'] == 'balance_update' && data['assets'] != null) {
-        double totalAvailable = 0.0;
-        final assets = data['assets'] as List;
-        for (var assetItem in assets) {
-          final assetName = assetItem['asset']?.toString().toUpperCase() ?? '';
-          if (assetName == 'USDT') {
-            final available = double.tryParse(assetItem['available']?.toString() ?? '0') ?? 0.0;
-            // The Home Screen seems to only care about available USDT for _totalBalance based on _fetchWalletBalance implementation
-            totalAvailable += available;
-          }
-        }
-        if (mounted) {
-          setState(() {
-            _totalBalance = totalAvailable;
-          });
+    _balanceSubscription = unified.UnifiedWalletService.walletBalanceStream.listen((balance) {
+      if (mounted && balance != null) {
+        // Immediately update from unified wallet stream data
+        final total = balance.totalBalance;
+        final equity = balance.totalEquityUSDT;
+
+        setState(() {
+          _totalBalance = total;
+          // Show total balance in available balance section (user requested)
+          _availableBalance = total;
+        });
+
+        debugPrint('Home Screen: Balance updated from UnifiedWalletService stream - Total: $total, Equity: $equity');
+
+        // Only trigger API refresh if enough time has passed (avoid race conditions)
+        // The periodic timer will handle regular sync anyway
+        final now = DateTime.now();
+        if (_lastApiFetchTime == null || now.difference(_lastApiFetchTime!) > _minApiFetchInterval) {
+          _lastApiFetchTime = now;
+          _fetchWalletBalance();
+        } else {
+          debugPrint('Home Screen: Skipping API fetch, too soon since last call');
         }
       }
     });
+
+    // Socket listener removed - UnifiedWalletService already handles socket updates internally
+  }
+
+  void _subscribeToBalanceSync() {
+    _balanceSyncSubscription = BalanceSyncService().balanceStream.listen((balance) {
+      if (mounted) {
+        debugPrint('Home Screen: Balance sync service update: $balance');
+
+        // Update available balance from sync service directly
+        setState(() {
+          _availableBalance = balance;
+        });
+
+        // Only trigger API refresh if enough time has passed
+        final now = DateTime.now();
+        if (_lastApiFetchTime == null || now.difference(_lastApiFetchTime!) > _minApiFetchInterval) {
+          _lastApiFetchTime = now;
+          _fetchWalletBalance();
+        } else {
+          debugPrint('Home Screen: Skipping API fetch from sync service, too soon');
+        }
+      }
+    });
+  }
+
+  // Connect to Socket Service for real-time balance updates
+  Future<void> _connectSocketService() async {
+    try {
+      debugPrint('🔌 Home Screen: Starting WALLET socket connection...');
+      
+      // Force disconnect first to ensure clean connection
+      await _forceDisconnectSocket();
+      
+      // Connect to socket with retry logic
+      for (int attempt = 1; attempt <= 3; attempt++) {
+        debugPrint('🔌 Home Screen: WALLET Socket connection attempt $attempt/3');
+        
+        await SocketService.connect();
+        await Future.delayed(const Duration(seconds: 3));
+        
+        if (SocketService.isConnected) {
+          debugPrint('🔌✅ Home Screen: WALLET Socket connected successfully on attempt $attempt');
+          
+          // Join wallet room and request initial data
+          await Future.delayed(const Duration(seconds: 1));
+          debugPrint('🔌📡 Joining wallet room and requesting initial data...');
+          SocketService.requestWalletSummary();
+          SocketService.requestWalletBalance();
+          
+          // Test connection and request balance updates
+          await Future.delayed(const Duration(seconds: 2));
+          if (SocketService.isConnected) {
+            debugPrint('🔌💚 Home Screen: WALLET Socket connection stable and ready');
+            debugPrint('🔌📊 Subscribing to wallet balance events...');
+            return;
+          }
+        } else {
+          debugPrint('🔌❌ Home Screen: WALLET Socket connection failed on attempt $attempt');
+          await Future.delayed(const Duration(seconds: 2));
+        }
+      }
+      
+      debugPrint('🔌🚨 Home Screen: All WALLET socket connection attempts failed');
+    } catch (e) {
+      debugPrint('🔌🚨 Home Screen: Critical error in WALLET socket connection: $e');
+    }
+  }
+
+  // Force disconnect socket for clean reconnection
+  Future<void> _forceDisconnectSocket() async {
+    try {
+      debugPrint('🔌 Home Screen: Force disconnecting socket...');
+      // Note: SocketService doesn't have a disconnect method, so we'll rely on reconnect logic
+      await Future.delayed(const Duration(milliseconds: 500));
+    } catch (e) {
+      debugPrint('🔌 Home Screen: Error during force disconnect: $e');
+    }
+  }
+
+  void _subscribeToSocketBalance() {
+    debugPrint('🔌📡 Home Screen: Setting up WALLET socket balance subscription...');
+
+    _socketBalanceSubscription = SocketService.balanceStream.listen(
+      (balanceData) {
+        if (mounted) {
+          debugPrint('🔌💰 Home Screen: WALLET BALANCE UPDATE RECEIVED: $balanceData');
+
+          // Try to extract and update balance directly from socket data first
+          _processWalletSocketBalanceData(balanceData);
+
+          // Only trigger API refresh if enough time has passed
+          final now = DateTime.now();
+          if (_lastApiFetchTime == null || now.difference(_lastApiFetchTime!) > _minApiFetchInterval) {
+            _lastApiFetchTime = now;
+            debugPrint('🔌⚡ Home Screen: Balance refresh triggered by wallet socket');
+            _fetchWalletBalance();
+          } else {
+            debugPrint('🔌⏱️ Home Screen: Skipping API fetch from socket, too soon');
+          }
+
+          // Also update balance sync service to notify other parts of app
+          BalanceSyncService().forceRefreshBalance();
+        }
+      },
+      onError: (error) {
+        debugPrint('🔌❌ Home Screen: WALLET socket balance stream ERROR: $error');
+        debugPrint('🔌🔄 Home Screen: Attempting to reconnect wallet socket...');
+        // Fallback to API refresh on socket error (with rate limiting)
+        final now = DateTime.now();
+        if (_lastApiFetchTime == null || now.difference(_lastApiFetchTime!) > _minApiFetchInterval) {
+          _lastApiFetchTime = now;
+          _fetchWalletBalance();
+        }
+        // Attempt to reconnect
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted) {
+            _connectSocketService();
+          }
+        });
+      },
+      onDone: () {
+        debugPrint('🔌⚠️ Home Screen: WALLET socket balance stream CLOSED');
+        debugPrint('🔌🔄 Home Screen: Reconnecting wallet socket...');
+        // Attempt to reconnect when stream closes
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted) {
+            _connectSocketService();
+          }
+        });
+      },
+    );
+    
+    debugPrint('🔌✅ Home Screen: WALLET socket balance subscription ACTIVE');
+  }
+
+  // Process WALLET socket balance data and attempt direct UI update
+  void _processWalletSocketBalanceData(Map<String, dynamic> balanceData) {
+    try {
+      final type = balanceData['type']?.toString() ?? 'unknown';
+      final data = balanceData['data'] ?? {};
+      
+      debugPrint('🔌📊 Home Screen: Processing WALLET socket data - Type: $type, Data: $data');
+      
+      // Handle different wallet socket event types
+      switch (type) {
+        case 'wallet_summary':
+          debugPrint('🔌💼 Home Screen: Processing wallet summary event');
+          _processWalletSummaryData(data);
+          break;
+          
+        case 'balance_update':
+          debugPrint('🔌💰 Home Screen: Processing balance update event');
+          _processBalanceUpdateData(data);
+          break;
+          
+        case 'wallet summary update socket':
+          debugPrint('🔌🔄 Home Screen: Processing wallet summary update socket event');
+          _processWalletSummaryData(data);
+          break;
+          
+        default:
+          debugPrint('🔌❓ Home Screen: Unknown wallet socket event type: $type');
+          _processGenericBalanceData(data);
+      }
+    } catch (e) {
+      debugPrint('🔌❌ Home Screen: Error processing WALLET socket balance data: $e');
+    }
+  }
+
+  // Process wallet summary specific data
+  void _processWalletSummaryData(dynamic data) {
+    try {
+      if (data is Map) {
+        debugPrint('🔌💼 Home Screen: Extracting balances from wallet summary...');
+        
+        // Try to extract both available and total balance
+        final extractedBalances = _extractBothBalancesFromData(data);
+        final newTotalBalance = extractedBalances['total'] ?? 0.0;
+        final newAvailableBalance = extractedBalances['available'] ?? 0.0;
+        
+        // Update UI if balances changed significantly
+        if ((newTotalBalance - _totalBalance).abs() > 0.01 || 
+            (newAvailableBalance - _availableBalance).abs() > 0.01) {
+          debugPrint('🔌🔄 Home Screen: WALLET SUMMARY UPDATE - Total: $_totalBalance → $newTotalBalance, Available: $_availableBalance → $newAvailableBalance');
+          setState(() {
+            _totalBalance = newTotalBalance;
+            _availableBalance = newAvailableBalance;
+          });
+          BalanceSyncService().updateBalance(newTotalBalance, source: 'WalletSocket');
+        }
+      }
+    } catch (e) {
+      debugPrint('🔌❌ Home Screen: Error processing wallet summary data: $e');
+    }
+  }
+
+  // Process balance update specific data
+  void _processBalanceUpdateData(dynamic data) {
+    try {
+      debugPrint('🔌💰 Home Screen: Processing balance update - triggering full refresh');
+      // For balance_update events, do a full API refresh to get accurate data (with rate limiting)
+      final now = DateTime.now();
+      if (_lastApiFetchTime == null || now.difference(_lastApiFetchTime!) > _minApiFetchInterval) {
+        _lastApiFetchTime = now;
+        _fetchWalletBalance();
+      } else {
+        debugPrint('🔌⏱️ Home Screen: Skipping balance update API fetch, too soon');
+      }
+    } catch (e) {
+      debugPrint('🔌❌ Home Screen: Error processing balance update data: $e');
+    }
+  }
+
+  // Process generic balance data
+  void _processGenericBalanceData(dynamic data) {
+    try {
+      debugPrint('🔌❓ Home Screen: Processing generic balance data...');
+      final extractedBalances = _extractBothBalancesFromData(data);
+      final newTotalBalance = extractedBalances['total'] ?? 0.0;
+      final newAvailableBalance = extractedBalances['available'] ?? 0.0;
+      
+      if ((newTotalBalance - _totalBalance).abs() > 0.01 || 
+          (newAvailableBalance - _availableBalance).abs() > 0.01) {
+        setState(() {
+          _totalBalance = newTotalBalance;
+          _availableBalance = newAvailableBalance;
+        });
+        debugPrint('🔌🔄 Home Screen: Generic balance update applied');
+      }
+    } catch (e) {
+      debugPrint('🔌❌ Home Screen: Error processing generic balance data: $e');
+    }
+  }
+
+  // Test socket connection and request balance updates
+  void _testSocketConnection() {
+    debugPrint('🧪 Home Screen: Testing socket connection...');
+    debugPrint('🧪 Socket connected: ${SocketService.isConnected}');
+    debugPrint('🧪 Socket connecting: ${SocketService.isConnecting}');
+    
+    if (SocketService.isConnected) {
+      debugPrint('🧪 Socket is connected, requesting balance updates...');
+      SocketService.requestWalletSummary();
+      SocketService.requestWalletBalance();
+    } else {
+      debugPrint('🧪 Socket not connected, attempting reconnection...');
+      _connectSocketService();
+    }
+  }
+
+  // Manual trigger for testing real-time balance updates
+  void _manualBalanceUpdateTest() {
+    debugPrint('🎯🧪 Home Screen: MANUAL BALANCE UPDATE TEST');
+    debugPrint('🎯🧪 Current balance: $_totalBalance');
+    
+    // Force fetch from API
+    _fetchWalletBalance();
+    
+    // Request socket updates
+    if (SocketService.isConnected) {
+      debugPrint('🎯🔌 Requesting socket balance updates...');
+      SocketService.requestWalletSummary();
+      SocketService.requestWalletBalance();
+    } else {
+      debugPrint('🎯❌ Socket not connected, attempting connection...');
+      _connectSocketService();
+    }
+    
+    // Update balance sync service
+    BalanceSyncService().forceRefreshBalance();
+    
+    debugPrint('🎯✅ Manual balance update test completed');
   }
 
   // Connect WebSocket for real-time favorites market data from Binance
@@ -446,115 +800,259 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _fetchWalletBalance() async {
     try {
-      // Use getAllWalletBalances API to get all wallet balances
+      debugPrint('💰 Home Screen: Starting optimized balance fetch...');
+      debugPrint('💰 Current balances before fetch - Total: $_totalBalance, Available: $_availableBalance');
+      
+      // Initialize both balances
+      double newTotalBalance = 0.0;
+      double newAvailableBalance = 0.0;
+      
+      // Method 1: Try getAllWalletBalances API directly
+      debugPrint('💰 Method 1: Fetching from all-wallet-balance API...');
       final result = await WalletService.getAllWalletBalances();
-      debugPrint('Home Screen - getAllWalletBalances Result: $result');
+      debugPrint('💰 API Response: $result');
       
       if (result['success'] == true && result['data'] != null) {
-        final data = result['data'];
-        double totalAvailable = 0.0;
+        debugPrint('💰 API success, extracting balance data...');
         
-        // Handle flat format: {spotBalance: X, mainBalance: {USDT: Y}, p2pBalance: Z, botBalance: W}
-        final walletTypeMap = {
-          'spot': 'spotBalance',
-          'main': 'mainBalance', 
-          'p2p': 'p2pBalance',
-          'bot': 'botBalance',
-        };
+        // Execute balance fetching in parallel for better performance
+        final futures = <Future<double>>[];
         
-        for (String type in walletTypeMap.keys) {
-          final fieldName = walletTypeMap[type]!;
-          final walletData = data[fieldName];
-          
-          if (walletData != null) {
-            double available = 0.0;
+        // Add total balance fetch
+        futures.add(
+          WalletService.getTotalUSDTBalance().catchError((e) {
+            debugPrint('💰❌ Total balance fetch failed: $e');
+            return 0.0;
+          })
+        );
+        
+        // Add available balance fetch
+        futures.add(
+          WalletService.getTotalAvailableUSDTBalance().catchError((e) {
+            debugPrint('💰❌ Available balance fetch failed: $e');
+            return 0.0;
+          })
+        );
+        
+        // Wait for all parallel requests
+        final results = await Future.wait(futures);
+        newTotalBalance = results[0];
+        newAvailableBalance = results[1];
+        
+        debugPrint('💰 Parallel fetch - Total: $newTotalBalance, Available: $newAvailableBalance');
+        
+        // Method 1c: Manual extraction from API data as fallback
+        if (newTotalBalance == 0.0 || newAvailableBalance == 0.0) {
+          try {
+            final extractedBalances = _extractBothBalancesFromData(result['data']);
+            debugPrint('💰 Method 1c - Manual extraction - Total: ${extractedBalances['total']}, Available: ${extractedBalances['available']}');
             
-            if (walletData is Map) {
-              // Format: {INR: X, USDT: Y}
-              if (walletData['USDT'] != null) {
-                available = double.tryParse(walletData['USDT'].toString()) ?? 0.0;
-              }
-            } else if (walletData is num) {
-              // Format: spotBalance: 0 (direct number)
-              available = walletData.toDouble();
-            }
-            
-            totalAvailable += available;
-            debugPrint('Home Screen - $type available: $available');
+            if (newTotalBalance == 0.0) newTotalBalance = extractedBalances['total'] ?? 0.0;
+            if (newAvailableBalance == 0.0) newAvailableBalance = extractedBalances['available'] ?? 0.0;
+          } catch (e) {
+            debugPrint('💰❌ Method 1c failed: $e');
           }
         }
+      } else {
+        debugPrint('💰❌ API returned error: ${result['error']}');
+      }
+      
+      // Method 2: Try individual wallet APIs if still 0
+      if (newTotalBalance == 0.0 || newAvailableBalance == 0.0) {
+        debugPrint('💰 Method 2: Trying individual wallet APIs...');
+        final individualBalances = await _fetchFromIndividualWallets();
+        debugPrint('💰 Method 2 - Individual wallets: $individualBalances');
         
-        // Fallback: try nested format if flat format returned 0
-        if (totalAvailable == 0) {
-          final walletTypes = ['spot', 'p2p', 'bot', 'main'];
-          for (String type in walletTypes) {
-            if (data[type] != null) {
-              final wallet = data[type];
-              if (wallet['balances'] != null && wallet['balances'] is List) {
-                final balances = wallet['balances'] as List;
-                for (var b in balances) {
-                  final coin = b['coin']?.toString().toUpperCase() ?? '';
-                  if (coin == 'USDT') {
-                    final available = double.tryParse(b['available']?.toString() ?? '0') ?? 0.0;
-                    totalAvailable += available;
-                    debugPrint('Home Screen (nested) - $type available: $available');
+        if (newTotalBalance == 0.0) newTotalBalance = individualBalances;
+        if (newAvailableBalance == 0.0) newAvailableBalance = individualBalances;
+      }
+      
+      // Method 3: All methods returned 0
+      if (newTotalBalance == 0.0 && newAvailableBalance == 0.0) {
+        debugPrint('💰 Method 3: API returned 0 balances');
+      }
+
+      // Update UI ONLY if we got valid data OR if current balance is already 0
+      // This prevents overwriting a valid stream balance with 0 from API race conditions
+      if (mounted) {
+        final hasValidApiData = newTotalBalance > 0 || newAvailableBalance > 0;
+        final currentBalanceIsZero = _totalBalance == 0.0 && _availableBalance == 0.0;
+
+        if (hasValidApiData || currentBalanceIsZero) {
+          // Only update if API gave us valid data, or if we have nothing to show yet
+          setState(() {
+            _totalBalance = newTotalBalance;
+            _availableBalance = newAvailableBalance;
+          });
+          debugPrint('💰✅ Balances updated - Total: $newTotalBalance, Available: $newAvailableBalance');
+        } else {
+          debugPrint('💰🛡️ Skipping UI update: API returned 0 but we have valid balance from stream - Current Total: $_totalBalance, Current Available: $_availableBalance');
+        }
+      }
+      
+    } catch (e) {
+      debugPrint('💰❌ Critical error in balance fetch: $e');
+
+      // Do not set fake test values - keep previous or show 0
+      if (mounted) {
+        debugPrint('💰🚨 Balance fetch failed, retaining current values - Total: $_totalBalance, Available: $_availableBalance');
+      }
+    }
+  }
+
+  // Extract both total and available balance manually from API data
+  Map<String, double> _extractBothBalancesFromData(dynamic data) {
+    double total = 0.0;
+    double available = 0.0;
+    
+    try {
+      debugPrint('💰🔍 Extracting both balances from data: $data');
+      
+      if (data is Map) {
+        // Check different possible structures
+        final walletTypes = ['spot', 'p2p', 'bot', 'demo_bot', 'main'];
+        
+        for (String walletType in walletTypes) {
+          if (data[walletType] != null) {
+            final wallet = data[walletType];
+            debugPrint('💰🔍 Checking $walletType wallet: $wallet');
+            
+            // Check for balances array
+            if (wallet['balances'] != null) {
+              final balances = wallet['balances'];
+              if (balances is List) {
+                for (var balance in balances) {
+                  if (balance['coin']?.toString().toUpperCase() == 'USDT') {
+                    final availableBal = double.tryParse(balance['available']?.toString() ?? '0') ?? 0.0;
+                    final totalBal = double.tryParse(balance['total']?.toString() ?? '0') ?? 0.0;
+                    final lockedBal = double.tryParse(balance['locked']?.toString() ?? '0') ?? 0.0;
+                    
+                    available += availableBal;
+                    total += totalBal > 0 ? totalBal : (availableBal + lockedBal);
+                    
+                    debugPrint('💰💰 Found USDT in $walletType: available=$availableBal, total=$totalBal, locked=$lockedBal');
                   }
                 }
               }
             }
+            
+            // Check for direct USDT field
+            if (wallet['USDT'] != null) {
+              final usdtData = wallet['USDT'];
+              final availableBal = double.tryParse(usdtData['available']?.toString() ?? '0') ?? 0.0;
+              final totalBal = double.tryParse(usdtData['total']?.toString() ?? '0') ?? 0.0;
+              
+              available += availableBal;
+              total += totalBal > 0 ? totalBal : availableBal;
+              
+              debugPrint('💰💰 Found direct USDT in $walletType: available=$availableBal, total=$totalBal');
+            }
           }
         }
         
-        debugPrint('Home Screen - Total Available USDT: $totalAvailable');
-        
-        if (mounted) {
-          setState(() {
-            _totalBalance = totalAvailable;
-          });
+        // Check for direct balance fields
+        if (data['totalEquityUSDT'] != null) {
+          final equity = double.tryParse(data['totalEquityUSDT'].toString()) ?? 0.0;
+          total = equity;
+          debugPrint('💰💰 Found totalEquityUSDT: $equity');
         }
-      } else {
-        // Fallback to SpotService if WalletService fails
-        debugPrint('WalletService failed, trying SpotService...');
-        final spotResult = await SpotService.getBalance();
+        
+        if (data['totalBalance'] != null) {
+          final totalBal = double.tryParse(data['totalBalance'].toString()) ?? 0.0;
+          total = totalBal;
+          debugPrint('💰💰 Found totalBalance: $totalBal');
+        }
+        
+        if (data['availableBalance'] != null) {
+          final availableBal = double.tryParse(data['availableBalance'].toString()) ?? 0.0;
+          available = availableBal;
+          debugPrint('💰💰 Found availableBalance: $availableBal');
+        }
+      }
+      
+      debugPrint('💰✅ Manual extraction result - Total: $total, Available: $available');
+    } catch (e) {
+      debugPrint('💰❌ Manual extraction error: $e');
+    }
+    
+    return {'total': total, 'available': available};
+  }
+
+  // Extract balance manually from API data (legacy method for fallback)
+  double _extractBalanceFromData(dynamic data) {
+    final balances = _extractBothBalancesFromData(data);
+    return balances['total'] ?? 0.0;
+  }
+
+  // Fetch from individual wallet APIs as fallback
+  Future<double> _fetchFromIndividualWallets() async {
+    double total = 0.0;
+    
+    try {
+      debugPrint('💰🔄 Fetching from individual wallet APIs...');
+      
+      // Try spot wallet
+      try {
+        final spotResult = await WalletService.getWalletBalance();
         if (spotResult['success'] == true && spotResult['data'] != null) {
           final spotData = spotResult['data'];
-          if (spotData['assets'] != null && spotData['assets'] is List) {
-            final List assetsList = spotData['assets'];
-            for (var assetItem in assetsList) {
-              final assetName = assetItem['asset']?.toString().toUpperCase() ?? '';
-              if (assetName == 'USDT') {
-                final available = double.tryParse(assetItem['available']?.toString() ?? '0') ?? 0.0;
-                if (mounted) {
-                  setState(() {
-                    _totalBalance = available;
-                  });
+          if (spotData['balances'] != null) {
+            final balances = spotData['balances'];
+            if (balances is List) {
+              for (var balance in balances) {
+                if (balance['coin']?.toString().toUpperCase() == 'USDT') {
+                  total += double.tryParse(balance['available']?.toString() ?? '0') ?? 0.0;
+                  debugPrint('💰💰 Spot USDT: ${balance['available']}');
                 }
-                debugPrint('Home Screen - SpotService USDT available: $available');
-                break;
               }
             }
           }
         }
+      } catch (e) {
+        debugPrint('💰❌ Spot wallet failed: $e');
       }
+      
+      // Try other wallet types similarly...
+      // (Add more wallet types as needed)
+      
+      debugPrint('💰✅ Individual wallets total: $total');
     } catch (e) {
-      debugPrint('Error fetching wallet balance in Home: $e');
+      debugPrint('💰❌ Individual wallets error: $e');
     }
+    
+    return total;
   }
   
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     UserService().initUserData();
-    _fetchWalletBalance();
+    // Force refresh balance when screen becomes active (with rate limiting)
+    debugPrint('Home Screen: didChangeDependencies called, refreshing balance');
+    final now = DateTime.now();
+    if (_lastApiFetchTime == null || now.difference(_lastApiFetchTime!) > _minApiFetchInterval) {
+      _lastApiFetchTime = now;
+      _fetchWalletBalance();
+    } else {
+      debugPrint('Home Screen: Skipping didChangeDependencies refresh, too soon');
+    }
   }
-  
+
+    
   Future<void> _fetchMarketData() async {
+    if (_isFetchingMarketData) return; // Prevent concurrent fetches
+    _isFetchingMarketData = true;
     try {
-      // Fetch market cap data from CoinGecko
-      final marketCaps = await BinanceService.getMarketCapData();
+      // Fetch market cap data directly
+      final marketCapsFuture = BinanceService.getMarketCapData();
       
-      // Fetch top trading pairs from Binance
-      final topPairs = await BinanceService.getTopTradingPairs(limit: 50);
+      // Fetch top trading pairs directly (reduced limit for performance)
+      final topPairsFuture = BinanceService.getTopTradingPairs(limit: 20);
+      
+      // Execute in parallel for better performance
+      final results = await Future.wait([marketCapsFuture, topPairsFuture]);
+      final marketCaps = results[0] as Map<String, double>;
+      final topPairs = results[1] as List<Map<String, dynamic>>;
       
       if (mounted) {
         setState(() {
@@ -577,7 +1075,10 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     } catch (e) {
-      debugPrint('Error fetching market data: $e');
+      // Only log once — don't spam on DNS/network failures
+      debugPrint('Market data fetch failed (network may be unavailable): $e');
+    } finally {
+      _isFetchingMarketData = false;
     }
   }
   
@@ -608,12 +1109,72 @@ class _HomeScreenState extends State<HomeScreen> {
     return names[symbol] ?? symbol.replaceAll('USDT', '');
   }
   
+  bool _isFetchingMarketData = false;
+
   void _startPriceUpdates() {
-    _priceTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
-      if (mounted) {
+    // Use 60s interval to avoid spamming Binance/CoinGecko when network is unstable
+    _priceTimer = Timer.periodic(const Duration(seconds: 60), (timer) {
+      if (mounted && !_isFetchingMarketData) {
         _fetchMarketData();
       }
     });
+  }
+
+  void _startBalanceRefreshTimer() {
+    // Refresh balance every 8 seconds for more responsive updates
+    _balanceRefreshTimer = Timer.periodic(const Duration(seconds: 8), (timer) {
+      if (mounted) {
+        debugPrint('🔄⚡ Home Screen: WALLET-AWARE balance refresh tick ${timer.tick}');
+
+        // Only fetch balance if enough time has passed since last fetch
+        final now = DateTime.now();
+        if (_lastApiFetchTime == null || now.difference(_lastApiFetchTime!) > _minApiFetchInterval) {
+          _lastApiFetchTime = now;
+          _fetchWalletBalance();
+        } else {
+          debugPrint('🔄⏱️ Home Screen: Skipping timer-based API fetch, too soon');
+        }
+        
+        // Monitor WALLET socket connection health
+        if (!SocketService.isConnected) {
+          debugPrint('🔄❌ Home Screen: WALLET Socket disconnected, attempting reconnect...');
+          _connectSocketService();
+        } else {
+          debugPrint('🔄✅ Home Screen: WALLET Socket connected, requesting updates...');
+          // Periodically request wallet balance updates even if connected
+          if (timer.tick % 3 == 0) { // Every 24 seconds
+            debugPrint('🔄📡 Home Screen: Requesting WALLET balance updates...');
+            SocketService.requestWalletSummary();
+            SocketService.requestWalletBalance();
+          }
+        }
+        
+        // Comprehensive WALLET socket health check every 2 minutes
+        if (timer.tick % 15 == 0) {
+          _comprehensiveWalletSocketHealthCheck();
+        }
+      }
+    });
+  }
+
+  // Comprehensive WALLET socket health check and recovery
+  void _comprehensiveWalletSocketHealthCheck() {
+    debugPrint('🔧🏥 Home Screen: Comprehensive WALLET socket health check...');
+    
+    final isConnected = SocketService.isConnected;
+    final isConnecting = SocketService.isConnecting;
+    
+    debugPrint('🔧🏥 WALLET Socket Status - Connected: $isConnected, Connecting: $isConnecting');
+    
+    if (!isConnected && !isConnecting) {
+      debugPrint('🔧🔄 Home Screen: WALLET Socket completely disconnected, forcing reconnection...');
+      _connectSocketService();
+    } else if (isConnected) {
+      debugPrint('🔧💓 Home Screen: WALLET Socket heartbeat - requesting balance updates...');
+      SocketService.requestWalletSummary();
+      SocketService.requestWalletBalance();
+      debugPrint('🔧✅ Home Screen: WALLET Socket health confirmed');
+    }
   }
   
   void _showWithdrawalSelectionMenu() {
@@ -752,9 +1313,9 @@ class _HomeScreenState extends State<HomeScreen> {
     } else if (action == 'Withdraw') {
       _showWithdrawalSelectionMenu();
     } else if (action == 'Internal Deposit' || action == 'Inter send') {
-      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const InternalDepositScreen()));
-    } else if (action == 'Receive') {
-      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const ComingSoonScreen()));
+      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const SendScreen()));
+    } else if (action == 'Bot Trade') {
+      Navigator.of(context).push(MaterialPageRoute(builder: (context) => const BotMainScreen()));
     } else if (action == 'P2P') {
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => const P2PTradingScreen()));
     } else if (action == 'Transfer') {
@@ -768,48 +1329,42 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  @override
-  void dispose() {
-    _priceTimer?.cancel();
-    _marketDataSubscription?.cancel();
-    _binanceWsSubscription?.cancel();
-    _balanceSubscription?.cancel();
-    BinanceService.disconnectAll();
-    super.dispose();
-  }
-
+  
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0D0D0D),
-      body: SafeArea(
+      body: NetworkAwareWidget(
+        onRetry: _fetchInitialData,
         child: Column(
           children: [
-            // Fixed top section - doesn't scroll
-            _buildHeader(),
-            _buildBalanceCard(),
-            _buildActionGrid(),
-            _buildPromoBanner(),
-            // Scrollable section - tabs + crypto list
-            Expanded(
-              child: CryptoRefreshIndicator(
-                onRefresh: _fetchInitialData,
-                child: SingleChildScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildTabSection(),
-                      _buildCryptoList(),
-                    ],
+              // Fixed top section - doesn't scroll
+              _buildHeader(),
+              _buildBalanceCard(),
+              _buildActionGrid(),
+              _buildPromoBanner(),
+              // Scrollable section - coin balances + tabs + crypto list
+              Expanded(
+                child: CryptoRefreshIndicator(
+                  onRefresh: _fetchInitialData,
+                  child: SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildTabSection(),
+                        _buildCryptoList(),
+                        // Add bottom padding to account for bottom navigation (3 dot navbar)
+                        SizedBox(height: MediaQuery.of(context).padding.bottom + 80),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
-      ),
-    );
+      );
   }
 
   Widget _buildHeader() {
@@ -883,6 +1438,7 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Available Balance Section
           Row(
             children: [
               const Text(
@@ -906,7 +1462,7 @@ class _HomeScreenState extends State<HomeScreen> {
             textBaseline: TextBaseline.alphabetic,
             children: [
               Text(
-                _isBalanceVisible ? _totalBalance.toStringAsFixed(2) : '****',
+                _isBalanceVisible ? _availableBalance.toStringAsFixed(2) : '****',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 20,
@@ -922,7 +1478,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 2),
           FutureBuilder<double>(
-            future: _getUSDEquivalent(),
+            future: _getAvailableUSDEquivalent(),
             builder: (context, snapshot) {
               final usdEquivalent = snapshot.data ?? 0.0;
               return Text(
@@ -931,13 +1487,14 @@ class _HomeScreenState extends State<HomeScreen> {
               );
             },
           ),
+          
         ],
       ),
     );
   }
 
-  Future<double> _getUSDEquivalent() async {
-    return _totalBalance;
+  Future<double> _getAvailableUSDEquivalent() async {
+    return _availableBalance;
   }
 
   Widget _buildTransferIcon() {
@@ -1083,10 +1640,29 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildBotTradeIcon() {
+    return Container(
+      width: 34,
+      height: 34,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E20),
+        shape: BoxShape.circle,
+        border: Border.all(color: const Color(0xFF2A2A2C), width: 1),
+      ),
+      child: Center(
+        child: Icon(
+          Icons.smart_toy,
+          color: Colors.white,
+          size: 16,
+        ),
+      ),
+    );
+  }
+
   Widget _buildActionGrid() {
     final actions = [
       {'label': 'Inter send', 'icon': 'sendicon.png', 'iconData': Icons.arrow_circle_up},
-      {'label': 'Receive', 'icon': 'receiveicon.png', 'iconData': Icons.request_page},
+      {'label': 'Bot Trade', 'icon': 'bot.png', 'iconData': Icons.smart_toy, 'customWidget': true},
       {'label': 'Deposit', 'icon': 'depositeicon.png', 'iconData': Icons.account_balance_wallet},
       {'label': 'INR Deposit', 'icon': 'inrdeposit.png', 'iconData': Icons.currency_rupee},
       {'label': 'Withdraw', 'icon': 'withdrawicon.png', 'iconData': Icons.money},
@@ -1096,7 +1672,7 @@ class _HomeScreenState extends State<HomeScreen> {
     ];
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4), // Reduced vertical padding
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4),
       child: GridView.builder(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
@@ -1104,18 +1680,16 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisCount: 4, 
           crossAxisSpacing: 10,
           mainAxisSpacing: 16,
-          childAspectRatio: 0.8, // Adjusted for icons with text
+          childAspectRatio: 0.8,
         ),
         itemCount: actions.length,
         itemBuilder: (context, index) {
           final action = actions[index];
           final String label = action['label'] as String;
-          bool isHistory = label == 'History';
           bool isCustomWidget = action['customWidget'] == true;
           
           double containerSize = 56;
-          // Reduced padding for P2P and INR Deposit to make icons larger
-          double padding = (label == 'INR Deposit' || label == 'P2P') ? 6 : 8;
+          double padding = 6;
           
           return GestureDetector(
             onTap: () => _handleActionTap(label),
@@ -1131,21 +1705,24 @@ class _HomeScreenState extends State<HomeScreen> {
                         ? _buildTransferIcon() 
                         : label == 'Conversion' 
                             ? _buildConversionIcon()
-                            : _buildP2PIcon())
+                            : label == 'Bot Trade'
+                                ? _buildBotTradeIcon()
+                                : _buildP2PIcon())
                     : Image.asset(
                         'assets/images/${action['icon']}', 
                         fit: BoxFit.contain,
-                        color: (isHistory || label == 'Transfer') ? const Color(0xFF84BD00) : null,
                         errorBuilder: (c, e, s) => Icon(
                           action['iconData'] as IconData, 
                           color: const Color(0xFF84BD00), 
-                          size: (label == 'INR Deposit' || label == 'P2P') ? 38 : 34 
+                          size: 38
                         )
                       ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: Colors.white70,
                     fontSize: 10,
@@ -1750,87 +2327,46 @@ class _HomeScreenState extends State<HomeScreen> {
     return marketCaps[symbol] ?? 0.0;
   }
   
-  // Build regular crypto list from API data
+  // Build optimized crypto list with pagination and caching
   Widget _buildCryptoDataList(List<Map<String, dynamic>> cryptoData) {
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      itemCount: cryptoData.length,
-      itemBuilder: (context, index) {
-        final crypto = cryptoData[index];
-        final cryptoName = crypto['name']?.toString() ?? 'Unknown';
-        final cryptoSymbol = crypto['symbol']?.toString() ?? '???';
-        final baseSymbol = cryptoSymbol.replaceAll('USDT', '');
-        final price = double.tryParse(crypto['price']?.toString() ?? '0.0') ?? 0.0;
-        final change = double.tryParse(crypto['change']?.toString() ?? '0.0') ?? 0.0;
-        final marketCap = double.tryParse(crypto['marketCap']?.toString() ?? '0.0') ?? 0.0;
-        final isPositive = change >= 0;
-        
-        return Container(
-          margin: const EdgeInsets.only(bottom: 20), 
-          child: Row(
-            children: [
-              CoinIconMapper.getCoinIcon(
-                baseSymbol,
-                size: 48,
-              ),
-              const SizedBox(width: 16), 
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      cryptoSymbol.replaceAll('USDT', ''),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 18, 
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'MCap: ${_formatVolume(marketCap)}',
-                      style: const TextStyle(
-                        color: Color(0xFF8E8E93),
-                        fontSize: 14, 
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '\$${_formatPrice(price)}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16, 
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: isPositive ? const Color(0xFF00C087).withOpacity(0.1) : const Color(0xFFFF3B30).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      '${isPositive ? '+' : ''}${change.toStringAsFixed(2)}%',
-                      style: TextStyle(
-                        color: isPositive ? const Color(0xFF00C087) : const Color(0xFFFF3B30),
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
+    // Use optimized crypto list with pagination and caching
+    return OptimizedCryptoList(
+      fetchData: (page, limit) async {
+        try {
+          // Fetch data directly
+          final result = await BinanceService.getTopTradingPairs(limit: limit);
+          
+          final marketCaps = await BinanceService.getMarketCapData();
+          
+          final processedData = result.map((item) {
+            final symbol = item['symbol']?.toString() ?? '';
+            final baseSymbol = symbol.replaceAll('USDT', '');
+            final marketCap = marketCaps[baseSymbol] ?? 0.0;
+            
+            return {
+              'name': _getCoinName(symbol),
+              'symbol': symbol,
+              'price': item['price'],
+              'change': item['priceChangePercent'],
+              'volume': item['quoteVolume'],
+              'marketCap': marketCap,
+            };
+          }).toList();
+          
+          return {
+            'success': true,
+            'data': processedData,
+          };
+        } catch (e) {
+          return {
+            'success': false,
+            'error': e.toString(),
+            'data': [],
+          };
+        }
+      },
+      onItemTap: () {
+        // Handle item tap if needed
       },
     );
   }
