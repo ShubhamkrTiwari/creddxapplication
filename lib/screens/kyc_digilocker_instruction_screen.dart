@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'kyc_digilocker_screen.dart';
 import 'kyc_selfie_screen.dart';
 import 'user_profile_screen.dart';
+import 'update_profile_screen.dart';
 import '../services/user_service.dart';
 
 class KYCDigiLockerInstructionScreen extends StatefulWidget {
@@ -139,7 +140,7 @@ class _KYCDigiLockerInstructionScreenState
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => const UserProfileScreen(),
+                    builder: (context) => const UpdateProfileScreen(),
                   ),
                 );
               },

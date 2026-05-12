@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../services/bot_service.dart';
 import '../services/pagination_service.dart';
+import '../widgets/progressive_pagination_widget.dart';
 
 class BotHistoryScreen extends StatefulWidget {
   final bool showHeader;
@@ -31,7 +32,12 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
   List<Transaction> _transactions = [];
   List<String> _availablePairs = [];
   String? _errorMessage;
-  late PaginationService<BotTrade> _tradesPaginationService;
+  late PaginationService<BotTrade> _tradesPaginationService = PaginationService<BotTrade>(
+    fetchData: _fetchTradesFromAPI,
+    itemsPerPage: 10, // Reduced for 16KB compliance
+    filterFunction: _filterTrades,
+    sortFunction: _sortTrades,
+  );
   double _userInvestment = 0.0;
   DateTime? _startDate;
   DateTime? _endDate;
@@ -41,6 +47,14 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
   Map<String, dynamic> _subscriptionIncome = {};
   bool _isLoadingIncome = false;
   String? _incomeError;
+  late PaginationService<Map<String, dynamic>> _tradingPaginationService = PaginationService<Map<String, dynamic>>(
+    fetchData: (page, limit) async => {'success': true, 'data': []},
+    itemsPerPage: 10,
+  );
+  late PaginationService<Map<String, dynamic>> _subscriptionPaginationService = PaginationService<Map<String, dynamic>>(
+    fetchData: (page, limit) async => {'success': true, 'data': []},
+    itemsPerPage: 10,
+  );
   
   // Benchmark ROI data
   double _btcRoi = 3.70;
@@ -60,20 +74,36 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
   void initState() {
     super.initState();
     _initializeTabController();
-    _initializePagination();
-    _loadTradeHistory();
-    _loadTransactions();
-    _loadAvailablePairs();
-    _loadIncomeData();
+    _startProgressiveLoading();
+  }
+
+  void _startProgressiveLoading() {
+    // Load UI elements immediately, then data progressively
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Load available pairs first (quick and needed for UI)
+      Future.delayed(const Duration(milliseconds: 50), () {
+        if (mounted) _loadAvailablePairs();
+      });
+      
+      // Load first page of trades quickly to show immediate content
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted) _loadTradeHistory(initialOnly: true);
+      });
+      
+      // Load transactions after a short delay
+      Future.delayed(const Duration(milliseconds: 200), () {
+        if (mounted) _loadTransactions();
+      });
+      
+      // Load income data last (might be heavier)
+      Future.delayed(const Duration(milliseconds: 400), () {
+        if (mounted) _loadIncomeData();
+      });
+    });
   }
 
   void _initializePagination() {
-    _tradesPaginationService = PaginationService<BotTrade>(
-      fetchData: _fetchTradesFromAPI,
-      itemsPerPage: 25,
-      filterFunction: _filterTrades,
-      sortFunction: _sortTrades,
-    );
+    // Already initialized at declaration
   }
 
   Future<void> _loadWeeklyBenchmark({bool force = false}) async {
@@ -139,32 +169,9 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
   }
 
   void _initializeTabController() {
-    // Initialize the controller if it hasn't been initialized yet
-    if (!_isTabControllerInitialized) {
-      _tabController = TabController(length: 2, vsync: this);
-      _tabController.addListener(_onTabChanged);
-      _isTabControllerInitialized = true;
-      return;
-    }
-    
-    // Dispose existing controller if it has no listeners
-    if (!_tabController.hasListeners) {
-      _tabController.dispose();
-      _tabController = TabController(length: 2, vsync: this);
-    }
-    
-    // Ensure the controller has the correct length
-    if (_tabController.length != 2) {
-      _tabController.dispose();
-      _tabController = TabController(length: 2, vsync: this);
-    }
-    
-    // Reset index to 0 if it's out of bounds
-    if (_tabController.index >= 2 || _tabController.index < 0) {
-      _tabController.index = 0;
-    }
-    
+    _tabController = TabController(length: 2, vsync: this);
     _tabController.addListener(_onTabChanged);
+    _isTabControllerInitialized = true;
   }
 
   @override
@@ -204,11 +211,18 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
     }
   }
 
-  Future<void> _loadTradeHistory() async {
-    _tradesPaginationService.fetchInitialData();
+  Future<void> _loadTradeHistory({bool initialOnly = false}) async {
+    if (initialOnly) {
+      // Load only first page quickly
+      await _tradesPaginationService.fetchInitialData();
+    } else {
+      // Full refresh
+      await _tradesPaginationService.fetchInitialData();
+    }
   }
 
   Future<void> _loadTransactions() async {
+    if (_isLoading) return;
     if (mounted) {
       setState(() {
         _isLoading = true;
@@ -217,15 +231,11 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
     }
 
     try {
-      debugPrint('=== LOADING TRANSACTIONS ===');
       final result = await BotService.getUserTransactions();
-      debugPrint('Transactions API Result: $result');
 
       if (mounted) {
         if (result['success'] == true) {
           final List<dynamic> transactionsList = result['transactions'] ?? [];
-          debugPrint('Transactions list length: ${transactionsList.length}');
-          debugPrint('Transactions list: $transactionsList');
           
           List<Transaction> parsedTransactions = [];
           
@@ -233,23 +243,18 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
           for (var transactionData in transactionsList) {
             try {
               final transaction = Transaction.fromJson(transactionData);
-              debugPrint('Transaction parsed: type=${transaction.type}, status="${transaction.status}", amount=${transaction.amount}');
               parsedTransactions.add(transaction);
             } catch (e) {
-              debugPrint('Error parsing transaction: $e');
-              debugPrint('Transaction data: $transactionData');
               // Skip invalid transaction but continue processing others
               continue;
             }
           }
           
-          debugPrint('Final parsed transactions count: ${parsedTransactions.length}');
           setState(() {
             _transactions = parsedTransactions;
             _isLoading = false;
           });
         } else {
-          debugPrint('API Error: ${result['error']}');
           setState(() {
             _errorMessage = result['error'] ?? 'Failed to load transactions';
             _isLoading = false;
@@ -257,7 +262,6 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
         }
       }
     } catch (e) {
-      debugPrint('Exception loading transactions: $e');
       if (mounted) {
         setState(() {
           _errorMessage = 'Error loading transactions: $e';
@@ -268,6 +272,7 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
   }
 
   Future<void> _loadIncomeData() async {
+    if (_isLoadingIncome) return;
     if (mounted) {
       setState(() {
         _isLoadingIncome = true;
@@ -280,9 +285,19 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
 
       if (mounted) {
         if (result['success'] == true) {
+          final tradingTrans = (result['tradingIncome']?['transactions'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+          final subTrans = (result['subscriptionIncome']?['transactions'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+          
           setState(() {
             _tradingIncome = result['tradingIncome'] ?? {};
             _subscriptionIncome = result['subscriptionIncome'] ?? {};
+            
+            _tradingPaginationService.allItems = tradingTrans;
+            _tradingPaginationService.applyFiltersAndSorting();
+            
+            _subscriptionPaginationService.allItems = subTrans;
+            _subscriptionPaginationService.applyFiltersAndSorting();
+            
             _isLoadingIncome = false;
           });
         } else {
@@ -419,25 +434,6 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
   Widget build(BuildContext context) {
     final bool displayHeader = widget.showHeader;
     
-    // Ensure TabController is valid
-    if (!_isTabControllerInitialized || 
-        _tabController == null || 
-        !_tabController.hasListeners || 
-        _tabController.length != 2) {
-      // Reinitialize if needed
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _initializeTabController();
-        setState(() {});
-      });
-      // Return a loading indicator while reinitializing
-      return const Scaffold(
-        backgroundColor: Colors.black,
-        body: Center(
-          child: CircularProgressIndicator(color: Color(0xFF84BD00)),
-        ),
-      );
-    }
-    
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: displayHeader ? AppBar(
@@ -496,31 +492,13 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
           const SizedBox(height: 12),
           // Tab Content
           Expanded(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 300),
-              switchInCurve: Curves.easeInOut,
-              switchOutCurve: Curves.easeInOut,
-              transitionBuilder: (Widget child, Animation<double> animation) {
-                return FadeTransition(
-                  opacity: animation,
-                  child: SlideTransition(
-                    position: Tween<Offset>(
-                      begin: const Offset(0.05, 0),
-                      end: Offset.zero,
-                    ).animate(animation),
-                    child: child,
-                  ),
-                );
-              },
-              child: TabBarView(
-                key: ValueKey<int>(_tabController?.index ?? 0),
-                controller: _tabController,
-                physics: const NeverScrollableScrollPhysics(),
-                children: [
-                  _buildTransactionsContent(),
-                  _buildReferralEarningsContent(),
-                ],
-              ),
+            child: TabBarView(
+              controller: _tabController,
+              physics: const NeverScrollableScrollPhysics(),
+              children: [
+                _buildTransactionsContent(),
+                _buildReferralEarningsContent(),
+              ],
             ),
           ),
         ],
@@ -1315,16 +1293,12 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
                     )
                   : SliverPadding(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      sliver: SliverList(
-                        delegate: SliverChildBuilderDelegate(
-                          (context, index) {
-                            if (index >= _tradesPaginationService.currentPageItems.length) {
-                              return const SizedBox.shrink();
-                            }
-                            final trade = _tradesPaginationService.currentPageItems[index];
-                            return _buildTradeCard(trade);
-                          },
-                          childCount: _tradesPaginationService.currentPageItems.length,
+                      sliver: SliverToBoxAdapter(
+                        child: ProgressivePaginationWidget<BotTrade>(
+                          paginationService: _tradesPaginationService,
+                          itemBuilder: (context, index, trade) => _buildTradeCard(trade),
+                          initialLoadDelay: 300,
+                          itemsPerBatch: 5,
                         ),
                       ),
                     ),
@@ -1689,132 +1663,231 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
     final subscriptionTotal = ((_subscriptionIncome['total'] ?? 0.0) as num).toDouble();
     final grandTotal = tradingTotal + subscriptionTotal;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Grand Total Card
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFF84BD00),
-                  Color(0xFF6A9900),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF84BD00).withOpacity(0.3),
-                  blurRadius: 15,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(12),
+    final tradingTransactions = _tradingPaginationService.currentPageItems;
+    final subscriptionTransactions = _subscriptionPaginationService.currentPageItems;
+
+    return RefreshIndicator(
+      onRefresh: _loadIncomeData,
+      color: const Color(0xFF84BD00),
+      backgroundColor: const Color(0xFF1C1C1E),
+      child: CustomScrollView(
+        physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+        slivers: [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Grand Total Card
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Color(0xFF84BD00),
+                          Color(0xFF6A9900),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF84BD00).withOpacity(0.2),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(
+                            Icons.account_balance_wallet,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Total Earnings',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.9),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '\$${grandTotal.toStringAsFixed(2)}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: -0.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  child: const Icon(
-                    Icons.account_balance_wallet,
-                    color: Colors.white,
-                    size: 24,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  const SizedBox(height: 12),
+                  
+                  // Stats Row
+                  Row(
                     children: [
-                      Text(
-                        'Total Earnings',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.9),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
+                      Expanded(
+                        child: _buildStatCard(
+                          'Trading Income',
+                          '\$${tradingTotal.toStringAsFixed(4)}',
+                          Icons.trending_up,
+                          const Color(0xFF00C851),
                         ),
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '\$${grandTotal.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: -0.5,
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _buildStatCard(
+                          'Subscription',
+                          '\$${subscriptionTotal.toStringAsFixed(4)}',
+                          Icons.people,
+                          const Color(0xFF84BD00),
                         ),
                       ),
                     ],
                   ),
-                ),
-              ],
+                  const SizedBox(height: 16),
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 16),
           
-          // Stats Row
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatCard(
-                  'Trading Income',
-                  '\$${tradingTotal.toStringAsFixed(4)}',
-                  Icons.trending_up,
-                  const Color(0xFF00C851),
+          // Trading Income Section Header
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: _buildIncomeHeaderOnly(
+                'Trading Income',
+                tradingTotal,
+                _tradingPaginationService.allItems.length,
+                Icons.trending_up,
+                const Color(0xFF00C851),
+              ),
+            ),
+          ),
+          
+          // Trading Transactions List
+          if (_tradingPaginationService.allItems.isEmpty)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: _buildEmptyIncomeContent(true),
+              ),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              sliver: SliverToBoxAdapter(
+                child: ProgressivePaginationWidget<Map<String, dynamic>>(
+                  paginationService: _tradingPaginationService,
+                  itemBuilder: (context, index, transaction) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: _buildIncomeTransactionCard(transaction, true, const Color(0xFF00C851)),
+                  ),
+                  initialLoadDelay: 300,
+                  itemsPerBatch: 5,
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatCard(
-                  'Subscription',
-                  '\$${subscriptionTotal.toStringAsFixed(4)}',
-                  Icons.people,
-                  const Color(0xFF84BD00),
+            ),
+
+          if (_tradingPaginationService.totalPages > 1)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: PageNavigationWidget(
+                  paginationService: _tradingPaginationService,
+                  onPageChanged: () => setState(() {}),
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 24),
+            ),
+            
+          const SliverToBoxAdapter(child: SizedBox(height: 12)),
           
-          // Trading Income Section
-          _buildIncomeSection(
-            'Trading Income',
-            _tradingIncome,
-            Icons.trending_up,
-            const Color(0xFF00C851),
-            isTrading: true,
+          // Subscription Income Section Header
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: _buildIncomeHeaderOnly(
+                'Referral Subscription Income',
+                subscriptionTotal,
+                _subscriptionPaginationService.allItems.length,
+                Icons.people,
+                const Color(0xFF84BD00),
+              ),
+            ),
           ),
-          const SizedBox(height: 16),
           
-          // Subscription Income Section
-          _buildIncomeSection(
-            'Referral Subscription Income',
-            _subscriptionIncome,
-            Icons.people,
-            const Color(0xFF84BD00),
-            isTrading: false,
-          ),
+          // Subscription Transactions List
+          if (_subscriptionPaginationService.allItems.isEmpty)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: _buildEmptyIncomeContent(false),
+              ),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              sliver: SliverToBoxAdapter(
+                child: ProgressivePaginationWidget<Map<String, dynamic>>(
+                  paginationService: _subscriptionPaginationService,
+                  itemBuilder: (context, index, transaction) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: _buildIncomeTransactionCard(transaction, false, const Color(0xFF84BD00)),
+                  ),
+                  initialLoadDelay: 300,
+                  itemsPerBatch: 5,
+                ),
+              ),
+            ),
+
+          if (_subscriptionPaginationService.totalPages > 1)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: PageNavigationWidget(
+                  paginationService: _subscriptionPaginationService,
+                  onPageChanged: () => setState(() {}),
+                ),
+              ),
+            ),
+          
+          const SliverToBoxAdapter(child: SizedBox(height: 24)),
         ],
       ),
     );
   }
 
+
   Widget _buildStatCard(String label, String value, IconData icon, Color color) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: const Color(0xFF1C1C1E),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: color.withOpacity(0.3),
+          color: color.withOpacity(0.2),
           width: 1,
         ),
       ),
@@ -1822,31 +1895,31 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.all(6),
             decoration: BoxDecoration(
               color: color.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
               icon,
               color: color,
-              size: 20,
+              size: 16,
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Text(
             label,
             style: TextStyle(
               color: Colors.white.withOpacity(0.6),
-              fontSize: 12,
+              fontSize: 11,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 2),
           Text(
             value,
             style: TextStyle(
               color: color,
-              fontSize: 20,
+              fontSize: 16,
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -1855,160 +1928,142 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
     );
   }
 
-  Widget _buildIncomeSection(
+  Widget _buildIncomeHeaderOnly(
     String title,
-    Map<String, dynamic> incomeData,
+    double total,
+    int count,
     IconData icon,
-    Color color, {
-    required bool isTrading,
-  }) {
-    final total = ((incomeData['total'] ?? 0.0) as num).toDouble();
-    final transactions = incomeData['transactions'] as List? ?? [];
-
+    Color color,
+  ) {
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFF1C1C1E),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(12),
+          topRight: Radius.circular(12),
+        ),
         border: Border.all(color: Colors.white.withOpacity(0.05)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  color.withOpacity(0.15),
-                  color.withOpacity(0.05),
-                ],
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              color.withOpacity(0.1),
+              color.withOpacity(0.02),
+            ],
+          ),
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(12),
+            topRight: Radius.circular(12),
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(8),
               ),
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(20),
-                topRight: Radius.circular(20),
+              child: Icon(
+                icon,
+                color: color,
+                size: 20,
               ),
             ),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(12),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                  child: Icon(
-                    icon,
-                    color: color,
-                    size: 28,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  const SizedBox(height: 2),
+                  Row(
                     children: [
                       Text(
-                        title,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        '\$${total.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          color: color,
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Text(
-                            '\$${total.toStringAsFixed(2)}',
-                            style: TextStyle(
-                              color: color,
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                            ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: color.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          '$count ${count == 1 ? 'txn' : 'txns'}',
+                          style: TextStyle(
+                            color: color,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
                           ),
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: color.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              '${transactions.length} ${transactions.length == 1 ? 'transaction' : 'transactions'}',
-                              style: TextStyle(
-                                color: color,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ],
                   ),
-                ),
-              ],
-            ),
-          ),
-          // Transactions List
-          if (transactions.isEmpty)
-            Container(
-              padding: const EdgeInsets.all(40),
-              child: Column(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.05),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      isTrading ? Icons.trending_flat : Icons.person_off,
-                      color: Colors.white.withOpacity(0.3),
-                      size: 48,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    isTrading ? 'No trading income yet' : 'No referral income yet',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.5),
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    isTrading 
-                        ? 'Start trading to earn commissions'
-                        : 'Invite friends to start earning',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.3),
-                      fontSize: 14,
-                    ),
-                  ),
                 ],
               ),
-            )
-          else
-            ListView.separated(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: transactions.length,
-              padding: const EdgeInsets.all(16),
-              separatorBuilder: (context, index) => const SizedBox(height: 12),
-              itemBuilder: (context, index) {
-                final transaction = transactions[index];
-                return _buildIncomeTransactionCard(transaction, isTrading, color);
-              },
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyIncomeContent(bool isTrading) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E),
+        borderRadius: const BorderRadius.only(
+          bottomLeft: Radius.circular(12),
+          bottomRight: Radius.circular(12),
+        ),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
+      ),
+      padding: const EdgeInsets.all(30),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              isTrading ? Icons.trending_flat : Icons.person_off,
+              color: Colors.white.withOpacity(0.2),
+              size: 32,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            isTrading ? 'No trading income yet' : 'No referral income yet',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.4),
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
         ],
       ),
     );
   }
+
 
   Widget _buildIncomeTransactionCard(Map<String, dynamic> transaction, bool isTrading, Color accentColor) {
     final amount = ((transaction['amount'] ?? 0.0) as num).toDouble();
@@ -2021,12 +2076,12 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
     }
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: const Color(0xFF2C2C2E),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: accentColor.withOpacity(0.2),
+          color: accentColor.withOpacity(0.1),
           width: 1,
         ),
       ),
@@ -2034,18 +2089,18 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
         children: [
           // Icon
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: accentColor.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(12),
+              color: accentColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
               isTrading ? Icons.trending_up : Icons.person,
               color: accentColor,
-              size: 24,
+              size: 18,
             ),
           ),
-          const SizedBox(width: 16),
+          const SizedBox(width: 12),
           // Details
           Expanded(
             child: Column(
@@ -2055,57 +2110,39 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
                   isTrading ? 'Trading Profit' : 'Referral Commission',
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 10,
+                    fontSize: 9,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 2),
                 if (date != null)
                   Text(
-                    DateFormat('dd MMM yyyy, hh:mm a').format(date),
+                    DateFormat('dd MMM, hh:mm a').format(date),
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.5),
-                      fontSize: 12,
+                      color: Colors.white.withOpacity(0.4),
+                      fontSize: 10,
                     ),
                   ),
-                if (!isTrading && transaction['name'] != null) ...[
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.person_outline,
-                        size: 14,
-                        color: Colors.white.withOpacity(0.5),
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          transaction['name'],
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.7),
-                            fontSize: 13,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
+                if (transaction['email'] != null || transaction['userEmail'] != null || transaction['name'] != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    transaction['email'] ?? transaction['userEmail'] ?? transaction['name'] ?? '',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.6),
+                      fontSize: 10,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
-                if (!isTrading && transaction['level'] != null) ...[
-                  const SizedBox(height: 4),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: accentColor.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      'Level ${transaction['level']}',
-                      style: TextStyle(
-                        color: accentColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                      ),
+                if (transaction['level'] != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    'Level ${transaction['level']}',
+                    style: TextStyle(
+                      color: accentColor.withOpacity(0.9),
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ],
@@ -2120,24 +2157,17 @@ class _BotHistoryScreenState extends State<BotHistoryScreen> with SingleTickerPr
                 '+\$${amount.toStringAsFixed(5)}',
                 style: TextStyle(
                   color: accentColor,
-                  fontSize: 18,
+                  fontSize: 14,
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(height: 2),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: accentColor.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  'USDT',
-                  style: TextStyle(
-                    color: accentColor,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                  ),
+              const SizedBox(height: 1),
+              Text(
+                'USDT',
+                style: TextStyle(
+                  color: accentColor.withOpacity(0.6),
+                  fontSize: 8,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ],

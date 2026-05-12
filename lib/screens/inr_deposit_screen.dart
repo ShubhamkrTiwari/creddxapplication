@@ -7,6 +7,7 @@ import 'pay_upi_screen.dart';
 import 'bank_details_screen.dart';
 import 'upi_details_screen.dart';
 import 'user_profile_screen.dart';
+import 'update_profile_screen.dart';
 import 'package:intl/intl.dart';
 
 class InrDepositScreen extends StatefulWidget {
@@ -79,7 +80,7 @@ class _InrDepositScreenState extends State<InrDepositScreen> {
             ElevatedButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const UserProfileScreen()));
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const UpdateProfileScreen()));
               },
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
               child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),

@@ -5,6 +5,7 @@ import 'bot_algorithm_screen.dart';
 import '../services/bot_service.dart';
 import '../services/user_service.dart';
 import 'user_profile_screen.dart';
+import 'update_profile_screen.dart';
 
 class BotTradeScreen extends StatefulWidget {
   const BotTradeScreen({super.key});
@@ -59,7 +60,7 @@ class _BotTradeScreenState extends State<BotTradeScreen> {
             ElevatedButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const UserProfileScreen()));
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const UpdateProfileScreen()));
               },
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
               child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),

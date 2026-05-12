@@ -2,7 +2,7 @@ name: creddx
 description: "CreddX  Crypto Exchange"
 publish_to: 'none'
 
-version: 3.4.2+31
+version: 3.4.6+33
 
 environment:
   sdk: ^3.11.0
@@ -19,6 +19,7 @@ dependencies:
   gif: ^2.3.0
   shared_preferences: ^2.2.2
   device_info_plus: ^10.1.0
+  connectivity_plus: ^6.1.0
   web_socket_channel: ^2.4.5
   socket_io_client: ^2.0.3
   mobile_scanner: ^6.0.2

@@ -1,15 +1,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     package="com.creddx.android">
-    <!-- Required permissions -->
+    <!-- Required permissions for app functionality -->
+    <!-- Camera: Required for KYC document capture and user verification -->
     <uses-feature
         android:name="android.hardware.camera"
         android:required="false" />
 
+    <!-- Internet: Required for API communication and data synchronization -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Camera: Required for KYC document scanning and selfie capture -->
     <uses-permission android:name="android.permission.CAMERA"/>
+    <!-- Biometric: Required for secure user authentication -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <uses-permission android:name="android.permission.USE_FINGERPRINT"/>
+    <!-- Network State: Required for connectivity checks and offline handling -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     
     <application
@@ -22,7 +27,8 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:requestLegacyExternalStorage="false"
         android:hardwareAccelerated="true"
-        android:extractNativeLibs="true">
+        android:extractNativeLibs="false"
+        tools:replace="android:extractNativeLibs">
         
         <activity
             android:name=".MainActivity"
@@ -67,8 +73,10 @@
          https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
 
          In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
-    <!-- Media permissions - Only for Android 12 and below -->
+    <!-- Storage permissions: Required for KYC document upload and image handling -->
+    <!-- Legacy storage access for Android 12 and below -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+    <!-- Write storage only for Android 9 and below for temporary file handling -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
     
     <queries>

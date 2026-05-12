@@ -29,8 +29,8 @@ android {
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 24  // Android 7.0+ for better security and features
         targetSdk = 35  // Android 15 for Play Store compliance
-        versionCode = 31
-        versionName = "3.4.2"
+        versionCode = 33
+        versionName = "3.4.6"
 
         // Play Store optimization
         multiDexEnabled = true
@@ -57,13 +57,19 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
-            isMinifyEnabled = false
-            isShrinkResources = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            isZipAlignEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
         debug {
             isDebuggable = true
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            isZipAlignEnabled = true
         }
     }
 
@@ -80,39 +86,14 @@ android {
         }
     }
 
-    // Packaging options for 16 KB page size support
-    packagingOptions {
+    packaging {
         jniLibs {
             useLegacyPackaging = false
         }
-        // Exclude libraries that don't support 16KB page size
-        pickFirsts += listOf(
-            "lib/arm64-v8a/libbarhopper_v3.so",
-            "lib/arm64-v8a/libimage_processing_util_jni.so",
-            "lib/armeabi-v7a/libbarhopper_v3.so",
-            "lib/armeabi-v7a/libimage_processing_util_jni.so",
-            "lib/x86_64/libbarhopper_v3.so",
-            "lib/x86_64/libimage_processing_util_jni.so"
-        )
-        excludes += listOf(
-            "lib/arm64-v8a/libbarhopper_v3.so",
-            "lib/armeabi-v7a/libbarhopper_v3.so"
-        )
-    }
-
-    buildTypes {
-        release {
-            signingConfig = signingConfigs.getByName("release")
-            isMinifyEnabled = false
-            isShrinkResources = false
-            // Enable zipAlign for 16KB page size alignment
-            isZipAlignEnabled = true
-        }
-        debug {
-            isDebuggable = true
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
-            isZipAlignEnabled = true
+        // ML Kit libraries and others should be 16KB aligned
+        // If some libraries still cause issues, they might need to be updated in pubspec.yaml
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
 }

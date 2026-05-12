@@ -8,6 +8,7 @@ import 'order_history_screen.dart';
 import 'p2p_chat_list_screen.dart';
 import 'dispute_management_screen.dart';
 import 'user_profile_screen.dart';
+import 'update_profile_screen.dart';
 import 'p2p_place_order_screen.dart';
 import 'p2p_buy_screen.dart';
 import 'p2p_sell_screen.dart';
@@ -357,7 +358,7 @@ class _P2PTradingScreenState extends State<P2PTradingScreen> with SingleTickerPr
               Navigator.of(context).pop();
               Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (context) => const UserProfileScreen(),
+                  builder: (context) => const UpdateProfileScreen(),
                 ),
               );
             },

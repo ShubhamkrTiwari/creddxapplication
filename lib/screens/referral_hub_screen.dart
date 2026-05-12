@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gif/gif.dart';
 import '../services/user_service.dart';
+import '../services/pagination_service.dart';
 
 class ReferralHubScreen extends StatefulWidget {
   const ReferralHubScreen({super.key});
@@ -16,6 +17,10 @@ class _ReferralHubScreenState extends State<ReferralHubScreen>
   bool _isLoading = true;
   Map<String, dynamic> _referralData = {};
   String? _errorMessage;
+  late PaginationService<Map<String, dynamic>> _earningsPaginationService = PaginationService<Map<String, dynamic>>(
+    fetchData: (page, limit) async => {'success': true, 'data': []},
+    itemsPerPage: 10,
+  );
 
   @override
   void initState() {
@@ -45,6 +50,11 @@ class _ReferralHubScreenState extends State<ReferralHubScreen>
           debugPrint('🔍 Referral data: ${result['data']}');
           setState(() {
             _referralData = result['data'] ?? {};
+            
+            final earnings = _referralData['recentEarnings'] as List? ?? [];
+            _earningsPaginationService.allItems = earnings.cast<Map<String, dynamic>>();
+            _earningsPaginationService.applyFiltersAndSorting();
+            
             _isLoading = false;
           });
         } else {
@@ -363,7 +373,7 @@ class _ReferralHubScreenState extends State<ReferralHubScreen>
   }
 
   Widget _buildRecentEarnings() {
-    final earnings = _referralData['recentEarnings'] as List? ?? [];
+    final earnings = _earningsPaginationService.currentPageItems;
     
     return Container(
       padding: const EdgeInsets.all(16),
@@ -384,7 +394,7 @@ class _ReferralHubScreenState extends State<ReferralHubScreen>
             ),
           ),
           const SizedBox(height: 16),
-          if (earnings.isEmpty)
+          if (_earningsPaginationService.allItems.isEmpty)
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -419,12 +429,23 @@ class _ReferralHubScreenState extends State<ReferralHubScreen>
                 ),
               ),
             )
-          else
+          else ...[
             Column(
               children: earnings.map((earning) {
-                return _buildEarningItem(earning as Map<String, dynamic>);
+                return _buildEarningItem(earning);
               }).toList(),
             ),
+            if (_earningsPaginationService.totalPages > 1)
+              Padding(
+                padding: const EdgeInsets.only(top: 16),
+                child: Center(
+                  child: PageNavigationWidget(
+                    paginationService: _earningsPaginationService,
+                    onPageChanged: () => setState(() {}),
+                  ),
+                ),
+              ),
+          ],
         ],
       ),
     );

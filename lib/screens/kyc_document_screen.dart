@@ -3,6 +3,7 @@ import 'package:image_picker/image_picker.dart';
 import 'kyc_selfie_screen.dart';
 import 'kyc_pending_screen.dart';
 import 'user_profile_screen.dart';
+import 'update_profile_screen.dart';
 import '../services/user_service.dart';
 
 class KYCDocumentScreen extends StatefulWidget {
@@ -72,7 +73,7 @@ class _KYCDocumentScreenState extends State<KYCDocumentScreen> {
             ElevatedButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const UserProfileScreen()));
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const UpdateProfileScreen()));
               },
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
               child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),

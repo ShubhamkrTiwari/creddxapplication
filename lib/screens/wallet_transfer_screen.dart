@@ -35,7 +35,6 @@ class _InternalTransferScreenState extends State<InternalTransferScreen> {
   final List<Map<String, String>> _walletTypes = [
     {'code': 'main', 'name': 'Main Wallet'},
     {'code': 'p2p', 'name': 'P2P Wallet'},
-    {'code': 'bot', 'name': 'Bot Wallet'},
     {'code': 'spot', 'name': 'Spot Wallet'},
   ];
 

@@ -14,6 +14,7 @@ import '../services/auto_refresh_service.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 import '../utils/coin_icon_mapper.dart';
 import 'user_profile_screen.dart';
+import 'update_profile_screen.dart';
 import '../utils/kyc_unlock_mixin.dart';
 
 class WithdrawScreen extends StatefulWidget {
@@ -269,7 +270,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> with KYCUnlockMixin {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => const UserProfileScreen(),
+                    builder: (context) => const UpdateProfileScreen(),
                   ),
                 );
               },
@@ -306,7 +307,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> with KYCUnlockMixin {
             ElevatedButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const UserProfileScreen()));
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const UpdateProfileScreen()));
               },
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
               child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),

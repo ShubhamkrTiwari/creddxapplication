@@ -1299,6 +1299,26 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           return;
         }
         
+        // Check if profile is complete before allowing KYC
+        if (!isCompleted && !_userService.isProfileComplete()) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Please complete your profile details first'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 3),
+            ),
+          );
+          Navigator.push(
+            context, 
+            MaterialPageRoute(builder: (context) => const UpdateProfileScreen())
+          ).then((_) {
+            if (mounted) {
+              _loadUserData();
+            }
+          });
+          return;
+        }
+        
         // If KYC not completed, open website KYC page
         if (!isCompleted) {
           try {
@@ -1469,6 +1489,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
+                      !_userService.isProfileComplete() && !isCompleted ? 'Complete Profile' :
                       _userService.kycStatus == 'Not Started' ? 'Complete KYC' : 
                       isNameMismatchRejection ? 'Update Profile' :
                       _userService.kycStatus == 'Rejected' ? 'Retry KYC' : 'Complete KYC',

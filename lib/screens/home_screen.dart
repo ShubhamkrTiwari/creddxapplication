@@ -32,6 +32,8 @@ import '../services/auto_refresh_service.dart';
 import '../services/balance_sync_service.dart';
 import '../utils/coin_icon_mapper.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
+import '../widgets/no_internet_widget.dart';
+import '../widgets/optimized_crypto_list.dart';
 
 // Custom Crypto-themed Refresh Indicator
 class CryptoRefreshIndicator extends StatefulWidget {
@@ -798,14 +800,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _fetchWalletBalance() async {
     try {
-      debugPrint('💰 Home Screen: Starting comprehensive balance fetch...');
+      debugPrint('💰 Home Screen: Starting optimized balance fetch...');
       debugPrint('💰 Current balances before fetch - Total: $_totalBalance, Available: $_availableBalance');
       
       // Initialize both balances
       double newTotalBalance = 0.0;
       double newAvailableBalance = 0.0;
       
-      // Method 1: Try getAllWalletBalances API
+      // Method 1: Try getAllWalletBalances API directly
       debugPrint('💰 Method 1: Fetching from all-wallet-balance API...');
       final result = await WalletService.getAllWalletBalances();
       debugPrint('💰 API Response: $result');
@@ -813,33 +815,43 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (result['success'] == true && result['data'] != null) {
         debugPrint('💰 API success, extracting balance data...');
         
-        // Method 1a: Try getTotalUSDTBalance for total balance
-        try {
-          final totalBalance = await WalletService.getTotalUSDTBalance();
-          debugPrint('💰 Method 1a - Total USDT Balance: $totalBalance');
-          newTotalBalance = totalBalance;
-        } catch (e) {
-          debugPrint('💰❌ Method 1a failed: $e');
-        }
+        // Execute balance fetching in parallel for better performance
+        final futures = <Future<double>>[];
         
-        // Method 1b: Try getTotalAvailableUSDTBalance for available balance
-        try {
-          final availableBalance = await WalletService.getTotalAvailableUSDTBalance();
-          debugPrint('💰 Method 1b - Available USDT Balance: $availableBalance');
-          newAvailableBalance = availableBalance;
-        } catch (e) {
-          debugPrint('💰❌ Method 1b failed: $e');
-        }
+        // Add total balance fetch
+        futures.add(
+          WalletService.getTotalUSDTBalance().catchError((e) {
+            debugPrint('💰❌ Total balance fetch failed: $e');
+            return 0.0;
+          })
+        );
         
-        // Method 1c: Manual extraction from API data
-        try {
-          final extractedBalances = _extractBothBalancesFromData(result['data']);
-          debugPrint('💰 Method 1c - Manual extraction - Total: ${extractedBalances['total']}, Available: ${extractedBalances['available']}');
-          
-          if (newTotalBalance == 0.0) newTotalBalance = extractedBalances['total'] ?? 0.0;
-          if (newAvailableBalance == 0.0) newAvailableBalance = extractedBalances['available'] ?? 0.0;
-        } catch (e) {
-          debugPrint('💰❌ Method 1c failed: $e');
+        // Add available balance fetch
+        futures.add(
+          WalletService.getTotalAvailableUSDTBalance().catchError((e) {
+            debugPrint('💰❌ Available balance fetch failed: $e');
+            return 0.0;
+          })
+        );
+        
+        // Wait for all parallel requests
+        final results = await Future.wait(futures);
+        newTotalBalance = results[0];
+        newAvailableBalance = results[1];
+        
+        debugPrint('💰 Parallel fetch - Total: $newTotalBalance, Available: $newAvailableBalance');
+        
+        // Method 1c: Manual extraction from API data as fallback
+        if (newTotalBalance == 0.0 || newAvailableBalance == 0.0) {
+          try {
+            final extractedBalances = _extractBothBalancesFromData(result['data']);
+            debugPrint('💰 Method 1c - Manual extraction - Total: ${extractedBalances['total']}, Available: ${extractedBalances['available']}');
+            
+            if (newTotalBalance == 0.0) newTotalBalance = extractedBalances['total'] ?? 0.0;
+            if (newAvailableBalance == 0.0) newAvailableBalance = extractedBalances['available'] ?? 0.0;
+          } catch (e) {
+            debugPrint('💰❌ Method 1c failed: $e');
+          }
         }
       } else {
         debugPrint('💰❌ API returned error: ${result['error']}');
@@ -1031,11 +1043,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (_isFetchingMarketData) return; // Prevent concurrent fetches
     _isFetchingMarketData = true;
     try {
-      // Fetch market cap data from CoinGecko
-      final marketCaps = await BinanceService.getMarketCapData();
+      // Fetch market cap data directly
+      final marketCapsFuture = BinanceService.getMarketCapData();
       
-      // Fetch top trading pairs from Binance
-      final topPairs = await BinanceService.getTopTradingPairs(limit: 50);
+      // Fetch top trading pairs directly (reduced limit for performance)
+      final topPairsFuture = BinanceService.getTopTradingPairs(limit: 20);
+      
+      // Execute in parallel for better performance
+      final results = await Future.wait([marketCapsFuture, topPairsFuture]);
+      final marketCaps = results[0] as Map<String, double>;
+      final topPairs = results[1] as List<Map<String, dynamic>>;
       
       if (mounted) {
         setState(() {
@@ -1317,32 +1334,35 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0D0D0D),
-      body: Column(
-        children: [
-            // Fixed top section - doesn't scroll
-            _buildHeader(),
-            _buildBalanceCard(),
-            _buildActionGrid(),
-            _buildPromoBanner(),
-            // Scrollable section - coin balances + tabs + crypto list
-            Expanded(
-              child: CryptoRefreshIndicator(
-                onRefresh: _fetchInitialData,
-                child: SingleChildScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildTabSection(),
-                      _buildCryptoList(),
-                      // Add bottom padding to account for bottom navigation (3 dot navbar)
-                      SizedBox(height: MediaQuery.of(context).padding.bottom + 80),
-                    ],
+      body: NetworkAwareWidget(
+        onRetry: _fetchInitialData,
+        child: Column(
+          children: [
+              // Fixed top section - doesn't scroll
+              _buildHeader(),
+              _buildBalanceCard(),
+              _buildActionGrid(),
+              _buildPromoBanner(),
+              // Scrollable section - coin balances + tabs + crypto list
+              Expanded(
+                child: CryptoRefreshIndicator(
+                  onRefresh: _fetchInitialData,
+                  child: SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildTabSection(),
+                        _buildCryptoList(),
+                        // Add bottom padding to account for bottom navigation (3 dot navbar)
+                        SizedBox(height: MediaQuery.of(context).padding.bottom + 80),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       );
   }
@@ -2307,87 +2327,46 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return marketCaps[symbol] ?? 0.0;
   }
   
-  // Build regular crypto list from API data
+  // Build optimized crypto list with pagination and caching
   Widget _buildCryptoDataList(List<Map<String, dynamic>> cryptoData) {
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      itemCount: cryptoData.length,
-      itemBuilder: (context, index) {
-        final crypto = cryptoData[index];
-        final cryptoName = crypto['name']?.toString() ?? 'Unknown';
-        final cryptoSymbol = crypto['symbol']?.toString() ?? '???';
-        final baseSymbol = cryptoSymbol.replaceAll('USDT', '');
-        final price = double.tryParse(crypto['price']?.toString() ?? '0.0') ?? 0.0;
-        final change = double.tryParse(crypto['change']?.toString() ?? '0.0') ?? 0.0;
-        final marketCap = double.tryParse(crypto['marketCap']?.toString() ?? '0.0') ?? 0.0;
-        final isPositive = change >= 0;
-        
-        return Container(
-          margin: const EdgeInsets.only(bottom: 20), 
-          child: Row(
-            children: [
-              CoinIconMapper.getCoinIcon(
-                baseSymbol,
-                size: 48,
-              ),
-              const SizedBox(width: 16), 
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      cryptoSymbol.replaceAll('USDT', ''),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 18, 
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'MCap: ${_formatVolume(marketCap)}',
-                      style: const TextStyle(
-                        color: Color(0xFF8E8E93),
-                        fontSize: 14, 
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '\$${_formatPrice(price)}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16, 
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: isPositive ? const Color(0xFF00C087).withOpacity(0.1) : const Color(0xFFFF3B30).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      '${isPositive ? '+' : ''}${change.toStringAsFixed(2)}%',
-                      style: TextStyle(
-                        color: isPositive ? const Color(0xFF00C087) : const Color(0xFFFF3B30),
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
+    // Use optimized crypto list with pagination and caching
+    return OptimizedCryptoList(
+      fetchData: (page, limit) async {
+        try {
+          // Fetch data directly
+          final result = await BinanceService.getTopTradingPairs(limit: limit);
+          
+          final marketCaps = await BinanceService.getMarketCapData();
+          
+          final processedData = result.map((item) {
+            final symbol = item['symbol']?.toString() ?? '';
+            final baseSymbol = symbol.replaceAll('USDT', '');
+            final marketCap = marketCaps[baseSymbol] ?? 0.0;
+            
+            return {
+              'name': _getCoinName(symbol),
+              'symbol': symbol,
+              'price': item['price'],
+              'change': item['priceChangePercent'],
+              'volume': item['quoteVolume'],
+              'marketCap': marketCap,
+            };
+          }).toList();
+          
+          return {
+            'success': true,
+            'data': processedData,
+          };
+        } catch (e) {
+          return {
+            'success': false,
+            'error': e.toString(),
+            'data': [],
+          };
+        }
+      },
+      onItemTap: () {
+        // Handle item tap if needed
       },
     );
   }

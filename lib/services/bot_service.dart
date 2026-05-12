@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'auth_service.dart';
 
 class SubscriptionPlan {
@@ -73,17 +74,39 @@ class BotPosition {
 }
 
 class BotService {
-  static const String baseUrl = 'https://api11.hathmetech.com/api';
+  static const String baseUrl = 'http://65.0.196.122:8085'; // Testing server
+  static const String botWalletBaseUrl = 'http://65.0.196.122:8085'; // Testing server
   
   // Static cache for total investment (for demo purposes)
   static double _cachedTotalInvestment = 0.0; // Start with 0.0
   
   static Future<Map<String, String>> _getHeaders() async {
-    final token = await AuthService.getToken();
+    // Testing mode: Fallback to mock values if real ones are missing
+    String? token = await AuthService.getToken();
+    final prefs = await SharedPreferences.getInstance();
+    String? userId = prefs.getString('user_id');
+    
+    // Hardcoded test values if actual ones are not available
+    if (token == null || token.isEmpty) {
+      token = 'mock_testing_token_123';
+      debugPrint('AUTH TESTING: Using mock token');
+    }
+    
+    if (userId == null || userId.isEmpty) {
+      userId = '1'; // Default test user ID used across the project
+      debugPrint('AUTH TESTING: Using mock userId "1"');
+    }
+    
+    debugPrint('--- HEADERS (TESTING MODE) ---');
+    debugPrint('UserId: $userId');
+    
     return {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
-      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      'Authorization': 'Bearer $token',
+      'userId': userId,
+      'user_id': userId,
+      'X-User-Id': userId,
     };
   }
 
@@ -112,7 +135,6 @@ class BotService {
       );
 
       debugPrint('Weekly Benchmark API Response Status: ${response.statusCode}');
-      debugPrint('Weekly Benchmark API Response Body: ${response.body}');
 
       if (response.statusCode == 200) {
         final decoded = json.decode(response.body);
@@ -249,7 +271,6 @@ class BotService {
       
       debugPrint('Using endpoint: /bot/v1/bingxTrade/user-positions');
       debugPrint('API Response Status: ${response.statusCode}');
-      debugPrint('API Response Body: ${response.body}');
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -322,7 +343,6 @@ class BotService {
       );
       
       debugPrint('Bot History API Response Status: ${response.statusCode}');
-      debugPrint('Bot History API Response Body: ${response.body}');
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -361,7 +381,6 @@ class BotService {
       );
       
       debugPrint('Trade Details API Response Status: ${response.statusCode}');
-      debugPrint('Trade Details API Response Body: ${response.body}');
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -444,7 +463,6 @@ class BotService {
       );
       
       debugPrint('User Bot Trades API Response Status: ${response.statusCode}');
-      debugPrint('User Bot Trades API Response Body: ${response.body}');
       
       // Log first trade's time if available
       if (response.statusCode == 200) {
@@ -542,7 +560,6 @@ class BotService {
       );
       
       debugPrint('User Transactions API Response Status: ${response.statusCode}');
-      debugPrint('User Transactions API Response Body: ${response.body}');
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -834,7 +851,6 @@ class BotService {
       );
       
       debugPrint('Subscription API Response Status: ${response.statusCode}');
-      debugPrint('Subscription API Response Body: ${response.body}');
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -943,7 +959,6 @@ class BotService {
       );
       
       debugPrint('Subscription History API Response Status: ${response.statusCode}');
-      debugPrint('Subscription History API Response Body: ${response.body}');
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -1050,7 +1065,6 @@ class BotService {
       );
       
       debugPrint('Bot Investment History API Response Status: ${response.statusCode}');
-      debugPrint('Bot Investment History API Response Body: ${response.body}');
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -1197,7 +1211,6 @@ class BotService {
       );
       
       debugPrint('Invest API Response Status: ${response.statusCode}');
-      debugPrint('Invest API Response Body: ${response.body}');
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -1328,7 +1341,6 @@ class BotService {
 
       debugPrint('Income API URL: $baseUrl/bot/v1/api/user/income');
       debugPrint('Income API Response Status: ${response.statusCode}');
-      debugPrint('Income API Response Body: ${response.body}');
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -1370,7 +1382,6 @@ class BotService {
 
       debugPrint('Subscription API URL: $baseUrl/bot/v1/api/users/user');
       debugPrint('Subscription API Response Status: ${response.statusCode}');
-      debugPrint('Subscription API Response Body: ${response.body}');
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -1463,7 +1474,6 @@ class BotService {
       
       debugPrint('User Data API URL: $baseUrl/bot/v1/api/users/user');
       debugPrint('User Data API Response Status: ${response.statusCode}');
-      debugPrint('User Data API Response Body: ${response.body}');
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -1531,7 +1541,6 @@ class BotService {
       );
 
       debugPrint('Max Withdraw API Response Status: ${response.statusCode}');
-      debugPrint('Max Withdraw API Response Body: ${response.body}');
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -1603,7 +1612,6 @@ class BotService {
       );
 
       debugPrint('Balance History API Response Status: ${response.statusCode}');
-      debugPrint('Balance History API Response Body: ${response.body}');
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -1655,7 +1663,6 @@ class BotService {
       );
 
       debugPrint('User Balance History API Response Status: ${response.statusCode}');
-      debugPrint('User Balance History API Response Body: ${response.body}');
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -1672,15 +1679,6 @@ class BotService {
             'error': data['message'] ?? 'Failed to fetch user balance history',
           };
         }
-      } else if (response.statusCode == 404) {
-        // Return mock data for demo
-        return {
-          'success': true,
-          'data': {
-            'investedAmount': 0.0,
-            'balance': 0.0,
-          },
-        };
       } else {
         return {
           'success': false,
@@ -1690,11 +1688,8 @@ class BotService {
     } catch (e) {
       debugPrint('Error fetching user balance history: $e');
       return {
-        'success': true,
-        'data': {
-          'investedAmount': 0.0,
-          'balance': 0.0,
-        },
+        'success': false,
+        'error': 'Network error: $e',
       };
     }
   }
@@ -1764,7 +1759,6 @@ class BotService {
 
       debugPrint('Admin Bot User Data API URL: $baseUrl/bot/admin/bot/user-data');
       debugPrint('Admin Bot User Data API Response Status: ${response.statusCode}');
-      debugPrint('Admin Bot User Data API Response Body: ${response.body}');
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -1816,7 +1810,6 @@ class BotService {
       
       debugPrint('Strategy Performance API URL: $baseUrl/bot/v1/api/strategy/performance');
       debugPrint('Strategy Performance API Response Status: ${response.statusCode}');
-      debugPrint('Strategy Performance API Response Body: ${response.body}');
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -1914,7 +1907,6 @@ class BotService {
 
       debugPrint('Strategy Performance API URL: $baseUrl/bot/v1/api/strategy/performance');
       debugPrint('Strategy Performance API Response Status: ${response.statusCode}');
-      debugPrint('Strategy Performance API Response Body: ${response.body}');
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -1966,17 +1958,302 @@ class BotService {
     }
   }
 
+  // Get bot deposit networks
+  static Future<Map<String, dynamic>> getBotDepositNetworks() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/deposit/networks'),
+        headers: await _getHeaders(),
+      );
+
+      debugPrint('Bot Deposit Networks API URL: $botWalletBaseUrl/bot/v1/botwallet/deposit/networks');
+      debugPrint('Bot Deposit Networks API Response Status: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final success = data['success'];
+        final isSuccess = success == true || success == 'true';
+
+        if (isSuccess) {
+          return {
+            'success': true,
+            'data': data['data'] ?? data,
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to fetch deposit networks',
+          };
+        }
+      } else {
+        return {
+          'success': false,
+          'error': 'Failed to fetch deposit networks: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching bot deposit networks: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  // Get bot withdraw networks
+  static Future<Map<String, dynamic>> getBotWithdrawNetworks() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/withdraw/networks'),
+        headers: await _getHeaders(),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return {
+          'success': true,
+          'data': data,
+        };
+      } else {
+        return {
+          'success': false,
+          'error': 'Failed to fetch withdraw networks: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching bot withdraw networks: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  // Process bot deposit
+  static Future<Map<String, dynamic>> botDeposit({
+    required String coinId,
+    required String networkId,
+    required double amount,
+  }) async {
+    try {
+      final requestBody = {
+        'coinId': coinId,
+        'networkId': networkId,
+        'amount': amount,
+      };
+      
+      debugPrint('=== BOT DEPOSIT REQUEST ===');
+      debugPrint('URL: $botWalletBaseUrl/bot/v1/botwallet/deposit');
+      debugPrint('Request Body: ${json.encode(requestBody)}');
+      
+      final response = await http.post(
+        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/deposit'),
+        headers: await _getHeaders(),
+        body: json.encode(requestBody),
+      );
+      
+      debugPrint('Bot Deposit API Response Status: ${response.statusCode}');
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final success = data['success'];
+        final isSuccess = success == true || success == 'true';
+
+        if (isSuccess) {
+          return {
+            'success': true,
+            'data': data['data'] ?? data,
+            'message': data['message'] ?? 'Deposit successful',
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Deposit failed',
+          };
+        }
+      } else {
+        String errorMessage = 'Deposit failed (Status: ${response.statusCode})';
+        try {
+          final errorData = json.decode(response.body);
+          errorMessage = errorData['message'] ?? errorMessage;
+        } catch (_) {
+          // If response body is not valid JSON, use status code
+        }
+        return {
+          'success': false,
+          'error': errorMessage,
+        };
+      }
+    } catch (e) {
+      debugPrint('Error processing bot deposit: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  // Generate bot deposit address
+  static Future<Map<String, dynamic>> getBotDepositAddress({
+    required String coinId,
+    required String networkId,
+  }) async {
+    try {
+      final headers = await _getHeaders();
+      debugPrint('=== BOT DEPOSIT ADDRESS REQUEST ===');
+      final url = '$botWalletBaseUrl/bot/v1/botwallet/deposit/address?coinId=$coinId&networkId=$networkId';
+      debugPrint('URL: $url');
+      debugPrint('Request Method: GET');
+      debugPrint('Headers: $headers');
+      
+      final response = await http.get(
+        Uri.parse(url),
+        headers: headers,
+      );
+      
+      debugPrint('Bot Deposit Address API Response Status: ${response.statusCode}');
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final success = data['success'];
+        final isSuccess = success == true || success == 'true';
+
+        if (isSuccess) {
+          return {
+            'success': true,
+            'data': data['data'] ?? data,
+            'message': data['message'] ?? 'Deposit address generated successfully',
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to generate deposit address',
+          };
+        }
+      } else {
+        String errorMessage = 'Failed to generate deposit address (Status: ${response.statusCode})';
+        try {
+          final errorData = json.decode(response.body);
+          errorMessage = errorData['message'] ?? errorMessage;
+        } catch (_) {
+          // If response body is not valid JSON, use status code
+        }
+        return {
+          'success': false,
+          'error': errorMessage,
+        };
+      }
+    } catch (e) {
+      debugPrint('Error generating bot deposit address: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  // Send OTP for bot actions
+  static Future<Map<String, dynamic>> sendBotOTP({required String purpose}) async {
+    try {
+      final requestBody = {'purpose': purpose};
+      final response = await http.post(
+        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/withdraw/send-otp'),
+        headers: await _getHeaders(),
+        body: json.encode(requestBody),
+      );
+      
+      debugPrint('=== BOT WITHDRAW OTP REQUEST ===');
+      debugPrint('URL: $botWalletBaseUrl/bot/v1/botwallet/withdraw/send-otp');
+      debugPrint('Request Body: ${json.encode(requestBody)}');
+      debugPrint('Response Status: ${response.statusCode}');
+      debugPrint('Response Body: ${response.body}');
+      
+      if (response.statusCode == 200) {
+        return json.decode(response.body);
+      } else {
+        return {'success': false, 'error': 'Failed to send OTP'};
+      }
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
+  // Process bot withdraw
+  static Future<Map<String, dynamic>> botWithdraw({
+    required String networkId,
+    required double amount,
+    required String address,
+    required String otp,
+  }) async {
+    try {
+      final requestBody = {
+        'networkId': networkId,
+        'amount': amount,
+        'toAddress': address,
+        'otp': otp,
+      };
+      
+      debugPrint('=== BOT WITHDRAW REQUEST ===');
+      debugPrint('URL: $botWalletBaseUrl/bot/v1/botwallet/withdraw');
+      debugPrint('Request Body: ${json.encode(requestBody)}');
+      
+      final response = await http.post(
+        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/withdraw'),
+        headers: await _getHeaders(),
+        body: json.encode(requestBody),
+      );
+      
+      debugPrint('Bot Withdraw API Response Status: ${response.statusCode}');
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final success = data['success'];
+        final isSuccess = success == true || success == 'true';
+
+        if (isSuccess) {
+          return {
+            'success': true,
+            'data': data['data'] ?? data,
+            'message': data['message'] ?? 'Withdrawal successful',
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Withdrawal failed',
+          };
+        }
+      } else {
+        String errorMessage = 'Withdrawal failed (Status: ${response.statusCode})';
+        try {
+          final errorData = json.decode(response.body);
+          errorMessage = errorData['message'] ?? errorMessage;
+        } catch (_) {
+          // If response body is not valid JSON, use status code
+        }
+        return {
+          'success': false,
+          'error': errorMessage,
+        };
+      }
+    } catch (e) {
+      debugPrint('Error processing bot withdraw: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
   // Get bot wallet balance
   static Future<Map<String, dynamic>> getBotBalance() async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/api/botwallet/balance'),
+        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/balance'),
         headers: await _getHeaders(),
       );
 
-      debugPrint('Bot Balance API URL: $baseUrl/bot/v1/api/botwallet/balance');
+      debugPrint('Bot Balance API URL: $botWalletBaseUrl/bot/v1/botwallet/balance');
       debugPrint('Bot Balance API Response Status: ${response.statusCode}');
-      debugPrint('Bot Balance API Response Body: ${response.body}');
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -2041,18 +2318,6 @@ class BotService {
             'error': data['message'] ?? 'Failed to fetch bot balance',
           };
         }
-      } else if (response.statusCode == 404 || response.statusCode == 500) {
-        // Endpoint doesn't exist or server error - return mock data for demo
-        debugPrint('Bot balance endpoint not available, returning mock data');
-        return {
-          'success': true,
-          'data': {
-            'totalBalance': '0.0',
-            'availableBalance': '0.0',
-            'investedBalance': '0.0',
-            'currency': 'USDT',
-          },
-        };
       } else {
         return {
           'success': false,
@@ -2061,15 +2326,9 @@ class BotService {
       }
     } catch (e) {
       debugPrint('Error fetching bot balance: $e');
-      // Return mock data on network error
       return {
-        'success': true,
-        'data': {
-          'totalBalance': '0.0',
-          'availableBalance': '0.0',
-          'investedBalance': '0.0',
-          'currency': 'USDT',
-        },
+        'success': false,
+        'error': 'Network error: $e',
       };
     }
   }
@@ -2092,7 +2351,6 @@ class BotService {
       );
       
       debugPrint('Withdraw API Response Status: ${response.statusCode}');
-      debugPrint('Withdraw API Response Body: ${response.body}');
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -2193,7 +2451,6 @@ class BotService {
 
       debugPrint('Max Withdraw API URL: $baseUrl/bot/v1/api/investments/withdraw-max?strategy=$strategy');
       debugPrint('Max Withdraw API Response Status: ${response.statusCode}');
-      debugPrint('Max Withdraw API Response Body: ${response.body}');
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -2222,6 +2479,75 @@ class BotService {
       }
     } catch (e) {
       debugPrint('Error fetching max withdraw amount: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  /// Get bot wallet transaction history
+  static Future<Map<String, dynamic>> getBotWalletHistory({
+    dynamic type, // Can be int or BotTransactionType
+    int? page,
+    int? limit,
+  }) async {
+    try {
+      int? typeValue;
+      if (type is BotTransactionType) {
+        typeValue = type.value;
+      } else if (type is int) {
+        typeValue = type;
+      }
+
+      final queryParams = <String, String>{
+        if (typeValue != null) 'type': typeValue.toString(),
+        if (page != null) 'page': page.toString(),
+        if (limit != null) 'limit': limit.toString(),
+      };
+
+      final uri = Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/history')
+          .replace(queryParameters: queryParams);
+
+      debugPrint('Fetching bot wallet history from: $uri');
+      final response = await http.get(
+        uri,
+        headers: await _getHeaders(),
+      );
+
+      debugPrint('Bot Wallet History API Response Status: ${response.statusCode}');
+      debugPrint('Bot Wallet History API Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          // Use 'data' as primary source based on the provided JSON structure
+          final List<dynamic> historyJson = data['data'] ?? data['history'] ?? data['transactions'] ?? [];
+          debugPrint('Bot Wallet History Items Count: ${historyJson.length}');
+          final history = historyJson
+              .map((json) => BotWalletTransaction.fromJson(json as Map<String, dynamic>))
+              .toList();
+
+          return {
+            'success': true,
+            'history': history,
+            'data': data,
+            'pagination': data['pagination'],
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to fetch wallet history',
+          };
+        }
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching bot wallet history: $e');
       return {
         'success': false,
         'error': 'Network error: $e',
@@ -2587,4 +2913,107 @@ class BotTrade {
   String get formattedTotalPnl => '${totalPnl.toStringAsFixed(5)} PnL';
   String get formattedUserPnl => '${userPnl.toStringAsFixed(5)} PnL';
   bool get isProfit => userPnl >= 0;
+}
+
+enum BotTransactionType {
+  deposit(1),
+  withdraw(2);
+
+  final int value;
+  const BotTransactionType(this.value);
+}
+
+class BotWalletTransaction {
+  final String? id;
+  final double amount;
+  final String coin;
+  final String status;
+  final String network;
+  final String address;
+  final DateTime date;
+  final BotTransactionType type;
+  final String? transactionHash;
+  final String? fee;
+
+  BotWalletTransaction({
+    this.id,
+    required this.amount,
+    required this.coin,
+    required this.status,
+    required this.network,
+    required this.address,
+    required this.date,
+    required this.type,
+    this.transactionHash,
+    this.fee,
+  });
+
+  factory BotWalletTransaction.fromJson(Map<String, dynamic> json) {
+    // Helper to extract nested data based on the provided JSON structure
+    final coinData = json['coin'] as Map<String, dynamic>?;
+    final networkData = json['network'] as Map<String, dynamic>?;
+    
+    // Status mapping based on typical numeric statuses (5 usually means completed/success in some systems)
+    String statusText;
+    final statusVal = json['status'];
+    if (statusVal == 5 || statusVal == 'completed' || statusVal == 'success') {
+      statusText = 'completed';
+    } else if (statusVal == 1 || statusVal == 'pending') {
+      statusText = 'pending';
+    } else if (statusVal == 2 || statusVal == 'failed') {
+      statusText = 'failed';
+    } else {
+      statusText = statusVal?.toString() ?? 'unknown';
+    }
+
+    return BotWalletTransaction(
+      id: json['_id']?.toString() ?? json['id']?.toString(),
+      amount: (json['amount'] as num?)?.toDouble() ?? 0.0,
+      coin: coinData?['symbol'] ?? json['coin'] ?? json['symbol'] ?? 'USDT',
+      status: statusText,
+      network: networkData?['name'] ?? json['network']?.toString() ?? 'Unknown',
+      address: json['address'] ?? '',
+      date: json['createdAt'] != null 
+          ? DateTime.parse(json['createdAt']).toLocal() 
+          : json['date'] != null 
+              ? DateTime.parse(json['date']).toLocal() 
+              : DateTime.now(),
+      type: json['type'] == 1 || json['type'] == 'deposit' 
+          ? BotTransactionType.deposit 
+          : BotTransactionType.withdraw,
+      transactionHash: json['transactionHash'],
+      fee: json['fee']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'amount': amount,
+      'coin': coin,
+      'status': status,
+      'network': network,
+      'address': address,
+      'date': date.toIso8601String(),
+      'type': type.value,
+      'transactionHash': transactionHash,
+      'fee': fee,
+    };
+  }
+
+  String get formattedDate {
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    final year = date.year;
+    
+    // Convert to 12-hour format with AM/PM
+    int hour = date.hour;
+    final period = hour >= 12 ? 'PM' : 'AM';
+    hour = hour % 12;
+    if (hour == 0) hour = 12;
+    final hourStr = hour.toString().padLeft(2, '0');
+    
+    final minute = date.minute.toString().padLeft(2, '0');
+    return '$day/$month/$year $hourStr:$minute $period';
+  }
 }

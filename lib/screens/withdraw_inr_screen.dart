@@ -9,6 +9,7 @@ import '../services/socket_service.dart';
 import '../services/user_service.dart';
 import '../utils/kyc_unlock_mixin.dart';
 import 'user_profile_screen.dart';
+import 'update_profile_screen.dart';
 import 'add_inr_bank_screen.dart';
 
 class WithdrawINRScreen extends StatefulWidget {
@@ -83,7 +84,7 @@ class _WithdrawINRScreenState extends State<WithdrawINRScreen> with KYCUnlockMix
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => const UserProfileScreen(),
+                            builder: (context) => const UpdateProfileScreen(),
                           ),
                         );
               },
@@ -120,7 +121,7 @@ class _WithdrawINRScreenState extends State<WithdrawINRScreen> with KYCUnlockMix
             ElevatedButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const UserProfileScreen()));
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const UpdateProfileScreen()));
               },
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
               child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),

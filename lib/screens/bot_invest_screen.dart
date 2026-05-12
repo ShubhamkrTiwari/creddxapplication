@@ -4,6 +4,7 @@ import '../services/socket_service.dart';
 import '../services/user_service.dart';
 import '../services/unified_wallet_service.dart';
 import 'user_profile_screen.dart';
+import 'update_profile_screen.dart';
 import 'dart:async';
 
 class BotInvestScreen extends StatefulWidget {
@@ -146,7 +147,7 @@ class _BotInvestScreenState extends State<BotInvestScreen> {
             ElevatedButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const UserProfileScreen()));
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const UpdateProfileScreen()));
               },
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
               child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),

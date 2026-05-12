@@ -7,6 +7,7 @@ import 'subscription_screen.dart';
 import '../main_navigation.dart';
 import '../services/user_service.dart';
 import 'user_profile_screen.dart';
+import 'update_profile_screen.dart';
 
 class BotMainScreen extends StatefulWidget {
   const BotMainScreen({super.key});
@@ -63,7 +64,7 @@ class _BotMainScreenState extends State<BotMainScreen> {
             ElevatedButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const UserProfileScreen()));
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const UpdateProfileScreen()));
               },
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
               child: const Text('Complete Profile', style: TextStyle(color: Colors.black)),

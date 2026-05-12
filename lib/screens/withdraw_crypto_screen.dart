@@ -13,7 +13,7 @@ import '../services/notification_service.dart';
 import '../utils/kyc_unlock_mixin.dart';
 import '../widgets/bitcoin_loading_indicator.dart';
 import '../utils/coin_icon_mapper.dart';
-import 'user_profile_screen.dart';
+import 'update_profile_screen.dart';
 
 class WithdrawCryptoScreen extends StatefulWidget {
   const WithdrawCryptoScreen({super.key});
@@ -97,7 +97,7 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen>
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => const UserProfileScreen(),
+                    builder: (context) => const UpdateProfileScreen(),
                   ),
                 );
               },
@@ -142,7 +142,7 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen>
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => const UserProfileScreen(),
+                    builder: (context) => const UpdateProfileScreen(),
                   ),
                 );
               },
@@ -872,27 +872,19 @@ class _WithdrawCryptoScreenState extends State<WithdrawCryptoScreen>
                       width: double.infinity,
                       height: 48,
                       child: ElevatedButton(
-                        onPressed: () async {
-                          final url = Uri.parse('https://creddx.com/profile/kyc');
-                          if (await canLaunchUrl(url)) {
-                            await launchUrl(url, mode: LaunchMode.externalApplication);
-                            // Refresh status after user returns
-                            await Future.delayed(const Duration(seconds: 2));
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const UpdateProfileScreen(),
+                            ),
+                          ).then((_) {
                             if (mounted) {
                               // Refresh user data to get updated KYC status
-                              await _userService.fetchProfileDataFromAPI();
+                              _userService.fetchProfileDataFromAPI();
                               setState(() {});
                             }
-                          } else {
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Could not open KYC page. Please try again.'),
-                                  backgroundColor: Colors.red,
-                                ),
-                              );
-                            }
-                          }
+                          });
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.orange,

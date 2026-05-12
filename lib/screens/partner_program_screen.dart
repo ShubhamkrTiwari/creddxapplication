@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/user_service.dart';
+import '../services/pagination_service.dart';
 
 class AffiliateProgramScreen extends StatefulWidget {
   const AffiliateProgramScreen({super.key});
@@ -13,6 +14,10 @@ class _AffiliateProgramScreenState extends State<AffiliateProgramScreen> {
   bool _isLoading = false;
   Map<String, dynamic>? _levelWiseData;
   Map<String, dynamic>? _detailedLevelData;
+  late PaginationService<Map<String, dynamic>> _userPaginationService = PaginationService<Map<String, dynamic>>(
+    fetchData: (page, limit) async => {'success': true, 'data': []},
+    itemsPerPage: 10,
+  );
 
   @override
   void initState() {
@@ -50,6 +55,13 @@ class _AffiliateProgramScreenState extends State<AffiliateProgramScreen> {
       if (mounted) {
         setState(() {
           _detailedLevelData = result['success'] == true ? result : null;
+          
+          if (_detailedLevelData != null) {
+            final users = _detailedLevelData?['users'] as List? ?? [];
+            _userPaginationService.allItems = users.cast<Map<String, dynamic>>();
+            _userPaginationService.applyFiltersAndSorting();
+          }
+          
           _isLoading = false;
         });
       }
@@ -388,28 +400,66 @@ class _AffiliateProgramScreenState extends State<AffiliateProgramScreen> {
     }
 
     final totalUsers = _detailedLevelData?['totalUsers'] ?? 0;
-    final users = _detailedLevelData?['users'] as List? ?? [];
+    final users = _userPaginationService.currentPageItems;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildDetailedSummaryCard(totalUsers),
-          const SizedBox(height: 16),
-          Text(
-            'Users ($totalUsers)',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
+    return RefreshIndicator(
+      onRefresh: () => _loadDetailedLevelData(_selectedLevel!),
+      color: const Color(0xFF84BD00),
+      backgroundColor: const Color(0xFF1C1C1E),
+      child: CustomScrollView(
+        physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+        slivers: [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildDetailedSummaryCard(totalUsers),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Users ($totalUsers)',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 12),
-          if (users.isEmpty)
-            _buildEmptyState()
+          if (_userPaginationService.allItems.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: _buildEmptyState(),
+            )
           else
-            ...users.map((user) => _buildUserCard(user)).toList(),
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final user = users[index];
+                    return _buildUserCard(user);
+                  },
+                  childCount: users.length,
+                ),
+              ),
+            ),
+          if (_userPaginationService.totalPages > 1)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 20),
+                child: Center(
+                  child: PageNavigationWidget(
+                    paginationService: _userPaginationService,
+                    onPageChanged: () => setState(() {}),
+                  ),
+                ),
+              ),
+            ),
+          const SliverToBoxAdapter(child: SizedBox(height: 20)),
         ],
       ),
     );
