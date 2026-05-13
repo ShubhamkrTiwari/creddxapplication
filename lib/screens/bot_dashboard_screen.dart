@@ -1,19 +1,22 @@
-import 'dart:math' as math;
 import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+
 import '../services/bot_service.dart';
 import '../services/unified_wallet_service.dart';
-import 'bot_trade_detail_screen.dart';
-import 'package_program_screen.dart';
-import 'bot_invest_screen.dart';
+import '../utils/kyc_unlock_mixin.dart';
 import 'bot_algorithm_screen.dart';
-import 'bot_subscription_screen.dart';
-import 'currency_market_screen.dart';
+import 'bot_conversion_screen.dart';
 import 'bot_deposit_screen.dart';
-import 'bot_withdraw_general_screen.dart';
 import 'bot_inr_deposit_screen.dart';
 import 'bot_inr_withdraw_screen.dart';
+import 'bot_invest_screen.dart';
+import 'bot_subscription_screen.dart';
 import 'bot_user_transfer_screen.dart';
+import 'bot_withdraw_general_screen.dart';
+import 'currency_market_screen.dart';
+import 'update_profile_screen.dart';
 
 class BotDashboardScreen extends StatefulWidget {
   const BotDashboardScreen({super.key});
@@ -22,7 +25,7 @@ class BotDashboardScreen extends StatefulWidget {
   State<BotDashboardScreen> createState() => _BotDashboardScreenState();
 }
 
-class _BotDashboardScreenState extends State<BotDashboardScreen> {
+class _BotDashboardScreenState extends State<BotDashboardScreen> with KYCUnlockMixin {
   bool _isLoadingStrategies = true;
   double _availableBalance = 0.0;
   List<Map<String, dynamic>> _strategies = [];
@@ -374,39 +377,74 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
                         );
                       },
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                         decoration: BoxDecoration(
                           color: const Color(0xFF1C1C1E),
-                          borderRadius: BorderRadius.circular(20),
+                          borderRadius: BorderRadius.circular(15),
                           border: Border.all(color: const Color(0xFF84BD00), width: 1),
                         ),
                         child: Row(
                           children: const [
-                            Icon(Icons.show_chart, color: Color(0xFF84BD00), size: 18),
-                            SizedBox(width: 8),
-                            Text('Market', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+                            Icon(Icons.show_chart, color: Color(0xFF84BD00), size: 14),
+                            SizedBox(width: 4),
+                            Text('Market', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
                           ],
                         ),
                       ),
                     ),
+                    const SizedBox(width: 8),
+                    // Conversion Button
+                    GestureDetector(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const BotConversionScreen(),
+                          ),
+                        );
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1C1C1E),
+                          borderRadius: BorderRadius.circular(15),
+                          border: Border.all(color: const Color(0xFF84BD00), width: 1),
+                        ),
+                        child: Row(
+                          children: const [
+                            Icon(Icons.sync_alt, color: Color(0xFF84BD00), size: 14),
+                            SizedBox(width: 4),
+                            Text(
+                              'Conversion',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
                         color: const Color(0xFF1C1C1E),
-                        borderRadius: BorderRadius.circular(20),
+                        borderRadius: BorderRadius.circular(15),
                         border: Border.all(color: const Color(0xFF84BD00), width: 1),
                       ),
                       child: Row(
                         children: [
                           Container(
-                            width: 8,
-                            height: 8,
+                            width: 6,
+                            height: 6,
                             decoration: const BoxDecoration(color: Color(0xFF84BD00), shape: BoxShape.circle),
                           ),
-                          const SizedBox(width: 2),
-                          const Text('LIVE', style: TextStyle(color: Color(0xFF84BD00), fontSize: 8, fontWeight: FontWeight.bold)),
-                          const SizedBox(width: 12),
-                          Text('$_availableBalance USDT', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600)),
+                          const SizedBox(width: 4),
+                          const Text('LIVE', style: TextStyle(color: Color(0xFF84BD00), fontSize: 9, fontWeight: FontWeight.bold)),
+                          const SizedBox(width: 6),
+                          Text('$_availableBalance USDT', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
                         ],
                       ),
                     ),
@@ -422,7 +460,7 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
                       child: ElevatedButton(
                         onPressed: _showDepositOptions,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF84BD00),
+                          backgroundColor: const Color(0xFFA1CD3B),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
                           padding: const EdgeInsets.symmetric(vertical: 8),
                         ),
@@ -925,14 +963,63 @@ class _BotDashboardScreenState extends State<BotDashboardScreen> {
             'icon': Icons.account_balance_wallet,
             'onTap': () {
               Navigator.pop(context);
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const BotInrWithdrawScreen()),
-              );
+              _checkKYCAndNavigateToINRWithdraw();
             },
           },
         ],
       ),
+    );
+  }
+
+  // Check KYC status before navigating to INR withdraw
+  void _checkKYCAndNavigateToINRWithdraw() {
+    if (!isKYCCompleted()) {
+      _showKYCRequiredDialog();
+    } else {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => const BotInrWithdrawScreen()),
+      );
+    }
+  }
+
+  // Show KYC required dialog
+  void _showKYCRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text(
+            'KYC Verification Required',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'You need to complete KYC verification to withdraw INR. Please complete your KYC process first.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Later', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const UpdateProfileScreen(),
+                  ),
+                );
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF84BD00)),
+              child: const Text('Complete KYC', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
     );
   }
 

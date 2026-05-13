@@ -1,9 +1,10 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
-import '../services/wallet_service.dart';
+
+import 'package:flutter/material.dart';
+
 import '../services/bot_service.dart';
 import '../services/unified_wallet_service.dart';
-import '../services/notification_service.dart';
+import 'bot_transfer_otp_screen.dart';
 
 class BotUserTransferScreen extends StatefulWidget {
   const BotUserTransferScreen({super.key});
@@ -83,26 +84,27 @@ class _BotUserTransferScreenState extends State<BotUserTransferScreen> {
       return;
     }
 
+    // Send OTP and navigate to OTP verification screen
     setState(() => _isLoading = true);
 
     try {
-      // NOTE: Using WalletService.internalTransfer which might use main wallet.
-      // If the backend supports bot-to-user transfer, we would use a different API.
-      // Assuming for now it uses the standard internal transfer.
-      final result = await WalletService.internalTransfer(
-        receiverUid: userId,
-        amount: amount,
-      );
+      final result = await BotService.sendBotWalletOtp(purpose: 'internal-transfer');
 
       if (!mounted) return;
 
       if (result['success'] == true) {
-        _userIdController.clear();
-        _amountController.clear();
-        _showSuccess('Transfer Successful');
-        _fetchBalance();
+        // Navigate to OTP verification screen
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => BotTransferOtpScreen(
+              receiverUid: userId,
+              amount: amount,
+            ),
+          ),
+        );
       } else {
-        _showError(result['error'] ?? 'Transfer failed');
+        _showError(result['error'] ?? 'Failed to send OTP');
       }
     } catch (e) {
       if (mounted) _showError('Error: $e');

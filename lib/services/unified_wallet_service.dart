@@ -1,13 +1,14 @@
-import 'dart:convert';
 import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'auth_service.dart';
+import 'socket_service.dart';
 import 'spot_service.dart';
 import 'spot_socket_service.dart';
-import 'socket_service.dart';
-import '../constants/api_config.dart';
 
 /// Unified Wallet Balance Model
 class WalletBalance {
@@ -1402,6 +1403,8 @@ class UnifiedWalletService {
       debugPrint('UnifiedWalletService: Error saving cached data: $e');
     }
   }
+
+  static void refreshWalletBalance() {}
 }
 
 class ApiConfig {

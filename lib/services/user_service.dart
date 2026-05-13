@@ -1,13 +1,15 @@
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:image_picker/image_picker.dart';
-import 'dart:convert';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'kyc_service.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'auth_service.dart';
+import 'kyc_service.dart';
 import 'network_error_handler.dart';
 
 class UserService {
@@ -485,7 +487,7 @@ class UserService {
       if (token != null) {
         final response = await http
             .get(
-              Uri.parse('http://65.0.196.122:8085/api/user/v1/auth/me'),
+              Uri.parse('http://65.0.196.122:8085/user/v1/auth/me'),
               headers: {
                 'Content-Type': 'application/json',
                 'Authorization': 'Bearer $token',
@@ -782,7 +784,7 @@ class UserService {
         final response = await http
             .get(
               Uri.parse(
-                'http://65.0.196.122:8085/api/user/v1/auth/loginactivity/$_userId',
+                'http://65.0.196.122:8085/user/v1/auth/loginactivity/$_userId',
               ),
               headers: {
                 'Content-Type': 'application/json',
@@ -1756,7 +1758,7 @@ class UserService {
       final response = await http
           .post(
             Uri.parse(
-              'http://65.0.196.122:8085/api/user/v1/kyc/status',
+              'http://65.0.196.122:8085/user/v1/kyc/status',
             ),
             headers: {
               'Content-Type': 'application/json',
@@ -1861,7 +1863,7 @@ class UserService {
       // If testing locally, ensure the server is accessible.
       final response = await http
           .post(
-            Uri.parse('http://65.0.196.122:8085/api/user/v1/kyc/status'),
+            Uri.parse('http://65.0.196.122:8085/user/v1/kyc/status'),
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
@@ -2028,8 +2030,11 @@ class UserService {
     String? mobile,
     String? countryCode,
     String? countryId,
+    String? countryName,
     String? state,
+    String? stateName,
     String? city,
+    String? cityName,
     String? avatar,
   }) async {
     try {
@@ -2060,10 +2065,30 @@ class UserService {
 
       if (countryCode != null && countryCode.isNotEmpty)
         requestBody['countryCode'] = countryCode;
-      if (countryId != null && countryId.isNotEmpty)
-        requestBody['countryId'] = countryId;
-      if (state != null && state.isNotEmpty) requestBody['state'] = state;
-      if (city != null && city.isNotEmpty) requestBody['city'] = city;
+      if (countryId != null && countryId.isNotEmpty) {
+        requestBody['country_id'] = countryId;
+        requestBody['countryId'] = countryId; // Send both formats
+      }
+      if (countryName != null && countryName.isNotEmpty) {
+        requestBody['country_name'] = countryName;
+        requestBody['countryName'] = countryName; // Send both formats
+      }
+      if (state != null && state.isNotEmpty) {
+        requestBody['state_id'] = state;
+        requestBody['stateId'] = state; // Send both formats
+      }
+      if (stateName != null && stateName.isNotEmpty) {
+        requestBody['state_name'] = stateName;
+        requestBody['stateName'] = stateName; // Send both formats
+      }
+      if (city != null && city.isNotEmpty) {
+        requestBody['city_id'] = city;
+        requestBody['cityId'] = city; // Send both formats
+      }
+      if (cityName != null && cityName.isNotEmpty) {
+        requestBody['city_name'] = cityName;
+        requestBody['cityName'] = cityName; // Send both formats
+      }
       if (avatar != null && avatar.isNotEmpty) requestBody['avatar'] = avatar;
 
       debugPrint('Update Profile Request: $requestBody');

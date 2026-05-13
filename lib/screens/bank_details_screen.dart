@@ -1,10 +1,12 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
-import 'pay_bank_transfer_screen.dart';
-import '../services/wallet_service.dart';
+
 import '../services/auth_service.dart';
+import '../services/wallet_service.dart';
+import 'pay_bank_transfer_screen.dart';
 
 class BankDetailsScreen extends StatefulWidget {
   final String amount;
@@ -34,7 +36,7 @@ class _BankDetailsScreenState extends State<BankDetailsScreen> {
       };
       debugPrint('BankDetailsScreen: Fetching bank details...');
       final bankResponse = await http.get(
-        Uri.parse('${WalletService.baseUrl}/wallet/v1/wallet/deposit/bank-details'),
+        Uri.parse('${WalletService.baseUrl}/bot/v1/botwallet/inr/admin-accounts'),
         headers: headers,
       );
       debugPrint('BankDetailsScreen: Bank API Status: ${bankResponse.statusCode}');

@@ -1,5 +1,6 @@
-import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
 import '../services/user_service.dart';
 
 class UpdateProfileScreen extends StatefulWidget {
@@ -384,8 +385,11 @@ class _UpdateProfileScreenState extends State<UpdateProfileScreen> {
         mobile: _mobileController.text.trim().isNotEmpty ? _mobileController.text.trim() : null,
         countryCode: _selectedCountryCode.isNotEmpty ? _selectedCountryCode : null,
         countryId: _selectedCountryId,
+        countryName: _selectedCountryName,
         state: _selectedStateId,
+        stateName: _selectedStateName,
         city: _selectedCityId,
+        cityName: _selectedCityName,
       );
 
       if (mounted) {

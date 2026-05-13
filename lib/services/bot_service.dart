@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'auth_service.dart';
 
 class SubscriptionPlan {
@@ -1047,6 +1049,55 @@ class BotService {
           'subscriptions': mockSubscriptions,
           'total': mockSubscriptions.length,
         },
+      };
+    }
+  }
+
+  // Send OTP for bot wallet operations
+  static Future<Map<String, dynamic>> sendBotWalletOtp({
+    required String purpose,
+  }) async {
+    try {
+      final requestBody = {
+        'purpose': purpose,
+      };
+
+      debugPrint('=== SEND BOT WALLET OTP ===');
+      debugPrint('URL: $botWalletBaseUrl/bot/v1/botwallet/inr/send-otp');
+      debugPrint('Purpose: $purpose');
+
+      final response = await http.post(
+        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/inr/send-otp'),
+        headers: await _getHeaders(),
+        body: json.encode(requestBody),
+      );
+
+      debugPrint('Send OTP API Response Status: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return {
+          'success': data['success'] ?? false,
+          'message': data['message'] ?? 'OTP sent successfully',
+        };
+      } else {
+        String errorMessage = 'Failed to send OTP (Status: ${response.statusCode})';
+        try {
+          final errorData = json.decode(response.body);
+          errorMessage = errorData['message'] ?? errorMessage;
+        } catch (_) {
+          // If response body is not valid JSON, use status code
+        }
+        return {
+          'success': false,
+          'error': errorMessage,
+        };
+      }
+    } catch (e) {
+      debugPrint('Error sending bot wallet OTP: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
       };
     }
   }
@@ -2325,6 +2376,292 @@ class BotService {
     }
   }
 
+  // Internal transfer from bot wallet to another user
+  static Future<Map<String, dynamic>> botInternalTransfer({
+    required String receiverUid,
+    required double amount,
+    required String otp,
+    String? note,
+    String? idempotencyKey,
+  }) async {
+    try {
+      final requestBody = {
+        'receiverUid': receiverUid,
+        'amount': amount,
+        'otp': otp,
+        if (note != null && note.isNotEmpty) 'note': note,
+        if (idempotencyKey != null && idempotencyKey.isNotEmpty) 'idempotencyKey': idempotencyKey,
+      };
+
+      debugPrint('=== BOT INTERNAL TRANSFER REQUEST ===');
+      debugPrint('URL: $botWalletBaseUrl/bot/v1/botwallet/inr/internal-transfer');
+      debugPrint('Request Body: ${json.encode(requestBody)}');
+
+      final response = await http.post(
+        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/inr/internal-transfer'),
+        headers: await _getHeaders(),
+        body: json.encode(requestBody),
+      );
+
+      debugPrint('Bot Internal Transfer API Response Status: ${response.statusCode}');
+      debugPrint('Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final success = data['success'];
+        final isSuccess = success == true || success == 'true';
+
+        if (isSuccess) {
+          return {
+            'success': true,
+            'data': data['data'] ?? data,
+            'message': data['message'] ?? 'Transfer successful',
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? data['error'] ?? 'Transfer failed',
+          };
+        }
+      } else {
+        try {
+          final errorData = json.decode(response.body);
+          return {
+            'success': false,
+            'error': errorData['message'] ?? errorData['error'] ?? 'Transfer failed: ${response.statusCode}',
+          };
+        } catch (_) {
+          return {
+            'success': false,
+            'error': 'Transfer failed: ${response.statusCode}',
+          };
+        }
+      }
+    } catch (e) {
+      debugPrint('Error processing bot internal transfer: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  // Bot Wallet: Convert INR to USDT
+  static Future<Map<String, dynamic>> convertINRtoUSDT({
+    required double amount,
+  }) async {
+    try {
+      final requestBody = {'amount': amount};
+
+      debugPrint('=== BOT CONVERT INR TO USDT ===');
+      debugPrint('URL: $botWalletBaseUrl/bot/v1/botwallet/inr/convert/inr-to-usdt');
+      debugPrint('Request Body: ${json.encode(requestBody)}');
+
+      final response = await http.post(
+        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/inr/convert/inr-to-usdt'),
+        headers: await _getHeaders(),
+        body: json.encode(requestBody),
+      );
+
+      debugPrint('Bot Convert INR to USDT API Response Status: ${response.statusCode}');
+      debugPrint('Response Body: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = json.decode(response.body);
+        return {
+          'success': true,
+          'data': data['data'] ?? data,
+          'message': data['message'] ?? 'Conversion successful',
+        };
+      } else {
+        try {
+          final errorData = json.decode(response.body);
+          return {
+            'success': false,
+            'error': errorData['message'] ?? errorData['error'] ?? 'Conversion failed: ${response.statusCode}',
+          };
+        } catch (_) {
+          return {
+            'success': false,
+            'error': 'Conversion failed: ${response.statusCode}',
+          };
+        }
+      }
+    } catch (e) {
+      debugPrint('Error converting INR to USDT: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  // Bot Wallet: Convert USDT to INR
+  static Future<Map<String, dynamic>> convertUSDTtoINR({
+    required double amount,
+  }) async {
+    try {
+      final requestBody = {'amount': amount};
+
+      debugPrint('=== BOT CONVERT USDT TO INR ===');
+      debugPrint('URL: $botWalletBaseUrl/bot/v1/botwallet/inr/convert/usdt-to-inr');
+      debugPrint('Request Body: ${json.encode(requestBody)}');
+
+      final response = await http.post(
+        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/inr/convert/usdt-to-inr'),
+        headers: await _getHeaders(),
+        body: json.encode(requestBody),
+      );
+
+      debugPrint('Bot Convert USDT to INR API Response Status: ${response.statusCode}');
+      debugPrint('Response Body: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = json.decode(response.body);
+        return {
+          'success': true,
+          'data': data['data'] ?? data,
+          'message': data['message'] ?? 'Conversion successful',
+        };
+      } else {
+        try {
+          final errorData = json.decode(response.body);
+          return {
+            'success': false,
+            'error': errorData['message'] ?? errorData['error'] ?? 'Conversion failed: ${response.statusCode}',
+          };
+        } catch (_) {
+          return {
+            'success': false,
+            'error': 'Conversion failed: ${response.statusCode}',
+          };
+        }
+      }
+    } catch (e) {
+      debugPrint('Error converting USDT to INR: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  // Bot Wallet: Fetch Conversion History
+  static Future<Map<String, dynamic>> getBotConversionHistory({
+    int? page = 1,
+    int? limit = 50,
+  }) async {
+    try {
+      final queryParams = <String, String>{
+        if (page != null) 'page': page.toString(),
+        if (limit != null) 'limit': limit.toString(),
+      };
+
+      final uri = Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/inr/conversion-history')
+          .replace(queryParameters: queryParams);
+
+      debugPrint('Fetching bot conversion history from: $uri');
+      final response = await http.get(
+        uri,
+        headers: await _getHeaders(),
+      );
+
+      debugPrint('Bot Conversion History API Response Status: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          return {
+            'success': true,
+            'data': data['data'] ?? [],
+            'pagination': data['pagination'],
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to fetch conversion history',
+          };
+        }
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching bot conversion history: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
+  // Get internal transfer history
+  static Future<Map<String, dynamic>> getInternalTransferHistory({
+    int page = 1,
+    int limit = 20,
+  }) async {
+    try {
+      final queryParams = <String, String>{
+        'page': page.toString(),
+        'limit': limit.toString(),
+      };
+
+      final uri = Uri.parse('$botWalletBaseUrl/v1/botwallet/inr/internal-transfer-history')
+          .replace(queryParameters: queryParams);
+
+      debugPrint('=== INTERNAL TRANSFER HISTORY REQUEST ===');
+      debugPrint('URL: $uri');
+
+      final response = await http.get(
+        uri,
+        headers: await _getHeaders(),
+      );
+
+      debugPrint('Internal Transfer History API Response Status: ${response.statusCode}');
+      debugPrint('Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final success = data['success'];
+        final isSuccess = success == true || success == 'true';
+
+        if (isSuccess) {
+          return {
+            'success': true,
+            'data': data['data'] ?? [],
+            'pagination': data['pagination'] ?? {},
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['message'] ?? 'Failed to fetch transfer history',
+          };
+        }
+      } else {
+        try {
+          final errorData = json.decode(response.body);
+          return {
+            'success': false,
+            'error': errorData['message'] ?? errorData['error'] ?? 'Failed to fetch transfer history: ${response.statusCode}',
+          };
+        } catch (_) {
+          return {
+            'success': false,
+            'error': 'Failed to fetch transfer history: ${response.statusCode}',
+          };
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching internal transfer history: $e');
+      return {
+        'success': false,
+        'error': 'Network error: $e',
+      };
+    }
+  }
+
   // Withdraw from a bot
   static Future<Map<String, dynamic>> withdraw({
     required String botId,
@@ -2498,7 +2835,7 @@ class BotService {
         if (limit != null) 'limit': limit.toString(),
       };
 
-      final uri = Uri.parse('$botWalletBaseUrl/bot/v1/api/botwallet/history')
+      final uri = Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/history')
           .replace(queryParameters: queryParams);
 
       debugPrint('Fetching bot wallet history from: $uri');

@@ -1,13 +1,14 @@
 import 'dart:convert';
 import 'dart:core';
-import 'dart:async';
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'spot_service.dart';
+
 import 'auth_service.dart';
-import 'notification_service.dart';
 import 'network_error_handler.dart';
+import 'notification_service.dart';
+import 'spot_service.dart';
 
 class WalletService {
   static const String baseUrl = 'http://65.0.196.122:8085'; // Testing server
@@ -2301,7 +2302,7 @@ class WalletService {
       );
 
       final response = await http.post(
-        Uri.parse('$baseUrl/wallet/v1/wallet/deposit/inr-withdraw-request'),
+        Uri.parse('$baseUrl/api/wallet/v1/inr/withdraw/request'),
         headers: await _getHeaders(),
         body: json.encode(body),
       );
