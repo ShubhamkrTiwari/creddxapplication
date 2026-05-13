@@ -1,14 +1,16 @@
-import 'dart:convert';
 import 'dart:async';
-import 'dart:io';
+import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../constants/api_config.dart';
 import 'auth_service.dart';
 
 /// A professional-grade service for Spot Trading operations.
-/// Handles order placement, market data, and account balances via the :9000 REST API.
+/// Handles order placement, market data, and account balances via the REST API.
 class SpotService {
-  static const String _baseUrl = 'http://api4.creddx.com:9000';
+  static const String _baseUrl = ApiConfig.spotBaseUrl;
   
   // Persistence for UI state (used by SpotScreen to maintain lists across rebuilds)
   static List<Map<String, dynamic>> userBuyOrders = [];
@@ -217,6 +219,10 @@ class SpotService {
           final usdt = formattedAssets['USDT'] ?? {'available': 0.0, 'locked': 0.0, 'free': 0.0};
           final btc = formattedAssets['BTC'] ?? {'available': 0.0, 'locked': 0.0, 'free': 0.0};
 
+          // Robust balance detection for USDT (can be in 'available' or 'free' field)
+          final usdtAvailable = usdt['available'] > usdt['free'] ? usdt['available'] : usdt['free'];
+          final btcAvailable = btc['available'] > btc['free'] ? btc['available'] : btc['free'];
+
           return {
             'success': true,
             'data': {
@@ -224,9 +230,10 @@ class SpotService {
               'assets': formattedAssets,
               'raw_assets': assetsList,
               // Legacy support fields
-              'usdt_available': usdt['available'],
+              'usdt_available': usdtAvailable,
               'usdt_locked': usdt['locked'],
-              'free': btc['available'],
+              'free_usdt': usdtAvailable, // Added for SpotScreen compatibility
+              'free': btcAvailable, // This is BTC available balance (used by SpotScreen)
               'btc_locked': btc['locked'],
             }
           };

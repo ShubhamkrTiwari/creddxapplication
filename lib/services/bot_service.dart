@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'auth_service.dart';
 
 class SubscriptionPlan {
@@ -74,8 +76,8 @@ class BotPosition {
 }
 
 class BotService {
-  static const String baseUrl = 'http://65.0.196.122:8085'; // Testing server
-  static const String botWalletBaseUrl = 'http://65.0.196.122:8085'; // Testing server
+  static const String baseUrl = 'https://api11.hathmetech.com/api/bot'; // Live server
+  static const String botWalletBaseUrl = 'https://api11.hathmetech.com/api/bot'; // Live server
   
   // Static cache for total investment (for demo purposes)
   static double _cachedTotalInvestment = 0.0; // Start with 0.0
@@ -122,7 +124,7 @@ class BotService {
         return {'success': false, 'error': 'Missing parameter: strategy'};
       }
 
-      final uri = Uri.parse('$baseUrl/bot/v1/api/user/weekly-benchmark').replace(
+      final uri = Uri.parse('$baseUrl/v1/api/user/weekly-benchmark').replace(
         queryParameters: <String, String>{
           'strategy': strategy,
         },
@@ -265,7 +267,7 @@ class BotService {
   }) async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/bingxTrade/user-positions?strategy=$strategy&symbol=$symbol'),
+        Uri.parse('$baseUrl/v1/bingxTrade/user-positions?strategy=$strategy&symbol=$symbol'),
         headers: await _getHeaders(),
       );
       
@@ -333,7 +335,7 @@ class BotService {
         if (limit != null) 'limit': limit.toString(),
       };
       
-      final uri = Uri.parse('$baseUrl/bot/v1/trade/history')
+      final uri = Uri.parse('$baseUrl/v1/trade/history')
           .replace(queryParameters: queryParams);
       
       debugPrint('Fetching bot trade history from: $uri');
@@ -376,7 +378,7 @@ class BotService {
   static Future<Map<String, dynamic>> getTradeDetails(String tradeId) async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/trade/$tradeId'),
+        Uri.parse('$baseUrl/v1/trade/$tradeId'),
         headers: await _getHeaders(),
       );
       
@@ -414,7 +416,7 @@ class BotService {
   static Future<List<String>> getAvailablePairs() async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/pairs'),
+        Uri.parse('$baseUrl/v1/pairs'),
         headers: await _getHeaders(),
       );
       
@@ -453,7 +455,7 @@ class BotService {
         if (limit != null) 'limit': limit.toString(),
       };
       
-      final uri = Uri.parse('$baseUrl/bot/v1/bingxTrade/user-trades')
+      final uri = Uri.parse('$baseUrl/v1/bingxTrade/user-trades')
           .replace(queryParameters: queryParams);
       
       debugPrint('Fetching user bot trades from: $uri');
@@ -551,7 +553,7 @@ class BotService {
         if (limit != null) 'limit': limit.toString(),
       };
       
-      final uri = Uri.parse('$baseUrl/bot/v1/api/transactions')
+      final uri = Uri.parse('$baseUrl/v1/api/transactions')
           .replace(queryParameters: queryParams);
       
       final response = await http.get(
@@ -845,7 +847,7 @@ class BotService {
       debugPrint('Request Body: ${json.encode(requestBody)}');
       
       final response = await http.post(
-        Uri.parse('$baseUrl/bot/v1/api/subscriptions/subscribe'),
+        Uri.parse('$baseUrl/v1/api/subscriptions/subscribe'),
         headers: await _getHeaders(),
         body: json.encode(requestBody),
       );
@@ -891,7 +893,7 @@ class BotService {
   static Future<Map<String, dynamic>> getSubscriptionPlans() async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/api/subscriptions/plans'),
+        Uri.parse('$baseUrl/v1/api/subscriptions/plans'),
         headers: await _getHeaders(),
       );
       
@@ -922,7 +924,7 @@ class BotService {
   static Future<Map<String, dynamic>> getUserSubscription() async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/api/subscriptions/user'),
+        Uri.parse('$baseUrl/v1/api/subscriptions/user'),
         headers: await _getHeaders(),
       );
       
@@ -954,7 +956,7 @@ class BotService {
   }) async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/api/subscriptions/history?page=$page&limit=$limit'),
+        Uri.parse('$baseUrl/v1/api/subscriptions/history?page=$page&limit=$limit'),
         headers: await _getHeaders(),
       );
       
@@ -1060,7 +1062,7 @@ class BotService {
   }) async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/api/investments/history?page=$page&limit=$limit'),
+        Uri.parse('$baseUrl/v1/api/investments/history?page=$page&limit=$limit'),
         headers: await _getHeaders(),
       );
       
@@ -1201,7 +1203,7 @@ class BotService {
       debugPrint('Investing with botId: $botId, amount: $amount, strategy: $mappedStrategy');
       
       final response = await http.post(
-        Uri.parse('$baseUrl/bot/v1/api/investments/invest'),
+        Uri.parse('$baseUrl/v1/api/investments/invest'),
         headers: await _getHeaders(),
         body: json.encode({
           'botId': botId,
@@ -1335,7 +1337,7 @@ class BotService {
     try {
       debugPrint('=== FETCHING USER INCOME ===');
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/api/user/income'),
+        Uri.parse('$baseUrl/v1/api/user/income'),
         headers: await _getHeaders(),
       );
 
@@ -1376,7 +1378,7 @@ class BotService {
     try {
       debugPrint('=== FETCHING SUBSCRIPTION DETAILS ===');
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/api/users/user'),
+        Uri.parse('$baseUrl/v1/api/users/user'),
         headers: await _getHeaders(),
       );
 
@@ -1468,7 +1470,7 @@ class BotService {
     try {
       debugPrint('=== FETCHING USER DATA ===');
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/api/users/user'),
+        Uri.parse('$baseUrl/v1/api/users/user'),
         headers: await _getHeaders(),
       );
       
@@ -1536,7 +1538,7 @@ class BotService {
     try {
       debugPrint('=== FETCHING MAX WITHDRAW AMOUNTS ===');
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/api/users/user'),
+        Uri.parse('$baseUrl/v1/api/users/user'),
         headers: await _getHeaders(),
       );
 
@@ -1602,7 +1604,7 @@ class BotService {
         if (days != null) 'days': days.toString(),
       };
 
-      final uri = Uri.parse('$baseUrl/bot/v1/api/user/balance-history')
+      final uri = Uri.parse('$baseUrl/v1/api/user/balance-history')
           .replace(queryParameters: queryParams);
 
       debugPrint('Fetching bot balance history from: $uri');
@@ -1658,7 +1660,7 @@ class BotService {
   static Future<Map<String, dynamic>> getUserBalanceHistory() async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/api/user/balance-history'),
+        Uri.parse('$baseUrl/v1/api/user/balance-history'),
         headers: await _getHeaders(),
       );
 
@@ -1753,7 +1755,7 @@ class BotService {
     try {
       debugPrint('=== FETCHING ADMIN BOT USER DATA ===');
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/admin/bot/user-data'),
+        Uri.parse('$baseUrl/admin/bot/user-data'),
         headers: await _getHeaders(),
       );
 
@@ -1804,7 +1806,7 @@ class BotService {
       debugPrint('=== FETCHING STRATEGY PERFORMANCE ===');
       debugPrint('Strategy Name: $strategyName');
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/api/strategy/performance'),
+        Uri.parse('$baseUrl/v1/api/strategy/performance'),
         headers: await _getHeaders(),
       );
       
@@ -1901,7 +1903,7 @@ class BotService {
     try {
       debugPrint('=== FETCHING ALL STRATEGY PERFORMANCE ===');
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/api/strategy/performance'),
+        Uri.parse('$baseUrl/v1/api/strategy/performance'),
         headers: await _getHeaders(),
       );
 
@@ -1962,7 +1964,7 @@ class BotService {
   static Future<Map<String, dynamic>> getBotDepositNetworks() async {
     try {
       final response = await http.get(
-        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/deposit/networks'),
+        Uri.parse('$botWalletBaseUrl/v1/botwallet/deposit/networks'),
         headers: await _getHeaders(),
       );
 
@@ -2004,7 +2006,7 @@ class BotService {
   static Future<Map<String, dynamic>> getBotWithdrawNetworks() async {
     try {
       final response = await http.get(
-        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/withdraw/networks'),
+        Uri.parse('$botWalletBaseUrl/v1/botwallet/withdraw/networks'),
         headers: await _getHeaders(),
       );
 
@@ -2047,7 +2049,7 @@ class BotService {
       debugPrint('Request Body: ${json.encode(requestBody)}');
       
       final response = await http.post(
-        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/deposit'),
+        Uri.parse('$botWalletBaseUrl/v1/botwallet/deposit'),
         headers: await _getHeaders(),
         body: json.encode(requestBody),
       );
@@ -2101,7 +2103,7 @@ class BotService {
     try {
       final headers = await _getHeaders();
       debugPrint('=== BOT DEPOSIT ADDRESS REQUEST ===');
-      final url = '$botWalletBaseUrl/bot/v1/botwallet/deposit/address?coinId=$coinId&networkId=$networkId';
+      final url = '$botWalletBaseUrl/v1/botwallet/deposit/address?coinId=$coinId&networkId=$networkId';
       debugPrint('URL: $url');
       debugPrint('Request Method: GET');
       debugPrint('Headers: $headers');
@@ -2157,7 +2159,7 @@ class BotService {
     try {
       final requestBody = {'purpose': purpose};
       final response = await http.post(
-        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/withdraw/send-otp'),
+        Uri.parse('$botWalletBaseUrl/v1/botwallet/withdraw/send-otp'),
         headers: await _getHeaders(),
         body: json.encode(requestBody),
       );
@@ -2198,7 +2200,7 @@ class BotService {
       debugPrint('Request Body: ${json.encode(requestBody)}');
       
       final response = await http.post(
-        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/withdraw'),
+        Uri.parse('$botWalletBaseUrl/v1/botwallet/withdraw'),
         headers: await _getHeaders(),
         body: json.encode(requestBody),
       );
@@ -2248,7 +2250,7 @@ class BotService {
   static Future<Map<String, dynamic>> getBotBalance() async {
     try {
       final response = await http.get(
-        Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/balance'),
+        Uri.parse('$botWalletBaseUrl/v1/botwallet/balance'),
         headers: await _getHeaders(),
       );
 
@@ -2341,7 +2343,7 @@ class BotService {
   }) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/bot/v1/api/investments/withdraw'),
+        Uri.parse('$baseUrl/v1/api/investments/withdraw'),
         headers: await _getHeaders(),
         body: json.encode({
           'botId': botId,
@@ -2396,7 +2398,7 @@ class BotService {
     try {
       debugPrint('=== FETCHING MAX INVEST AMOUNT ===');
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/api/investments/max-amount?strategy=$strategy'),
+        Uri.parse('$baseUrl/v1/api/investments/max-amount?strategy=$strategy'),
         headers: await _getHeaders(),
       );
 
@@ -2445,7 +2447,7 @@ class BotService {
     try {
       debugPrint('=== FETCHING MAX WITHDRAW AMOUNT ===');
       final response = await http.get(
-        Uri.parse('$baseUrl/bot/v1/api/investments/withdraw-max?strategy=$strategy'),
+        Uri.parse('$baseUrl/v1/api/investments/withdraw-max?strategy=$strategy'),
         headers: await _getHeaders(),
       );
 
@@ -2506,7 +2508,7 @@ class BotService {
         if (limit != null) 'limit': limit.toString(),
       };
 
-      final uri = Uri.parse('$botWalletBaseUrl/bot/v1/botwallet/history')
+      final uri = Uri.parse('$botWalletBaseUrl/v1/botwallet/history')
           .replace(queryParameters: queryParams);
 
       debugPrint('Fetching bot wallet history from: $uri');

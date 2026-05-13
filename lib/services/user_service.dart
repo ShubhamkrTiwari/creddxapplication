@@ -1,13 +1,15 @@
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:image_picker/image_picker.dart';
-import 'dart:convert';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'kyc_service.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'auth_service.dart';
+import 'kyc_service.dart';
 import 'network_error_handler.dart';
 
 class UserService {
@@ -3335,5 +3337,14 @@ class UserService {
         'error': NetworkErrorHandler.getErrorMessage(e),
       };
     }
+  }
+
+  bool isProfileComplete() {
+    return _userName != null &&
+           _userEmail != null &&
+           _userPhone != null &&
+           _userCountry != null &&
+           _userState != null &&
+           _userCity != null;
   }
 }

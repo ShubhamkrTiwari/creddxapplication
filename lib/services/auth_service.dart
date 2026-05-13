@@ -1,18 +1,20 @@
-import 'dart:convert';
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
+
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:device_info_plus/device_info_plus.dart';
-import 'dart:io';
-import 'user_service.dart';
+
+import 'network_error_handler.dart';
 import 'notification_service.dart';
-import 'unified_wallet_service.dart';
 import 'socket_service.dart';
 import 'spot_socket_service.dart';
 import 'temp_wallet_socket_service.dart';
-import 'network_error_handler.dart';
+import 'unified_wallet_service.dart';
+import 'user_service.dart';
 
 class AuthService {
   static const String _baseUrl = 'https://api11.hathmetech.com/api';
@@ -986,8 +988,25 @@ class AuthService {
   }
 
   static Future<String?> getToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_tokenKey);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_tokenKey);
+    } catch (e) {
+      debugPrint('AuthService: Error retrieving token: $e');
+      if (isRecoverableAuthError(e)) {
+        // Handle recoverable auth error (Geller / BadAuthentication)
+        debugPrint('AuthService: Recoverable auth error detected in getToken');
+      }
+      return null;
+    }
+  }
+
+  /// Checks if the error is a Google Play Services recoverable auth exception
+  static bool isRecoverableAuthError(dynamic error) {
+    final errorStr = error.toString();
+    return errorStr.contains('UserRecoverableAuthException') || 
+           errorStr.contains('BadAuthentication') ||
+           errorStr.contains('service_id=173');
   }
 
   static Future<String?> getUserEmail() async {

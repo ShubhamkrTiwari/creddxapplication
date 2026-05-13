@@ -18,14 +18,17 @@ class SpotScreen extends StatefulWidget {
   State<SpotScreen> createState() => _SpotScreenState();
 }
 
-class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, TickerProviderStateMixin {
   // Temporary flag for Coming Soon mode - set to false when feature goes live
-  final bool _isComingSoon = true;
+  final bool _isComingSoon = false;
   
   // Animation controllers for Coming Soon screen
   late AnimationController _comingSoonController;
   late Animation<double> _bounceAnimation;
   late Animation<double> _fadeAnimation;
+  
+  // Tab controller for orders slider
+  late TabController _ordersTabController;
   
   bool _isBuy = true;
   double _currentPrice = 92076.6;
@@ -45,51 +48,53 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
   ];
   String _selectedAmountCoin = 'BTC';
   
-  // API data
-  List<Map<String, dynamic>> _sellOrders = [];
-  List<Map<String, dynamic>> _buyOrders = [];
-  List<Map<String, dynamic>> _openOrders = [];
-  List<Map<String, dynamic>> _closedOrders = [];
-  List<Map<String, dynamic>> _symbols = [];
-  
-  // Slider expansion states
-  bool _isOpenOrdersExpanded = true;
-  bool _isClosedOrdersExpanded = true;
-  Map<String, dynamic>? _balance;
-  bool _isLoadingBalance = true;
-  String? _balanceError;
-  Map<String, dynamic>? _ticker;
-  
-  // Price tracking for order book animations
-  double _previousBid = 0.0;
-  double _previousAsk = 0.0;
-  bool _isPriceUp = false;
-  
-  // Price flash animation
-  bool _isPriceFlashing = false;
-  Color _flashColor = Colors.white;
-  Timer? _priceUpdateTimer;
-  Map<String, dynamic>? _fees;
-  Map<String, dynamic>? _healthStatus;
-  bool _isWebSocketConnected = false;
-  bool _isLoadingSymbols = false;
-  StreamSubscription? _balanceSubscription;
-  StreamSubscription? _orderbookSubscription;
-  StreamSubscription? _ordersSubscription;
-  StreamSubscription? _fillsSubscription;
-  StreamSubscription? _tickerSubscription;
-  StreamSubscription? _connectionSubscription;
+    // API data
+    List<Map<String, dynamic>> _sellOrders = [];
+    List<Map<String, dynamic>> _buyOrders = [];
+    List<Map<String, dynamic>> _openOrders = [];
+    List<Map<String, dynamic>> _closedOrders = [];
+    List<Map<String, dynamic>> _symbols = [];
+    
+      Map<String, dynamic>? _balance;
+      bool _isLoadingBalance = true;
+      Map<String, dynamic>? _ticker;
+      
+      // Price tracking for order book animations
+      double _previousBid = 0.0;
+      double _previousAsk = 0.0;
+      bool _isPriceUp = false;
+      
+      // Price flash animation
+      bool _isPriceFlashing = false;
+      Color _flashColor = Colors.white;
+      Timer? _priceUpdateTimer;
+      StreamSubscription? _balanceSubscription;
+      StreamSubscription? _orderbookSubscription;
+      StreamSubscription? _ordersSubscription;
+      StreamSubscription? _fillsSubscription;
+      StreamSubscription? _tickerSubscription;
+      StreamSubscription? _connectionSubscription;
 
-  Timer? _connectionCheckTimer;
-  bool _isScreenVisible = true;
-  
-  // Binance market data for dropdown
-  List<Map<String, dynamic>> _binanceMarketData = [];
-  bool _isLoadingMarkets = false;
+      Timer? _connectionCheckTimer;
+      
+      // Binance market data for dropdown
+      List<Map<String, dynamic>> _binanceMarketData = [];
+      bool _isLoadingMarkets = false;
+
+      // Additional API data
+      Map<String, dynamic>? _fees;
+      Map<String, dynamic>? _healthStatus;
+      bool _isLoadingSymbols = false;
+      bool _isScreenVisible = true;
+      String? _balanceError;
+      bool _isWebSocketConnected = false;
 
   @override
   void initState() {
     super.initState();
+    
+    // Initialize tab controller for orders slider
+    _ordersTabController = TabController(length: 2, vsync: this);
     
     // Initialize Coming Soon animations
     _comingSoonController = AnimationController(
@@ -229,49 +234,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
     }
   }
 
-  // Update price from Binance with animation
-  Future<void> _updateOrderBookPrice() async {
-    try {
-      final binanceTicker = await BinanceService.getTickerData(_selectedSymbol);
-      if (binanceTicker != null && binanceTicker['price'] != null) {
-        final newPrice = binanceTicker['price'] as double;
-        final oldPrice = _currentPrice;
-        
-        if (newPrice > 0 && mounted && newPrice != oldPrice) {
-          // Determine price direction
-          final isUp = newPrice > oldPrice;
-          
-          setState(() {
-            _currentPrice = newPrice;
-            _isPriceUp = isUp;
-            _isPriceFlashing = true;
-            _flashColor = isUp ? const Color(0xFF84BD00) : Colors.red;
-            
-            // Update ticker data
-            _ticker ??= {};
-            _ticker!['last_price'] = newPrice;
-            _ticker!['price_change_24h'] = binanceTicker['priceChange'];
-            _ticker!['price_change_percent_24h'] = binanceTicker['priceChangePercent'];
-            _ticker!['volume_24h'] = binanceTicker['volume'];
-            _ticker!['high_24h'] = binanceTicker['highPrice'];
-            _ticker!['low_24h'] = binanceTicker['lowPrice'];
-          });
-          
-          // Stop flash after 500ms
-          Future.delayed(const Duration(milliseconds: 500), () {
-            if (mounted) {
-              setState(() {
-                _isPriceFlashing = false;
-              });
-            }
-          });
-        }
-      }
-    } catch (e) {
-      print('Error updating order book price: $e');
-    }
-  }
-  
+
   // Load real market price from Binance API immediately
   Future<void> _loadRealMarketPrice() async {
     try {
@@ -340,13 +303,13 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
   void _subscribeToBalance() {
     _balanceSubscription?.cancel();
     _balanceSubscription = SpotSocketService.balanceStream.listen((data) {
-      debugPrint('Socket balance update received: $data');
-      if (mounted && data['type'] == 'balance_update') {
+      debugPrint('Socket balance_update received: $data');
+      if (mounted && (data['type'] == 'balance_update' || data['type'] == 'balance')) {
         setState(() {
           // Handle both formats: data['assets'] or data['data']['assets']
           final assets = data['assets'] as List? ??
                         (data['data'] as Map<String, dynamic>?)?['assets'] as List?;
-          debugPrint('Parsed assets from socket: $assets');
+          debugPrint('Parsed assets from socket balance_update: $assets');
           if (assets != null && assets.isNotEmpty) {
             // Parse symbol to get base and quote assets (e.g., BTCUSDT -> BTC, USDT)
             String baseAssetStr;
@@ -378,14 +341,20 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
               orElse: () => null,
             );
 
+            // Resilient balance parsing: check both 'available' and 'free'
+            final qAvail = double.tryParse(quoteAsset?['available']?.toString() ?? '0.0') ?? 0.0;
+            final qFree = double.tryParse(quoteAsset?['free']?.toString() ?? '0.0') ?? 0.0;
+            final bAvail = double.tryParse(baseAsset?['available']?.toString() ?? '0.0') ?? 0.0;
+            final bFree = double.tryParse(baseAsset?['free']?.toString() ?? '0.0') ?? 0.0;
+
             _balance = {
-              'usdt_available': double.tryParse(quoteAsset?['available']?.toString() ?? '0.0') ?? 0.0,
+              'usdt_available': qAvail > qFree ? qAvail : qFree,
               'usdt_locked': double.tryParse(quoteAsset?['locked']?.toString() ?? '0.0') ?? 0.0,
-              'free': double.tryParse(baseAsset?['available']?.toString() ?? '0.0') ?? 0.0,
+              'free': bAvail > bFree ? bAvail : bFree,
               'btc_locked': double.tryParse(baseAsset?['locked']?.toString() ?? '0.0') ?? 0.0,
             };
             _isLoadingBalance = false;
-            debugPrint('Balance updated from socket: $_balance');
+            debugPrint('Balance updated from socket balance_update (API first, then socket): $_balance');
           }
         });
       }
@@ -395,6 +364,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
   @override
   void dispose() {
     _comingSoonController.dispose();
+    _ordersTabController.dispose();
     _connectionCheckTimer?.cancel();
     _priceUpdateTimer?.cancel();
     _priceController.dispose();
@@ -632,21 +602,6 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
     }
   }
 
-  // Start periodic connection check
-  void _startConnectionCheck() {
-    _connectionCheckTimer?.cancel();
-    _connectionCheckTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
-      if (mounted) {
-        // SocketService handles its own connection/reconnection
-        // We can just keep _isWebSocketConnected as true if we trust SocketService
-        if (!_isWebSocketConnected) {
-          setState(() {
-            _isWebSocketConnected = true;
-          });
-        }
-      }
-    });
-  }
 
   // Load Binance market data for dropdown
   Future<void> _loadBinanceMarketData() async {
@@ -840,8 +795,14 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
               })
               .toList();
           
-          _sellOrders = List<Map<String, dynamic>>.from(asks);
-          _buyOrders = List<Map<String, dynamic>>.from(bids);
+      _sellOrders = List<Map<String, dynamic>>.from(asks.map((a) => {
+        'price': double.tryParse(a['price'].toString()) ?? 0.0,
+        'amount': double.tryParse(a['amount'].toString()) ?? 0.0,
+      }));
+      _buyOrders = List<Map<String, dynamic>>.from(bids.map((b) => {
+        'price': double.tryParse(b['price'].toString()) ?? 0.0,
+        'amount': double.tryParse(b['amount'].toString()) ?? 0.0,
+      }));
           
           print('Order book loaded: ${_sellOrders.length} asks, ${_buyOrders.length} bids');
         });
@@ -973,69 +934,101 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
     try {
       setState(() {
         _isLoadingBalance = true;
-        _balanceError = null;
       });
-      print('Loading balance... (forceRefresh: $forceRefresh)');
+      debugPrint('SpotScreen: Loading balance... (forceRefresh: $forceRefresh)');
       
-      // Try SpotService first
-      final result = await SpotService.getBalance(forceRefresh: forceRefresh);
-      print('SpotService Balance API result: $result');
+      // Fetch from both services to ensure we have the most accurate data
+      // SpotService gives us detailed asset breakdown (available/locked)
+      // WalletService gives us the consolidated spotBalance which is the Source of Truth
+      final results = await Future.wait([
+        SpotService.getBalance(forceRefresh: forceRefresh),
+        WalletService.getAllWalletBalances(),
+      ]);
       
-      // Also fetch from WalletService as fallback for spotBalance
-      final walletResult = await WalletService.getAllWalletBalances();
-      print('WalletService Balance API result: $walletResult');
+      final spotResult = results[0];
+      final walletResult = results[1];
       
-      double usdtAvailable = 0.0;
-      double usdtLocked = 0.0;
-      double btcFree = 0.0;
-      bool gotBalance = false;
+      debugPrint('SpotService Balance API result: $spotResult');
+      debugPrint('WalletService Balance API result: $walletResult');
       
-      // Try to get balance from SpotService
-      if (result['success'] == true && result['data'] != null) {
-        final spotData = result['data'];
-        usdtAvailable = double.tryParse(spotData['usdt_available']?.toString() ?? '0.0') ?? 0.0;
-        usdtLocked = double.tryParse(spotData['usdt_locked']?.toString() ?? '0.0') ?? 0.0;
-        btcFree = double.tryParse(spotData['free']?.toString() ?? '0.0') ?? 0.0;
-        gotBalance = true;
-        print('Balance from SpotService: USDT=$usdtAvailable, BTC=$btcFree');
+      double quoteAvailable = 0.0;
+      double quoteLocked = 0.0;
+      double baseAvailable = 0.0;
+      double baseLocked = 0.0;
+      bool gotSpotData = false;
+      
+      // Extract current base and quote assets from symbol
+      String baseAsset;
+      String quoteAsset;
+      if (_selectedSymbol.contains('/')) {
+        final parts = _selectedSymbol.split('/');
+        baseAsset = parts[0];
+        quoteAsset = parts[1];
+      } else if (_selectedSymbol.endsWith('USDT')) {
+        baseAsset = _selectedSymbol.substring(0, _selectedSymbol.length - 4);
+        quoteAsset = 'USDT';
+      } else {
+        baseAsset = 'BTC';
+        quoteAsset = 'USDT';
       }
       
-      // If SpotService failed or returned 0, try WalletService spotBalance
-      if ((!gotBalance || usdtAvailable == 0.0) && 
-          walletResult['success'] == true && 
-          walletResult['data'] != null &&
-          walletResult['data']['spotBalance'] != null) {
-        final spotBalance = double.tryParse(walletResult['data']['spotBalance'].toString()) ?? 0.0;
-        if (spotBalance > 0) {
-          usdtAvailable = spotBalance;
-          print('Balance from WalletService spotBalance: $spotBalance');
+      // 1. Get detailed breakdown from SpotService
+      if (spotResult['success'] == true && spotResult['data'] != null) {
+        final spotData = spotResult['data'];
+        final assets = spotData['assets'] as Map<String, dynamic>? ?? {};
+        
+        // Extract quote asset balance
+        final quoteData = assets[quoteAsset] ?? {'available': 0.0, 'locked': 0.0, 'free': 0.0};
+        final qAvailable = double.tryParse(quoteData['available']?.toString() ?? '0.0') ?? 0.0;
+        final qFree = double.tryParse(quoteData['free']?.toString() ?? '0.0') ?? 0.0;
+        quoteAvailable = qAvailable > qFree ? qAvailable : qFree;
+        quoteLocked = double.tryParse(quoteData['locked']?.toString() ?? '0.0') ?? 0.0;
+
+        // Extract base asset balance
+        final baseData = assets[baseAsset] ?? {'available': 0.0, 'locked': 0.0, 'free': 0.0};
+        final bAvailable = double.tryParse(baseData['available']?.toString() ?? '0.0') ?? 0.0;
+        final bFree = double.tryParse(baseData['free']?.toString() ?? '0.0') ?? 0.0;
+        baseAvailable = bAvailable > bFree ? bAvailable : bFree;
+        baseLocked = double.tryParse(baseData['locked']?.toString() ?? '0.0') ?? 0.0;
+
+        gotSpotData = true;
+      }
+      
+      // 2. Check WalletService for consolidated balance (Source of Truth for USDT)
+      if (walletResult['success'] == true && walletResult['data'] != null) {
+        final walletData = walletResult['data'];
+        final walletSpotUsdt = double.tryParse(walletData['spotBalance']?.toString() ?? '0.0') ?? 0.0;
+        
+        // If WalletService shows a higher balance for USDT, prioritize it
+        if (quoteAsset == 'USDT' && (!gotSpotData || walletSpotUsdt > quoteAvailable)) {
+          debugPrint('Balance sync: Prioritizing WalletService USDT ($walletSpotUsdt) over SpotService ($quoteAvailable)');
+          quoteAvailable = walletSpotUsdt;
         }
       }
       
       setState(() {
         _balance = {
           'user_id': 1,
-          'usdt_available': usdtAvailable,
-          'usdt_locked': usdtLocked,
-          'free': btcFree,
+          'usdt_available': quoteAvailable,
+          'usdt_locked': quoteLocked,
+          'free': baseAvailable,
+          'btc_locked': baseLocked,
         };
         _isLoadingBalance = false;
-        print('Final Balance loaded: $_balance');
-        print('USDT Available: ${_balance?['usdt_available']}');
-        print('USDT Locked: ${_balance?['usdt_locked']}');
-        print('Free: ${_balance?['free']}');
+        debugPrint('Final Balance loaded for $_selectedSymbol: $_balance');
       });
     } catch (e) {
-      print('Error loading balance: $e');
+      debugPrint('Error loading balance: $e');
       setState(() {
         _isLoadingBalance = false;
         _balanceError = 'Error: $e';
-        // Keep existing balance or set default
+        // Maintain existing balance or set safe defaults
         _balance ??= {
           'user_id': 1,
           'usdt_available': 0.0,
           'usdt_locked': 0.0,
           'free': 0.0,
+          'btc_locked': 0.0,
         };
       });
     }
@@ -1678,28 +1671,21 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
       backgroundColor: const Color(0xFF0D0D0D),
       appBar: _buildAppBar(),
       body: SafeArea(
-        child: Column(
-        children: [
-          Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                children: [
-                  const SizedBox(height: 20),
-                  _buildTradingSection(),
-                  const SizedBox(height: 20),
-                  const SizedBox(height: 20),
-                  _buildOpenOrdersSection(),
-                  const SizedBox(height: 20),
-                  _buildClosedOrdersSection(),
-                  const SizedBox(height: 100),
-                ],
-              ),
-            ),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 20),
+              _buildTradingSection(),
+              const SizedBox(height: 20),
+              _buildOrdersTabSection(),
+              const SizedBox(height: 100),
+            ],
           ),
-        ],
-      ),
+        ),
       ),
     );
+  }
   }
 
   // Coming Soon screen - similar to FuturesScreen
@@ -1918,11 +1904,11 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
   }
 
   Widget _buildMarketStats() {
-    final priceChange24h = _ticker?['price_change_24h'] ?? 0.0;
-    final priceChangePercent24h = _ticker?['price_change_percent_24h'] ?? 0.0;
-    final volume24h = _ticker?['volume_24h'] ?? 0.0;
-    final high24h = _ticker?['high_24h'] ?? 0.0;
-    final low24h = _ticker?['low_24h'] ?? 0.0;
+    final priceChange24h = double.tryParse(_ticker?['price_change_24h']?.toString() ?? '0.0') ?? 0.0;
+    final priceChangePercent24h = double.tryParse(_ticker?['price_change_percent_24h']?.toString() ?? '0.0') ?? 0.0;
+    final volume24h = double.tryParse(_ticker?['volume_24h']?.toString() ?? '0.0') ?? 0.0;
+    final high24h = double.tryParse(_ticker?['high_24h']?.toString() ?? '0.0') ?? 0.0;
+    final low24h = double.tryParse(_ticker?['low_24h']?.toString() ?? '0.0') ?? 0.0;
     
     return Container(
       padding: const EdgeInsets.all(16),
@@ -2423,7 +2409,6 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
                 child: TextField(
                   controller: _amountController,
                   onChanged: (value) {
-                    // Limit to 5 decimal places for BTC
                     if (value.contains('.')) {
                       final decimalPart = value.split('.').last;
                       if (decimalPart.length > 5) {
@@ -2941,12 +2926,28 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
               'Available',
               style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 10),
             ),
-            Flexible(
-              child: Text(
-                '${availableVal.toStringAsFixed(availableUnit == 'USDT' ? 2 : 8)} $availableUnit',
-                style: const TextStyle(color: Colors.white, fontSize: 10),
-                overflow: TextOverflow.ellipsis,
-              ),
+            Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    '${availableVal.toStringAsFixed(availableUnit == 'USDT' ? 2 : 8)} $availableUnit',
+                    style: const TextStyle(color: Colors.white, fontSize: 10),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                GestureDetector(
+                  onTap: () {
+                    _loadBalance(forceRefresh: true);
+                    _showMessage('Balance refreshed', isError: false);
+                  },
+                  child: Icon(
+                    _isLoadingBalance ? Icons.refresh : Icons.refresh,
+                    size: 14,
+                    color: Colors.white.withValues(alpha: 0.6),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -3416,8 +3417,8 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
     }
     return Column(
       children: _sellOrders.take(10).map((order) {
-        final price = (order['price'] ?? 0.0) as double;
-        final amount = (order['amount'] ?? 0.0) as double;
+        final price = double.tryParse(order['price']?.toString() ?? '0.0') ?? 0.0;
+        final amount = double.tryParse(order['amount']?.toString() ?? '0.0') ?? 0.0;
         final total = price * amount;
         final isMyOrder = order['isMyOrder'] == true;
         
@@ -3503,8 +3504,8 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
     }
     return Column(
       children: _buyOrders.take(10).map((order) {
-        final price = (order['price'] ?? 0.0) as double;
-        final amount = (order['amount'] ?? 0.0) as double;
+        final price = double.tryParse(order['price']?.toString() ?? '0.0') ?? 0.0;
+        final amount = double.tryParse(order['amount']?.toString() ?? '0.0') ?? 0.0;
         final total = price * amount;
         final isMyOrder = order['isMyOrder'] == true;
         
@@ -3583,7 +3584,8 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
     );
   }
 
-  Widget _buildOpenOrdersSection() {
+  // Build tabbed section for Open and Closed orders (Slider style)
+  Widget _buildOrdersTabSection() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Container(
@@ -3592,62 +3594,53 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
           borderRadius: BorderRadius.circular(12),
         ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header with expand/collapse
-            Container(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Open Orders',
-                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+            // Custom Tab Bar / Slider Toggle
+            Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Container(
+                height: 40,
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0D0D0D),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: TabBar(
+                  controller: _ordersTabController,
+                  indicator: BoxDecoration(
+                    color: const Color(0xFF2A2A2A),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFF84BD00).withOpacity(0.3)),
                   ),
-                  Row(
-                    children: [
-                      TextButton(
-                        onPressed: () {},
-                        child: const Text(
-                          'All',
-                          style: TextStyle(color: Color(0xFF84BD00), fontSize: 12),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _isOpenOrdersExpanded = !_isOpenOrdersExpanded;
-                          });
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF2A2A2A),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Icon(
-                            _isOpenOrdersExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                        ),
-                      ),
-                    ],
+                  indicatorSize: TabBarIndicatorSize.tab,
+                  dividerColor: Colors.transparent,
+                  labelColor: const Color(0xFF84BD00),
+                  unselectedLabelColor: Colors.white54,
+                  labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  tabs: const [
+                    Tab(text: 'Open Orders'),
+                    Tab(text: 'Closed Orders'),
+                  ],
+                ),
+              ),
+            ),
+            // Tab Content
+            SizedBox(
+              height: 400,
+              child: TabBarView(
+                controller: _ordersTabController,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                    child: _buildOpenOrdersTable(),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                    child: _buildClosedOrdersTable(),
                   ),
                 ],
               ),
             ),
-            // Expandable content
-            if (_isOpenOrdersExpanded)
-              Container(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                constraints: BoxConstraints(
-                  minHeight: 300,
-                  maxHeight: 400,
-                ),
-                child: _buildOpenOrdersTable(),
-              ),
           ],
         ),
       ),
@@ -3732,10 +3725,10 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
 
   Widget _buildOrderRow(Map<String, dynamic> order) {
     final orderId = order['order_id']?.toString() ?? '';
-    final orderPrice = order['price'] ?? 0.0;
+    final orderPrice = double.tryParse(order['price']?.toString() ?? '0.0') ?? 0.0;
     final orderSide = order['side'] ?? 'Buy';
-    final orderQty = order['qty'] ?? 0.0;
-    final remaining = order['remaining'] ?? 0.0;
+    final orderQty = double.tryParse(order['qty']?.toString() ?? '0.0') ?? 0.0;
+    final remaining = double.tryParse(order['remaining']?.toString() ?? '0.0') ?? 0.0;
     final executed = orderQty - remaining;
     final total = orderPrice * orderQty;
     
@@ -3799,77 +3792,6 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
         ),
       );
     }
-  }
-
-  Widget _buildClosedOrdersSection() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Container(
-        decoration: BoxDecoration(
-          color: const Color(0xFF1A1A1A),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header with expand/collapse
-            Container(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Closed Orders',
-                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  Row(
-                    children: [
-                      TextButton(
-                        onPressed: () {},
-                        child: const Text(
-                          'All',
-                          style: TextStyle(color: Color(0xFF84BD00), fontSize: 12),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _isClosedOrdersExpanded = !_isClosedOrdersExpanded;
-                          });
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF2A2A2A),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Icon(
-                            _isClosedOrdersExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            // Expandable content
-            if (_isClosedOrdersExpanded)
-              Container(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                constraints: BoxConstraints(
-                  minHeight: 250,
-                  maxHeight: 350,
-                ),
-                child: _buildClosedOrdersTable(),
-              ),
-          ],
-        ),
-      ),
-    );
   }
 
   Widget _buildClosedOrdersTable() {
@@ -3942,10 +3864,10 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Si
 
   Widget _buildClosedOrderRow(Map<String, dynamic> order) {
     final orderId = order['order_id']?.toString() ?? order['id']?.toString() ?? '';
-    final orderPrice = order['price'] ?? 0.0;
+    final orderPrice = double.tryParse(order['price']?.toString() ?? '0.0') ?? 0.0;
     final orderSide = order['side'] ?? 'Buy';
-    final orderQty = order['qty'] ?? order['quantity'] ?? 0.0;
-    final executed = order['executed'] ?? orderQty;
+    final orderQty = double.tryParse((order['qty'] ?? order['quantity'])?.toString() ?? '0.0') ?? 0.0;
+    final executed = double.tryParse((order['executed'] ?? orderQty).toString()) ?? 0.0;
     final total = orderPrice * executed;
     final status = order['status'] ?? 'filled';
     
