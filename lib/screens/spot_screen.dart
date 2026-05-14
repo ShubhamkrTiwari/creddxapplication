@@ -92,75 +92,80 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
   @override
   void initState() {
     super.initState();
+    debugPrint('SpotScreen: initState started');
     
-    // Initialize tab controller for orders slider
-    _ordersTabController = TabController(length: 2, vsync: this);
-    
-    // Initialize Coming Soon animations
-    _comingSoonController = AnimationController(
-      duration: const Duration(seconds: 2),
-      vsync: this,
-    )..repeat(reverse: true);
+    try {
+      // Initialize tab controller for orders slider
+      _ordersTabController = TabController(length: 2, vsync: this);
+      
+      // Initialize Coming Soon animations
+      _comingSoonController = AnimationController(
+        duration: const Duration(seconds: 2),
+        vsync: this,
+      )..repeat(reverse: true);
 
-    _bounceAnimation = Tween<double>(begin: 0, end: -20).animate(
-      CurvedAnimation(
-        parent: _comingSoonController,
-        curve: Curves.easeInOut,
-      ),
-    );
+      _bounceAnimation = Tween<double>(begin: 0, end: -20).animate(
+        CurvedAnimation(
+          parent: _comingSoonController,
+          curve: Curves.easeInOut,
+        ),
+      );
 
-    _fadeAnimation = Tween<double>(begin: 0.5, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _comingSoonController,
-        curve: Curves.easeInOut,
-      ),
-    );
-    
-    // If Coming Soon mode is enabled, skip the rest of initialization
-    if (_isComingSoon) {
-      return;
+      _fadeAnimation = Tween<double>(begin: 0.5, end: 1.0).animate(
+        CurvedAnimation(
+          parent: _comingSoonController,
+          curve: Curves.easeInOut,
+        ),
+      );
+      
+      // If Coming Soon mode is enabled, skip the rest of initialization
+      if (_isComingSoon) {
+        debugPrint('SpotScreen: Coming Soon mode is active');
+        return;
+      }
+      
+      // Use initial symbol if provided
+      if (widget.initialSymbol != null && widget.initialSymbol!.isNotEmpty) {
+        _selectedSymbol = widget.initialSymbol!;
+        SpotService.currentSymbol = _selectedSymbol;
+      }
+      
+      // Initialize with default balance immediately
+      _balance = null;
+      _isLoadingBalance = true;
+      
+      // Restore persistent user orders
+      _buyOrders = List<Map<String, dynamic>>.from(SpotService.userBuyOrders);
+      _sellOrders = List<Map<String, dynamic>>.from(SpotService.userSellOrders);
+      _selectedSymbol = SpotService.currentSymbol;
+      
+      // Initialize price controller
+      _priceController.text = _currentPrice.toStringAsFixed(2);
+      
+      // Add listener to amount controller to update funds required display
+      _amountController.addListener(_onAmountChanged);
+      
+      // Add fallback order book data initially to prevent empty display
+      if (_sellOrders.isEmpty && _buyOrders.isEmpty) {
+        _addFallbackOrderBookData();
+      }
+      
+      // Load data
+      _loadRealMarketPrice();
+      _loadBinanceMarketData();
+      _updateAvailableCoins();
+      _loadSpotData();
+      _initializeWebSocket();
+      _subscribeToBalance();
+      _subscribeToConnectionState();
+      
+      // Register lifecycle observer
+      WidgetsBinding.instance.addObserver(this);
+      debugPrint('SpotScreen: initState completed successfully');
+    } catch (e, stack) {
+      debugPrint('SpotScreen: ERROR in initState: $e');
+      debugPrint(stack.toString());
     }
-    
-    // Use initial symbol if provided
-    if (widget.initialSymbol != null && widget.initialSymbol!.isNotEmpty) {
-      _selectedSymbol = widget.initialSymbol!;
-      SpotService.currentSymbol = _selectedSymbol;
-    }
-    
-    // Initialize with default balance immediately (will be updated via SocketService)
-    _balance = null;
-    _isLoadingBalance = true;
-    
-    // Restore persistent user orders
-    _buyOrders = List<Map<String, dynamic>>.from(SpotService.userBuyOrders);
-    _sellOrders = List<Map<String, dynamic>>.from(SpotService.userSellOrders);
-    _selectedSymbol = SpotService.currentSymbol;
-    
-    // Initialize price controller
-    _priceController.text = _currentPrice.toStringAsFixed(2);
-    
-    // Add listener to amount controller to update funds required display
-    _amountController.addListener(_onAmountChanged);
-    
-    // Add fallback order book data initially to prevent empty display
-    if (_sellOrders.isEmpty && _buyOrders.isEmpty) {
-      _addFallbackOrderBookData();
-    }
-    
-    // Load real market price immediately from Binance
-    _loadRealMarketPrice();
-    
-    // Load market data for dropdown
-    _loadBinanceMarketData();
-    
-    _updateAvailableCoins();
-    _loadSpotData();
-    _initializeWebSocket();
-    _subscribeToBalance();
-    _subscribeToConnectionState();
-    
-    // Register lifecycle observer
-    WidgetsBinding.instance.addObserver(this);
   }
 
   @override
@@ -238,7 +243,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
   // Load real market price from Binance API immediately
   Future<void> _loadRealMarketPrice() async {
     try {
-      print('Loading real market price for $_selectedSymbol from Binance...');
+      debugPrint('Loading real market price for $_selectedSymbol from Binance...');
       final binanceTicker = await BinanceService.getTickerData(_selectedSymbol);
       if (binanceTicker != null && binanceTicker['price'] != null) {
         final realPrice = binanceTicker['price'] as double;
@@ -253,11 +258,11 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
             _ticker!['high_24h'] = binanceTicker['highPrice'];
             _ticker!['low_24h'] = binanceTicker['lowPrice'];
           });
-          print('Real market price loaded: $_currentPrice');
+          debugPrint('Real market price loaded: $_currentPrice');
         }
       }
     } catch (e) {
-      print('Error loading real market price: $e');
+      debugPrint('Error loading real market price: $e');
     }
   }
 
@@ -619,7 +624,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
         });
       }
     } catch (e) {
-      print('Error loading Binance market data: $e');
+      debugPrint('Error loading Binance market data: $e');
       if (mounted) {
         setState(() {
           _isLoadingMarkets = false;
@@ -645,7 +650,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
         _showMessage('Data refreshed successfully!', isError: false);
       }
     } catch (e) {
-      print('Error refreshing data: $e');
+      debugPrint('Error refreshing data: $e');
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -688,7 +693,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
         });
       }
     } catch (e) {
-      print('Error loading symbols: $e');
+      debugPrint('Error loading symbols: $e');
       setState(() {
         _isLoadingSymbols = false;
       });
@@ -705,7 +710,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
         });
       }
     } catch (e) {
-      print('Error loading fees: $e');
+      debugPrint('Error loading fees: $e');
     }
   }
 
@@ -719,7 +724,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
         });
       }
     } catch (e) {
-      print('Error loading health status: $e');
+      debugPrint('Error loading health status: $e');
     }
   }
 
@@ -727,7 +732,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
   Future<void> _loadTicker() async {
     try {
       // Always try to get real price from Binance first
-      print('Loading real market price for $_selectedSymbol from Binance...');
+      debugPrint('Loading real market price for $_selectedSymbol from Binance...');
       final binanceTicker = await BinanceService.getTickerData(_selectedSymbol);
       if (binanceTicker != null && binanceTicker['price'] != null) {
         final realPrice = binanceTicker['price'] as double;
@@ -742,7 +747,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
             _ticker!['high_24h'] = binanceTicker['highPrice'];
             _ticker!['low_24h'] = binanceTicker['lowPrice'];
           });
-          print('Real market price loaded: $_currentPrice');
+          debugPrint('Real market price loaded: $_currentPrice');
           return; // Exit early since we got real price
         }
       }
@@ -762,7 +767,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
         }
       }
     } catch (e) {
-      print('Error loading ticker: $e');
+      debugPrint('Error loading ticker: $e');
     }
   }
 
@@ -804,15 +809,15 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
         'amount': double.tryParse(b['amount'].toString()) ?? 0.0,
       }));
           
-          print('Order book loaded: ${_sellOrders.length} asks, ${_buyOrders.length} bids');
+          debugPrint('Order book loaded: ${_sellOrders.length} asks, ${_buyOrders.length} bids');
         });
       } else {
-        print('Order book API failed: ${result['error']}');
+        debugPrint('Order book API failed: ${result['error']}');
         // Add fallback mock data to prevent empty order book
         _addFallbackOrderBookData();
       }
     } catch (e) {
-      print('Error loading order book: $e');
+      debugPrint('Error loading order book: $e');
       // Add fallback mock data to prevent empty order book
       _addFallbackOrderBookData();
     }
@@ -858,7 +863,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
       _sellOrders.sort((a, b) => (a['price'] as double).compareTo(b['price'] as double));
       _buyOrders.sort((a, b) => (b['price'] as double).compareTo(a['price'] as double));
       
-      print('Fallback order book data added');
+      debugPrint('Fallback order book data added');
     });
   }
 
@@ -866,30 +871,30 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
   // Load open orders
   Future<void> _loadOpenOrders() async {
     try {
-      print('Loading open orders for symbol: $_selectedSymbol');
+      debugPrint('Loading open orders for symbol: $_selectedSymbol');
       final result = await SpotService.getOpenOrders(symbol: _selectedSymbol);
-      print('Open orders result: $result');
+      debugPrint('Open orders result: $result');
       
       if (result['success'] && result['data'] != null) {
         final ordersData = result['data'];
-        print('Orders data type: ${ordersData.runtimeType}');
-        print('Orders data: $ordersData');
+        debugPrint('Orders data type: ${ordersData.runtimeType}');
+        debugPrint('Orders data: $ordersData');
         setState(() {
           if (ordersData is List) {
             _openOrders = List<Map<String, dynamic>>.from(ordersData);
           } else {
             _openOrders = [];
           }
-          print('Open orders loaded: ${_openOrders.length} orders');
+          debugPrint('Open orders loaded: ${_openOrders.length} orders');
         });
       } else {
-        print('Open orders error: ${result['error']}');
+        debugPrint('Open orders error: ${result['error']}');
         setState(() {
           _openOrders = [];
         });
       }
     } catch (e) {
-      print('Error loading open orders: $e');
+      debugPrint('Error loading open orders: $e');
       setState(() {
         _openOrders = [];
       });
@@ -899,13 +904,13 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
   // Load closed orders
   Future<void> _loadClosedOrders() async {
     try {
-      print('Loading closed orders for symbol: $_selectedSymbol');
+      debugPrint('Loading closed orders for symbol: $_selectedSymbol');
       final result = await SpotService.getUserTradeHistory(symbol: _selectedSymbol);
-      print('Closed orders result: $result');
+      debugPrint('Closed orders result: $result');
       
       if (result['success'] && result['data'] != null) {
         final ordersData = result['data'];
-        print('Closed orders data type: ${ordersData.runtimeType}');
+        debugPrint('Closed orders data type: ${ordersData.runtimeType}');
         
         setState(() {
           if (ordersData is List) {
@@ -913,16 +918,16 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
           } else {
             _closedOrders = [];
           }
-          print('Loaded ${_closedOrders.length} closed orders');
+          debugPrint('Loaded ${_closedOrders.length} closed orders');
         });
       } else {
-        print('Failed to load closed orders: ${result['error']}');
+        debugPrint('Failed to load closed orders: ${result['error']}');
         setState(() {
           _closedOrders = [];
         });
       }
     } catch (e) {
-      print('Error loading closed orders: $e');
+      debugPrint('Error loading closed orders: $e');
       setState(() {
         _closedOrders = [];
       });
@@ -1102,7 +1107,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
 
     // Debug print for Market orders
     if (_orderType == 'Market') {
-      print('Market Order Validation: amount=$_amount, price=$effectivePrice, qty=$currentQty, minQty=$minQty');
+      debugPrint('Market Order Validation: amount=$_amount, price=$effectivePrice, qty=$currentQty, minQty=$minQty');
     }
 
     if (currentQty < minQty) {
@@ -1184,16 +1189,16 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
         return;
       }
       
-      print('=== ORDER PLACEMENT ===');
-      print('Amount (input): $_amount $_selectedAmountCoin');
-      print('Qty (Base Asset): $qty');
-      print('Price: $effectivePrice');
-      print('Order Type: $_orderType');
-      print('Side (User): ${_isBuy ? 'Buy' : 'Sell'}');
-      print('Side (API): $apiSide');
-      print('Symbol: $_selectedSymbol');
-      print('Total: \$$total');
-      print('====================');
+      debugPrint('=== ORDER PLACEMENT ===');
+      debugPrint('Amount (input): $_amount $_selectedAmountCoin');
+      debugPrint('Qty (Base Asset): $qty');
+      debugPrint('Price: $effectivePrice');
+      debugPrint('Order Type: $_orderType');
+      debugPrint('Side (User): ${_isBuy ? 'Buy' : 'Sell'}');
+      debugPrint('Side (API): $apiSide');
+      debugPrint('Symbol: $_selectedSymbol');
+      debugPrint('Total: \$$total');
+      debugPrint('====================');
       
       final result = await SpotService.placeOrder(
         symbol: _selectedSymbol,
@@ -1203,8 +1208,8 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
         price: _orderType == 'Market' ? 0.0 : (double.tryParse(_priceController.text) ?? 0.0),
       );
 
-      print('Order result: $result');
-      print('Result data type: ${result['data']?.runtimeType}');
+      debugPrint('Order result: $result');
+      debugPrint('Result data type: ${result['data']?.runtimeType}');
 
       // Handle both bool and String types for success
       final isSuccess = result['success'] is bool ? result['success'] : result['success']?.toString() == 'true';
@@ -1266,7 +1271,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
         for (int i = 1; i <= 3; i++) {
           Future.delayed(Duration(milliseconds: 500 * i), () {
             if (mounted) {
-              print('Delayed balance refresh #$i');
+              debugPrint('Delayed balance refresh #$i');
               _loadBalance(forceRefresh: true);
             }
           });
@@ -1303,7 +1308,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
         _showMessage(userFriendlyError, isError: true);
       }
     } catch (e) {
-      print('Error placing order: $e');
+      debugPrint('Error placing order: $e');
       final errorStr = e.toString().toLowerCase();
       if (errorStr.contains('timeout') || errorStr.contains('socket')) {
         _showMessage('Network timeout. Please check your connection and try again', isError: true);
@@ -1662,7 +1667,8 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
 
   @override
   Widget build(BuildContext context) {
-    // Show Coming Soon screen when feature is not yet live
+    debugPrint('SpotScreen: build called, _isComingSoon=$_isComingSoon');
+    
     if (_isComingSoon) {
       return _buildComingSoonScreen();
     }
@@ -1671,22 +1677,81 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
       backgroundColor: const Color(0xFF0D0D0D),
       appBar: _buildAppBar(),
       body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: 20),
-              _buildTradingSection(),
-              const SizedBox(height: 20),
-              _buildOrdersTabSection(),
-              const SizedBox(height: 100),
-            ],
-          ),
+        child: Column(
+          children: [
+            _buildTopStatsBar(),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  if (constraints.maxWidth > 900) {
+                    // Desktop/Tablet Horizontal Layout
+                    return Column(
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: Padding(
+                            padding: const EdgeInsets.all(8.0),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                // 1. Buy/Sell Panel
+                                SizedBox(
+                                  width: 320,
+                                  child: _buildBuySellSection(),
+                                ),
+                                const SizedBox(width: 8),
+                                // 2. Order Book Section
+                                SizedBox(
+                                  width: 280, 
+                                  child: _buildOrderBook(),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        // 3. Orders History Section (Bottom)
+                        Expanded(
+                          flex: 1,
+                          child: _buildOrdersTabSection(),
+                        ),
+                      ],
+                    );
+                  } else {
+                    // Mobile Vertical Layout
+                    return SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Column(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            child: SizedBox(
+                              height: 480, // Reduced height to remove empty space at the bottom
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Expanded(child: _buildBuySellSection()), 
+                                  const SizedBox(width: 12),
+                                  Expanded(child: _buildOrderBook()), 
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          _buildOrdersTabSection(height: 400),
+                          const SizedBox(height: 100),
+                        ],
+                      ),
+                    );
+                  }
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
-  }
+
 
   // Coming Soon screen - similar to FuturesScreen
   Widget _buildComingSoonScreen() {
@@ -1803,82 +1868,146 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
     return AppBar(
       backgroundColor: const Color(0xFF0D0D0D),
       elevation: 0,
+      toolbarHeight: 60,
+      automaticallyImplyLeading: false,
       title: GestureDetector(
         onTap: _showMarketDropdown,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1A1A1A),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0xFF2A2A2A)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CoinIconMapper.getCoinIcon(_selectedSymbol.replaceAll('USDT', ''), size: 20),
-              const SizedBox(width: 8),
-              Text(
-                _selectedSymbol.replaceAll('USDT', '/USDT'),
-                style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(width: 4),
-              Icon(Icons.keyboard_arrow_down, color: Colors.white.withValues(alpha: 0.6), size: 20),
-              if (_isLoadingMarkets)
-                const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: BitcoinLoadingIndicator(size: 16),
+        child: Row(
+          children: [
+            CoinIconMapper.getCoinIcon(_selectedSymbol.replaceAll('USDT', ''), size: 24),
+            const SizedBox(width: 8),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      _selectedSymbol.replaceAll('USDT', '/USDT'),
+                      style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const Icon(Icons.arrow_drop_down, color: Colors.white54, size: 20),
+                  ],
                 ),
-            ],
-          ),
+                Row(
+                  children: [
+                    Text(
+                      '${_currentPrice.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        color: _isPriceUp ? const Color(0xFF84BD00) : Colors.red,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      _isPriceUp ? Icons.arrow_upward : Icons.arrow_downward,
+                      color: _isPriceUp ? const Color(0xFF84BD00) : Colors.red,
+                      size: 12,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
         ),
       ),
       actions: [
-        // Chart Button
         IconButton(
-          onPressed: () {
-            // Navigate to chart screen
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => ChartScreen()),
-            );
-          },
-          icon: const Icon(
-            Icons.show_chart,
-            color: Colors.white,
-            size: 20,
+          onPressed: () => Navigator.push(
+            context, 
+            MaterialPageRoute(
+              builder: (context) => ChartScreen(
+                symbol: _selectedSymbol,
+                coinName: _selectedSymbol.replaceAll('USDT', ''),
+              )
+            )
           ),
-          tooltip: 'Chart',
+          icon: const Icon(Icons.show_chart, color: Colors.white70),
         ),
-        // WebSocket Connection Status Indicator
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: _isWebSocketConnected ? const Color(0xFF84BD00) : Colors.red.withValues(alpha: 0.8),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                _isWebSocketConnected ? Icons.wifi : Icons.wifi_off,
-                color: Colors.white,
-                size: 12,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                _isWebSocketConnected ? 'Live' : 'Offline',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
+        _connectionIndicator(),
         const SizedBox(width: 8),
       ],
+    );
+  }
+
+  Widget _buildTopStatsBar() {
+    final priceChange = _ticker?['price_change_24h'] ?? '0.00';
+    final priceChangePercent = _ticker?['price_change_percent_24h'] ?? '0.00';
+    final volume24h = _ticker?['volume_24h'] ?? '0.00';
+    final high24h = _ticker?['high_24h'] ?? '0.00';
+    final low24h = _ticker?['low_24h'] ?? '0.00';
+    final isPositive = double.tryParse(priceChange.toString()) != null && double.tryParse(priceChange.toString())! >= 0;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+      decoration: const BoxDecoration(
+        color: Color(0xFF141414),
+        border: Border(bottom: BorderSide(color: Colors.white10)),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            _appBarStat('24h Change', '$priceChange ($priceChangePercent%)', color: isPositive ? const Color(0xFF84BD00) : Colors.red),
+            _appBarStat('24h High', '$high24h'),
+            _appBarStat('24h Low', '$low24h'),
+            _appBarStat('24h Vol(USDT)', '$volume24h'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _appBarStat(String label, String value, {Color? color}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(label, style: const TextStyle(color: Colors.white54, fontSize: 10)),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(color: color ?? Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _connectionIndicator() {
+    return Container(
+      margin: const EdgeInsets.only(right: 12, top: 20, bottom: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: _isWebSocketConnected ? const Color(0xFF84BD00).withValues(alpha: 0.1) : Colors.red.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: _isWebSocketConnected ? const Color(0xFF84BD00).withValues(alpha: 0.3) : Colors.red.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              color: _isWebSocketConnected ? const Color(0xFF84BD00) : Colors.red,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            _isWebSocketConnected ? 'Live' : 'Offline',
+            style: TextStyle(
+              color: _isWebSocketConnected ? const Color(0xFF84BD00) : Colors.red,
+              fontSize: 8,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1890,13 +2019,15 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
           // Market Statistics
           _buildMarketStats(),
           const SizedBox(height: 12),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(flex: 1, child: _buildBuySellSection()),
-              const SizedBox(width: 12),
-              Expanded(flex: 1, child: _buildOrderBook()),
-            ],
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: _buildBuySellSection()),
+                const SizedBox(width: 12),
+                Expanded(child: _buildOrderBook()),
+              ],
+            ),
           ),
         ],
       ),
@@ -2014,40 +2145,99 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
 
   Widget _buildBuySellSection() {
     return Container(
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white10),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // 1. Buy/Sell Toggle
           _buildBuySellToggle(),
-          const SizedBox(height: 20),
-          _buildOrderTypeToggle(),
-          const SizedBox(height: 20),
-          if (_orderType == 'Limit') ...[
-            _buildPriceInput(),
-            const SizedBox(height: 16),
-          ],
-          if (_orderType == 'Market') ...[
-            _buildMarketAmountInput(),
-            const SizedBox(height: 12),
-            _buildMarketPercentageButtons(),
-            const SizedBox(height: 16),
-            _buildMarketAmountInfo(),
-            const SizedBox(height: 20),
-          ] else ...[
-            _buildAmountInput(),
-            const SizedBox(height: 12),
-            _buildPercentageButtons(),
-            const SizedBox(height: 12),
-            const SizedBox(height: 16),
-            _buildTotalInfo(),
-            const SizedBox(height: 20),
-          ],
-          _buildBuySellButton(),
+          
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(12.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 2. Limit/Market Selector
+                _buildOrderTypeToggle(),
+                const SizedBox(height: 12),
+                
+                // 3. Inputs
+                if (_orderType == 'Limit') ...[
+                  _buildPriceInput(),
+                  const SizedBox(height: 12),
+                ],
+                _buildAmountInput(),
+                const SizedBox(height: 12),
+                
+                // 4. Percentage Buttons
+                _buildPercentageButtons(),
+                const SizedBox(height: 12),
+                
+                // 5. Info Rows
+                _buildInfoRow('Funds req.', '${(_amount * _currentPrice).toStringAsFixed(2)} USDT'),
+                const SizedBox(height: 8),
+                _buildInfoRow('Available', '${(_balance?['usdt_available'] ?? 0.0).toStringAsFixed(2)} USDT'),
+                const Spacer(), // Pushes the button to the bottom
+                
+                // 6. Action Button
+                _buildPlaceOrderButton(),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+  Widget _buildInfoRow(String label, String value) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white38, fontSize: 12)),
+        Text(value, style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w500)),
+      ],
+    );
+  }
+
+  Widget _buildPlaceOrderButton() {
+    return Container(
+      width: double.infinity,
+      height: 48,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: _isBuy 
+              ? [const Color(0xFF84BD00), const Color(0xFF5A8100)]
+              : [const Color(0xFFEF4444), const Color(0xFF991B1B)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: (_isBuy ? const Color(0xFF84BD00) : Colors.red).withValues(alpha: 0.3),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
         ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: _placeOrder,
+          borderRadius: BorderRadius.circular(8),
+          child: Center(
+            child: Text(
+              'Place ${_isBuy ? 'Buy' : 'Sell'} Order',
+              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -2056,8 +2246,9 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
     return Container(
       height: 32,
       decoration: BoxDecoration(
-        color: const Color(0xFF2A2A2A),
+        color: const Color(0xFF0D0D0D),
         borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.white10),
       ),
       child: Row(
         children: [
@@ -2233,16 +2424,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
         // Show Market Price reference above Limit Price
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Limit Price',
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12),
-            ),
-            Text(
-              'MP: ${_currentPrice.toStringAsFixed(2)}',
-              style: const TextStyle(color: Color(0xFF84BD00), fontSize: 10, fontWeight: FontWeight.w500),
-            ),
-          ],
+
         ),
         const SizedBox(height: 4),
         Container(
@@ -2702,17 +2884,17 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
       onTap: () {
         setState(() {
           _sliderValue = percentage;
-          print('Market% tap: label=$label, percentage=$percentage, isBaseAsset=$isBaseAsset');
-          print('Market% tap: _currentPrice=$_currentPrice, _balance=$_balance');
+          debugPrint('Market% tap: label=$label, percentage=$percentage, isBaseAsset=$isBaseAsset');
+          debugPrint('Market% tap: _currentPrice=$_currentPrice, _balance=$_balance');
           if (_isBuy) {
             if (isBaseAsset) {
               // BTC selected - calculate BTC amount from available USDT
               final availableUsdt = double.tryParse(_balance?['usdt_available']?.toString() ?? '0') ?? 0.0;
               final usdtToSpend = availableUsdt * percentage;
-              print('Market% tap: availableUsdt=$availableUsdt, usdtToSpend=$usdtToSpend');
+              debugPrint('Market% tap: availableUsdt=$availableUsdt, usdtToSpend=$usdtToSpend');
               // Show actual calculated value (proportional to percentage)
               _amount = _currentPrice > 0 ? (usdtToSpend / _currentPrice) : 0.0;
-              print('Market% tap: calculated _amount=$_amount');
+              debugPrint('Market% tap: calculated _amount=$_amount');
             } else {
               // USDT selected - show USDT amount directly
               final availableUsdt = double.tryParse(_balance?['usdt_available']?.toString() ?? '0') ?? 0.0;
@@ -2977,7 +3159,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
     // Check if user needs verification (mock check)
     final needsVerification = false; // Change this based on your verification logic
     
-    print('_buildBuySellButton: _isLoading=$_isLoading, _amount=$_amount, _orderType=$_orderType');
+    debugPrint('_buildBuySellButton: _isLoading=$_isLoading, _amount=$_amount, _orderType=$_orderType');
 
     // Calculate if quantity is below minimum (only check for Limit orders)
     bool isBelowMin = false;
@@ -2987,12 +3169,12 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
           : _selectedSymbol.split('/').first;
       final isBaseAsset = _selectedAmountCoin == baseAsset;
       final effectivePrice = double.tryParse(_priceController.text) ?? _currentPrice;
-      print('Button check: _orderType=$_orderType, effectivePrice=$effectivePrice');
+      debugPrint('Button check: _orderType=$_orderType, effectivePrice=$effectivePrice');
       if (effectivePrice > 0) {
         final minQty = _getMinQty(_selectedSymbol);
         final currentQty = isBaseAsset ? _amount : (_amount / effectivePrice);
         isBelowMin = currentQty < minQty;
-        print('Button check: minQty=$minQty, currentQty=$currentQty, isBelowMin=$isBelowMin');
+        debugPrint('Button check: minQty=$minQty, currentQty=$currentQty, isBelowMin=$isBelowMin');
       }
     }
 
@@ -3019,7 +3201,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
 
     return GestureDetector(
       onTap: (_isLoading || isBelowMin) ? null : () {
-        print('Buy button tapped: _isLoading=$_isLoading, isBelowMin=$isBelowMin, _amount=$_amount');
+        debugPrint('Buy button tapped: _isLoading=$_isLoading, isBelowMin=$isBelowMin, _amount=$_amount');
         _placeOrder();
       },
       child: Container(
@@ -3043,8 +3225,8 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
         child: Center(
           child: _isLoading
               ? const SizedBox(
-                  width: 20,
-                  height: 20,
+                  width: 24,
+                  height: 24,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
                     valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
@@ -3054,7 +3236,7 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
                   'Place Spot Order',
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 16,
+                    fontSize: 14,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -3300,348 +3482,220 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
 
   Widget _buildOrderBook() {
     return Container(
-      padding: const EdgeInsets.all(8),
-      constraints: const BoxConstraints(
-        maxHeight: 420,
-        minHeight: 360,
-      ),
       decoration: BoxDecoration(
         color: const Color(0xFF1A1A1A),
         borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white10),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header Row
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Order Book',
-                style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF2A2A2A),
-                  borderRadius: BorderRadius.circular(3),
-                ),
-                child: const Text(
-                  'Top 10',
-                  style: TextStyle(color: Color(0xFF84BD00), fontSize: 8),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          // Column Headers
-          Row(
-            children: [
-              Expanded(
-                flex: 2,
-                child: Text(
-                  'Price (USDT)',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 8),
-                ),
-              ),
-              Expanded(
-                flex: 2,
-                child: Text(
-                  'Amount (BTC)',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 8),
-                ),
-              ),
-              Expanded(
-                flex: 2,
-                child: Text(
-                  'Total',
-                  textAlign: TextAlign.right,
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 8),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 2),
-          // Sell Orders (Asks) - Red
-          Flexible(
-            flex: 1,
-            child: _buildSellOrders(),
-          ),
-          // Market Price Display
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            decoration: const BoxDecoration(
-              border: Border.symmetric(horizontal: BorderSide(color: Colors.white10)),
-            ),
-            child: Column(
+          // Header
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: _isPriceFlashing ? _flashColor.withValues(alpha: 0.2) : Colors.transparent,
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                  child: _currentPrice > 0
-                    ? Text(
-                        _currentPrice.toStringAsFixed(2),
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: _isPriceFlashing 
-                            ? _flashColor 
-                            : (_isPriceUp ? const Color(0xFF84BD00) : Colors.red), 
-                          fontSize: 16, 
-                          fontWeight: FontWeight.bold,
-                        ),
-                      )
-                    : const SizedBox.shrink(),
-                ),
+                SizedBox(width: 60, child: _orderBookHeader('Price', textAlign: TextAlign.left)),
+                Expanded(child: _orderBookHeader('Amount', textAlign: TextAlign.center)),
+                SizedBox(width: 50, child: _orderBookHeader('Total', textAlign: TextAlign.center)),
               ],
             ),
           ),
-          // Buy Orders (Bids) - Green
-          Flexible(
-            flex: 1,
-            child: _buildBuyOrders(),
+          // Sell Orders (Top)
+          Expanded(
+            child: ListView.builder(
+              reverse: true, // Asks are usually sorted low to high, shown top down
+              itemCount: _sellOrders.length.clamp(0, 10),
+              padding: EdgeInsets.zero,
+              itemBuilder: (context, index) {
+                if (index >= _sellOrders.length) return const SizedBox.shrink();
+                final order = _sellOrders[index];
+                return _buildOrderBookRow(order, isBuy: false);
+              },
+            ),
+          ),
+          // Current Price Divider
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0D0D0D),
+              border: Border.symmetric(horizontal: BorderSide(color: Colors.white10)),
+            ),
+            child: Center(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    _currentPrice.toStringAsFixed(2),
+                    style: TextStyle(
+                      color: _isPriceUp ? const Color(0xFF84BD00) : Colors.red,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    _isPriceUp ? Icons.arrow_upward : Icons.arrow_downward,
+                    color: _isPriceUp ? const Color(0xFF84BD00) : Colors.red,
+                    size: 14,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Buy Orders (Bottom)
+          Expanded(
+            child: ListView.builder(
+              itemCount: _buyOrders.length.clamp(0, 10),
+              padding: EdgeInsets.zero,
+              itemBuilder: (context, index) {
+                if (index >= _buyOrders.length) return const SizedBox.shrink();
+                final order = _buyOrders[index];
+                return _buildOrderBookRow(order, isBuy: true);
+              },
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildSellOrders() {
-    print('Building sell orders: ${_sellOrders.length} orders');
-    if (_sellOrders.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    return Column(
-      children: _sellOrders.take(10).map((order) {
-        final price = double.tryParse(order['price']?.toString() ?? '0.0') ?? 0.0;
-        final amount = double.tryParse(order['amount']?.toString() ?? '0.0') ?? 0.0;
-        final total = price * amount;
-        final isMyOrder = order['isMyOrder'] == true;
-        
-        return Container(
-          padding: const EdgeInsets.symmetric(vertical: 0.5),
-          decoration: BoxDecoration(
-            color: isMyOrder ? Colors.red.withValues(alpha: 0.1) : null,
-            borderRadius: BorderRadius.circular(2),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                flex: 3,
-                child: Row(
-                  children: [
-                    Flexible(
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-                          price.toStringAsFixed(2),
-                          style: TextStyle(
-                            color: isMyOrder ? Colors.red : Colors.red.withValues(alpha: 0.9), 
-                            fontSize: 9,
-                            fontWeight: isMyOrder ? FontWeight.bold : FontWeight.normal,
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (isMyOrder) ...[
-                      const SizedBox(width: 2),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 0),
-                        decoration: BoxDecoration(
-                          color: Colors.red.withValues(alpha: 0.3),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                        child: const Text(
-                          'You',
-                          style: TextStyle(
-                            color: Colors.red,
-                            fontSize: 6,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              Expanded(
-                flex: 2,
-                child: Text(
-                  amount.toStringAsFixed(6),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: isMyOrder ? Colors.red : Colors.red.withValues(alpha: 0.7), 
-                    fontSize: 9,
-                  ),
-                ),
-              ),
-              Expanded(
-                flex: 2,
-                child: Text(
-                  total.toStringAsFixed(2),
-                  textAlign: TextAlign.right,
-                  style: TextStyle(
-                    color: isMyOrder ? Colors.red : Colors.red.withValues(alpha: 0.7), 
-                    fontSize: 9,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      }).toList(),
+  Widget _orderBookHeader(String text, {TextAlign textAlign = TextAlign.center}) {
+    return Text(
+      text,
+      style: const TextStyle(color: Colors.white38, fontSize: 7),
+      textAlign: textAlign,
     );
   }
 
-  Widget _buildBuyOrders() {
-    print('Building buy orders: ${_buyOrders.length} orders');
-    if (_buyOrders.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    return Column(
-      children: _buyOrders.take(10).map((order) {
-        final price = double.tryParse(order['price']?.toString() ?? '0.0') ?? 0.0;
-        final amount = double.tryParse(order['amount']?.toString() ?? '0.0') ?? 0.0;
-        final total = price * amount;
-        final isMyOrder = order['isMyOrder'] == true;
-        
-        return Container(
-          padding: const EdgeInsets.symmetric(vertical: 0.5),
-          decoration: BoxDecoration(
-            color: isMyOrder ? const Color(0xFF84BD00).withValues(alpha: 0.1) : null,
-            borderRadius: BorderRadius.circular(2),
+  Widget _buildOrderBookRow(Map<String, dynamic> order, {required bool isBuy}) {
+    final price = double.tryParse(order['price'].toString()) ?? 0.0;
+    final amount = double.tryParse(order['amount'].toString()) ?? 0.0;
+    final total = price * amount;
+    
+    // Calculate volume bar width (simulated based on amount)
+    final maxAmount = 2.0; 
+    final volumeWidth = (amount / maxAmount).clamp(0.0, 1.0);
+
+    return Stack(
+      children: [
+        // Volume Bar Background
+        Align(
+          alignment: Alignment.centerRight,
+          child: Container(
+            width: volumeWidth * 150,
+            height: 20,
+            color: (isBuy ? const Color(0xFF84BD00) : Colors.red).withValues(alpha: 0.1),
           ),
+        ),
+        // Data Row
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
           child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Expanded(
-                flex: 3,
-                child: Row(
-                  children: [
-                    Flexible(
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-                          price.toStringAsFixed(2),
-                          style: TextStyle(
-                            color: isMyOrder ? const Color(0xFF84BD00) : const Color(0xFF84BD00).withValues(alpha: 0.9), 
-                            fontSize: 9,
-                            fontWeight: isMyOrder ? FontWeight.bold : FontWeight.normal,
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (isMyOrder) ...[
-                      const SizedBox(width: 2),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 0),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF84BD00).withValues(alpha: 0.3),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                        child: const Text(
-                          'You',
-                          style: TextStyle(
-                            color: Color(0xFF84BD00),
-                            fontSize: 6,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              Expanded(
-                flex: 2,
+              SizedBox(
+                width: 60,
                 child: Text(
-                  amount.toStringAsFixed(6),
-                  textAlign: TextAlign.center,
+                  price.toStringAsFixed(2),
                   style: TextStyle(
-                    color: isMyOrder ? const Color(0xFF84BD00) : const Color(0xFF84BD00).withValues(alpha: 0.7), 
-                    fontSize: 9,
+                    color: isBuy ? const Color(0xFF84BD00) : Colors.red,
+                    fontSize: 8,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ),
               Expanded(
-                flex: 2,
+                child: Text(
+                  amount.toStringAsFixed(5),
+                  style: const TextStyle(color: Colors.white70, fontSize: 7),
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              SizedBox(
+                width: 50,
                 child: Text(
                   total.toStringAsFixed(2),
-                  textAlign: TextAlign.right,
-                  style: TextStyle(
-                    color: isMyOrder ? const Color(0xFF84BD00) : const Color(0xFF84BD00).withValues(alpha: 0.7), 
-                    fontSize: 9,
-                  ),
+                  style: const TextStyle(color: Colors.white70, fontSize: 7),
+                  textAlign: TextAlign.center,
                 ),
               ),
             ],
           ),
-        );
-      }).toList(),
+        ),
+      ],
     );
   }
+
+
 
   // Build tabbed section for Open and Closed orders (Slider style)
-  Widget _buildOrdersTabSection() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+  Widget _buildOrdersTabSection({double? height}) {
+    Widget content = Container(
+      margin: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D0D0D),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        children: [
+          // Tab Selection Row
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: Colors.white10)),
+            ),
+            child: Row(
+              children: [
+                _ordersTab('Open Order', 0),
+                const SizedBox(width: 24),
+                _ordersTab('Closed Order', 1),
+              ],
+            ),
+          ),
+          // Tab Content
+          Expanded(
+            child: TabBarView(
+              controller: _ordersTabController,
+              children: [
+                _buildOpenOrdersTable(),
+                _buildClosedOrdersTable(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (height != null) {
+      return SizedBox(height: height, child: content);
+    }
+    return content;
+  }
+
+  Widget _ordersTab(String label, int index) {
+    final isActive = _ordersTabController.index == index;
+    return GestureDetector(
+      onTap: () => setState(() => _ordersTabController.index = index),
       child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
         decoration: BoxDecoration(
-          color: const Color(0xFF1A1A1A),
-          borderRadius: BorderRadius.circular(12),
+          border: Border(
+            bottom: BorderSide(
+              color: isActive ? const Color(0xFF84BD00) : Colors.transparent,
+              width: 2,
+            ),
+          ),
         ),
-        child: Column(
-          children: [
-            // Custom Tab Bar / Slider Toggle
-            Padding(
-              padding: const EdgeInsets.all(12.0),
-              child: Container(
-                height: 40,
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0D0D0D),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: TabBar(
-                  controller: _ordersTabController,
-                  indicator: BoxDecoration(
-                    color: const Color(0xFF2A2A2A),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: const Color(0xFF84BD00).withOpacity(0.3)),
-                  ),
-                  indicatorSize: TabBarIndicatorSize.tab,
-                  dividerColor: Colors.transparent,
-                  labelColor: const Color(0xFF84BD00),
-                  unselectedLabelColor: Colors.white54,
-                  labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                  tabs: const [
-                    Tab(text: 'Open Orders'),
-                    Tab(text: 'Closed Orders'),
-                  ],
-                ),
-              ),
-            ),
-            // Tab Content
-            SizedBox(
-              height: 400,
-              child: TabBarView(
-                controller: _ordersTabController,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                    child: _buildOpenOrdersTable(),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                    child: _buildClosedOrdersTable(),
-                  ),
-                ],
-              ),
-            ),
-          ],
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isActive ? Colors.white : Colors.white38,
+            fontSize: 14,
+            fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+          ),
         ),
       ),
     );
@@ -3649,9 +3703,8 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
 
   Widget _buildOpenOrdersTable() {
     return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF2A2A2A),
-        borderRadius: BorderRadius.circular(8),
+      decoration: const BoxDecoration(
+        color: Colors.transparent,
       ),
       child: Column(
         children: [
@@ -3796,9 +3849,8 @@ class _SpotScreenState extends State<SpotScreen> with WidgetsBindingObserver, Ti
 
   Widget _buildClosedOrdersTable() {
     return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF2A2A2A),
-        borderRadius: BorderRadius.circular(8),
+      decoration: const BoxDecoration(
+        color: Colors.transparent,
       ),
       child: Column(
         children: [

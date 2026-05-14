@@ -1,10 +1,12 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
-import 'dart:math' as math;
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
+
 import '../main_navigation.dart';
 import '../widgets/trading_view_chart.dart';
 
@@ -223,15 +225,15 @@ class _ChartScreenState extends State<ChartScreen> {
                   child: Column(
                     children: [
                       _buildMainChartSection(),
-                      _buildOrderBook(),
-                      const SizedBox(height: 100),
+                      const SizedBox(height: 20),
+                      _buildTradingInterface(),
+                      const SizedBox(height: 60),
                     ],
                   ),
                 ),
               ),
             ],
           ),
-      bottomNavigationBar: _buildTradingInterface(),
     );
   }
 
@@ -344,7 +346,7 @@ class _ChartScreenState extends State<ChartScreen> {
   Widget _buildMainChartSection() {
     return Container(
       width: double.infinity,
-      height: 420,
+      height: 600,
       color: const Color(0xFF000000),
       child: TradingViewChart(
         symbol: _selectedSymbol,
@@ -433,47 +435,6 @@ class _ChartScreenState extends State<ChartScreen> {
     });
   }
 
-  Widget _buildOrderBook() {
-    return Container(
-      margin: const EdgeInsets.all(16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0D0D0D), 
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text("Order Book", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: const [
-              Text("Bid Amount", style: TextStyle(color: Colors.white38, fontSize: 11)),
-              Text("Price", style: TextStyle(color: Colors.white38, fontSize: 11)),
-              Text("Ask Amount", style: TextStyle(color: Colors.white38, fontSize: 11)),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ...List.generate(6, (index) {
-             final random = math.Random();
-             return Padding(
-               padding: const EdgeInsets.symmetric(vertical: 5),
-               child: Row(
-                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                 children: [
-                   Text(random.nextDouble().toStringAsFixed(4), style: const TextStyle(color: Color(0xFF00FF88), fontSize: 12)),
-                   Text(_priceFormat.format(_currentPrice + (index - 3) * 5), style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                   Text(random.nextDouble().toStringAsFixed(4), style: const TextStyle(color: Color(0xFFFF3366), fontSize: 12)),
-                 ],
-               ),
-             );
-          }),
-        ],
-      ),
-    );
-  }
 
   Widget _buildTradingInterface() {
     return Container(
